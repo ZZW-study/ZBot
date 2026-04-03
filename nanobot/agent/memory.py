@@ -78,16 +78,15 @@ class MemoryStore:
             return ""
 
 
-    def write_long_term(self) ->None:
+    def write_long_term(self, content: str) -> None:
         """覆盖写入长期记忆文件（全量更新）"""
-        if self.memory_file.exists():
-            self.memory_file.write_text(encoding="utf-8")
+        self.memory_file.write_text(content, encoding="utf-8")
 
 
-    def append_history(self,entry: str) ->None:
+    def append_history(self, entry: str) -> None:
         """追加写入会话历史文件（换行分隔，不覆盖旧内容）"""
-        with open(self.history_file,mode="a",encoding="utf-8") as f:
-            f.write(entry.strip(),"\n\n")
+        with open(self.history_file, mode="a", encoding="utf-8") as f:
+            f.write(entry.strip() + "\n\n")
 
 
     def get_memory_context(self) ->str:

@@ -5,13 +5,14 @@
 """
 # 上下文变量：用于异步编程中安全管理执行状态，避免并发冲突
 from contextvars import ContextVar
+from datetime import datetime
 # 类型注解：任意类型
 from typing import Any
 
 # 继承AI工具基类，遵循框架统一的工具规范
 from nanobot.agent.tools.base import Tool
 # 定时任务核心服务：负责任务的存储、调度、触发、管理
-from nanobot.cron.service import CronService
+from nanobot.cron.service import BEIJING_TZ, CronService
 # 定时任务调度规则的数据结构：定义任务的执行方式
 from nanobot.cron.types import CronSchedule
 
@@ -100,17 +101,12 @@ class CronTool(Tool):
                 # 可选参数：Cron表达式（如 0 9 * * * = 每天早上9点）
                 "cron_expr": {
                     "type": "string",
-                    "description": "Cron expression like '0 9 * * *' (for scheduled tasks)",
-                },
-                # 可选参数：IANA标准时区（仅配合Cron表达式使用）
-                "tz": {
-                    "type": "string",
-                    "description": "IANA timezone for cron expressions (e.g. 'America/Vancouver')",
+                    "description": "Cron expression like '0 9 * * *' in Beijing time (UTC+8)",
                 },
                 # 可选参数：ISO格式时间，用于一次性定时任务
                 "at": {
                     "type": "string",
-                    "description": "ISO datetime for one-time execution (e.g. '2026-02-12T10:30:00')",
+                    "description": "ISO datetime in Beijing time (e.g. '2026-02-12T10:30:00')",
                 },
                 # 可选参数：任务ID（删除任务时必填）
                 "job_id": {"type": "string", "description": "Job ID (for remove)"},
@@ -125,7 +121,6 @@ class CronTool(Tool):
         message: str = "",          # 提醒消息内容
         every_seconds: int | None = None,  # 循环秒数
         cron_expr: str | None = None,      # Cron表达式
-        tz: str | None = None,             # 时区
         at: str | None = None,             # 一次性任务执行时间
         job_id: str | None = None,         # 任务ID
         **kwargs: Any,                     # 兼容额外参数，保证扩展性
@@ -141,7 +136,7 @@ class CronTool(Tool):
             if self._in_cron_context.get():
                 return "Error: cannot schedule new jobs from within a cron job execution"
             # 调用私有方法创建任务
-            return self._add_job(message, every_seconds, cron_expr, tz, at)
+            return self._add_job(message, every_seconds, cron_expr, at)
         
         # 动作2：列出所有定时任务
         elif action == "list":
@@ -160,7 +155,6 @@ class CronTool(Tool):
         message: str,               # 提醒消息
         every_seconds: int | None,  # 循环秒数
         cron_expr: str | None,      # Cron表达式
-        tz: str | None,             # 时区
         at: str | None,             # 执行时间
     ) -> str:
         """
@@ -175,18 +169,6 @@ class CronTool(Tool):
         if not self._channel or not self._chat_id:
             return "Error: no session context (channel/chat_id)"
         
-        # 校验3：时区只能配合Cron表达式使用
-        if tz and not cron_expr:
-            return "Error: tz can only be used with cron_expr"
-        
-        # 校验4：验证时区是否为合法的IANA时区
-        if tz:
-            from zoneinfo import ZoneInfo
-            try:
-                ZoneInfo(tz)
-            except (KeyError, Exception):
-                return f"Error: unknown timezone '{tz}'"
-
         # ==================== 构建任务调度规则 ====================
         # 标记：一次性任务执行后是否自动删除（循环任务为False）
         delete_after = False
@@ -198,16 +180,19 @@ class CronTool(Tool):
         
         # 类型2：Cron表达式定时任务（如每天、每周、每月）
         elif cron_expr:
-            schedule = CronSchedule(kind="cron", expr=cron_expr, tz=tz)
+            schedule = CronSchedule(kind="cron", expr=cron_expr)
         
         # 类型3：一次性定时任务（指定ISO时间执行）
         elif at:
-            from datetime import datetime
             try:
                 # 解析ISO格式时间字符串
                 dt = datetime.fromisoformat(at)
             except ValueError:
                 return f"Error: invalid ISO datetime format '{at}'. Expected format: YYYY-MM-DDTHH:MM:SS"
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=BEIJING_TZ)
+            else:
+                dt = dt.astimezone(BEIJING_TZ)
             # 转换为毫秒时间戳
             at_ms = int(dt.timestamp() * 1000)
             schedule = CronSchedule(kind="at", at_ms=at_ms)

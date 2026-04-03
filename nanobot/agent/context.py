@@ -4,15 +4,18 @@
 import base64        # 图片转base64编码（让AI能识别图片）
 import mimetypes     # 识别文件类型
 import platform      # 获取系统信息（Windows/Mac/Linux）
-import time
 from datetime import datetime  # 获取当前时间
 from pathlib import Path       # 路径处理
 from typing import Any
+from zoneinfo import ZoneInfo
 
 # 导入项目模块：记忆存储、技能加载、工具函数
 from nanobot.agent.memory import MemoryStore
 from nanobot.agent.skills import SkillsLoader
 from nanobot.utils.helpers import detect_image_mime
+
+
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 class ContextBuilder:
@@ -112,11 +115,9 @@ Reply directly with text for conversations."""
         :return: 运行时上下文字符串
         """
         # 获取当前时间（格式化：年-月-日 时:分 (星期)）
-        now = datetime.now().strftime("%Y-%m-%d %H:%M (%A)")
-        # 获取时区
-        tz = time.strftime("%Z") or "UTC"
+        now = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M (%A)")
         # 组装元数据行
-        lines = [f"Current Time: {now} ({tz})"]
+        lines = [f"Current Time: {now} (Beijing Time, UTC+8)"]
         if channel and chat_id:
             lines += [f"Channel: {channel}", f"Chat ID: {chat_id}"]
         # 返回带标签的运行时上下文

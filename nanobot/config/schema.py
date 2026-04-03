@@ -21,7 +21,7 @@ class AgentDefaults(Base):
     model: str = "anthropic/claude-opus-4-5"   # 必须是供应商/模型名称
     # LLM提供商（auto=自动匹配；也可指定anthropic/openrouter等）
     provider: str = (
-        "auto"
+        "openrouter"
     )
     # AI回答的最大令牌数（8192≈6000中文字符，限制回答长度，防止超长回复）
     max_tokens: int = 8192
@@ -67,7 +67,9 @@ class WebSearchConfig(Base):
     网页搜索工具配置
     核心作用：定义AI调用网页搜索的规则（用哪个API、返回多少结果）
     """
+    provider: str = "brave"
     api_key: str = ""     # Brave Search API密钥（需要自行申请，为空则无法使用搜索功能）
+    base_url: str | None = None
     max_results: int = 5  # 搜索返回的最大结果数（默认5条，避免结果过多）
 
 
@@ -139,7 +141,7 @@ class Config(BaseSettings):
         return Path(self.agents.defaults.workspace).expanduser()
 
 
-    def get_provider(self,model: str | None = None) ->str | None:
+    def get_provider(self, model: str | None = None) -> tuple[ProviderConfig | None, str | None]:
         """获取匹配到的LLM提供商名称和配置"""
         from nanobot.providers.registry import PROVIDERS
 

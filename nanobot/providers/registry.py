@@ -27,8 +27,12 @@ class ProviderSpec:
     litellm_prefix: str = ""          # LiteLLM路由前缀（如dashscope/ → 模型名加前缀,告诉 LiteLLM 用哪个厂商的 SDK 调用）
     is_gateway: bool = False          # 是否为网关（OpenRouter/AiHubMix，支持任意模型）
     default_api_base: str = ""        # 默认API地址
+    keywords: tuple[str, ...] = ()    # 模型名称关键词匹配（用于自动检测提供商）
+    skip_prefixes: tuple[str, ...] = ()  # 跳过自动添加前缀的模型前缀列表
+    env_extras: tuple[tuple[str, str], ...] = ()  # 额外环境变量 (env_name, env_value)
     model_overrides: tuple[tuple[str, dict[str, Any]], ...] = ()  # 模型专属参数（如kimi温度强制1.0）
     supports_prompt_caching: bool = False                         # 是否支持提示词缓存
+    strip_model_prefix: bool = False  # 是否剥离模型前缀（网关模式使用）
 
 
 # 【核心注册表】所有提供商配置
@@ -82,5 +86,42 @@ def find_by_name(name: str) -> ProviderSpec | None:
     for spec in PROVIDERS:
         if spec.name == name:
             return spec
+    return None
+
+
+def find_by_model(model: str) -> ProviderSpec | None:
+    """
+    根据【模型名称】自动匹配提供商
+    匹配规则：模型前缀 或 keywords关键词
+    """
+    if not model:
+        return None
+
+    # 提取模型前缀（如 anthropic/claude → anthropic）
+    model_prefix = model.split("/")[0].lower() if "/" in model else ""
+
+    for spec in PROVIDERS:
+        # 优先：前缀精确匹配
+        if model_prefix == spec.name:
+            return spec
+        # 其次：关键词匹配（模型名包含关键词）
+        for keyword in spec.keywords:
+            if keyword in model.lower():
+                return spec
+
+    return None
+
+
+def find_gateway(provider_name: str | None) -> ProviderSpec | None:
+    """
+    查找网关提供商（OpenRouter/SiliconFlow等）
+    用于统一调用多模型网关
+    """
+    if not provider_name:
+        return None
+
+    spec = find_by_name(provider_name)
+    if spec and spec.is_gateway:
+        return spec
     return None
 

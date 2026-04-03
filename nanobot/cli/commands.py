@@ -1,40 +1,30 @@
 """为nanobot提供命令行接口命令的模块"""
-import sys  # 和程序运行的系统环境、解释器交互
-import os  # 专门管系统文件、目录、路径等底层操作：创建 / 删除文件夹、获取文件路径、执行系统命令、读取环境变量等。
-import select  #监控多个文件描述符（File Descriptor）的状态变化，实现 I/O 多路复用（I/O Multiplexing）
 import asyncio
+import os
+import select
 import signal
 import sys
-from pathlib import Path
-from typing import Any
+from typing import Optional
 
 # 强制让Windows终端的输出使用utf-8编码格式输出
 if sys.platform == "win32":
-
-    if sys.stdout.encoding != "utf-8":          # standard out标准输出类
-        os.environ["PYTHONENCODING"] = "utf-8"  # environ是一个类字典对象
-
+    if sys.stdout.encoding != "utf-8":
+        os.environ["PYTHONENCODING"] = "utf-8"
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8",errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
 
 # 开始设置自己的命令行界面
 import typer
+import typer
 from prompt_toolkit import PromptSession
-from rich.console import Console
-from pathlib import Path 
-from nanobot import __version__
-from prompt_toolkit import print_formatted_text
-from prompt_toolkit import PromptSession
-from prompt_toolkit.formatted_text import ANSI, HTML
+from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.patch_stdout import patch_stdout
-from prompt_toolkit.application import run_in_terminal
 from rich.console import Console
 from rich.markdown import Markdown
-from rich.table import Table
 from rich.text import Text
 
 from nanobot import __logo__, __version__
@@ -220,6 +210,15 @@ def _make_provider(config: Config):
     p,provider_name = config.get_provider(model)
 
     from nanobot.config.loader import get_path_config
+    config_path = get_path_config()
+    if not provider_name or p is None:
+        console.print(f"[red]错误: 无法为模型 {model} 自动匹配 provider。[/red]")
+        console.print("[red]请在配置中设置 agents.defaults.provider，或改用受支持的模型前缀。[/red]")
+        raise typer.Exit(1)
+    if not p.api_key:
+        console.print(f"[red]错误: 未配置 {provider_name} 的 API key。[/red]")
+        console.print(f"[red]请在此位置 {config_path} 设置 API key[/red]")
+        raise typer.Exit(1)
     from nanobot.providers.litellm_provider import LiteLLMProvider
 
     # 参数校验：必须配置API Key
@@ -249,7 +248,7 @@ def gateway(
     # 命令行参数1：网关服务端口，默认18790，支持--port/-p指定
     port: int = typer.Option(18790, "--port", "-p", help="Gateway port"),
     # 命令行参数2：工作区目录，可选，支持--workspace/-w指定（覆盖配置文件中的默认值）
-    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+    workspace: Optional[str] = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     # 命令行参数3：详细输出模式，默认关闭，支持--verbose/-v开启（打印DEBUG级日志）
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Verbose output")
 ):
@@ -301,7 +300,7 @@ def gateway(
         max_iterations=config.agents.defaults.max_tool_iterations,  # 工具调用最大迭代次数（防止死循环）
         memory_window=config.agents.defaults.memory_window,  # 会话记忆窗口（保留多少轮对话）
         reasoning_effort=config.agents.defaults.reasoning_effort,  # 推理努力程度（影响思考深度）
-        brave_api_key=config.tools.web.search.api_key or None,  # 网页搜索工具的API Key
+        web_search_config=config.tools.web.search,  # 网页搜索工具配置
         web_proxy=config.tools.web.proxy or None,  # 网页搜索代理
         exec_config=config.tools.exec,  # 命令执行工具的配置（权限、白名单等）
         cron_service=cron,  # 关联定时任务服务（Agent可创建/管理定时任务）
@@ -381,7 +380,7 @@ def gateway(
 @app.command()
 def agent(
     # 1. 命令行参数：--message / -m，发送给AI的单次消息
-    message: str = typer.Option(None, "--message", "-m", help="发送给AI的单次消息"),
+    message: Optional[str] = typer.Option(None, "--message", "-m", help="发送给AI的单次消息"),
     # 2. 会话ID：用来区分不同聊天窗口，默认是 cli:direct（命令行直接对话）
     session_id: str = typer.Option("cli:direct", "--session", "-s", help="会话ID"),
     # 3. 是否用Markdown渲染AI回复（默认开启）
@@ -426,7 +425,7 @@ def agent(
         max_iterations=config.agents.defaults.max_tool_iterations,  # 最多调用几次工具
         memory_window=config.agents.defaults.memory_window,         # 记忆窗口（保留几轮对话）
         reasoning_effort=config.agents.defaults.reasoning_effort,   # 思考强度
-        brave_api_key=config.tools.web.search.api_key or None,      # 搜索API Key
+        web_search_config=config.tools.web.search,                  # 搜索配置
         web_proxy=config.tools.web.proxy or None,                   # 网络代理
         exec_config=config.tools.exec,                              # 命令执行权限配置
         cron_service=cron,                                          # 绑定定时任务服务
@@ -482,7 +481,7 @@ def agent(
             cli_channel, cli_chat_id = "cli", session_id
 
         # ===================== 信号处理：优雅退出（Ctrl+C / kill） =====================
-        def _handle_signal(signum, frame):
+        def _handle_signal(signum, _frame):
             # 收到退出信号（如Ctrl+C），恢复终端并退出
             sig_name = signal.Signals(signum).name
             _restore_terminal()
@@ -599,10 +598,10 @@ def agent(
 @app.command()
 def status():
     """查看 Nanobot 系统状态：配置文件、工作区、模型、API 密钥"""
-    from nanobot.config.loader import get_config_path, load_config
+    from nanobot.config.loader import get_path_config, load_config
 
     # 加载配置信息
-    config_path = get_config_path()
+    config_path = get_path_config()
     config = load_config()
     workspace = config.workspace_path
 
@@ -625,9 +624,7 @@ def status():
             if p is None:
                 continue
             if spec.is_gateway:
-                console.print(f"{spec.display_name}: [green]✓ (OAuth)[/green]")
-            elif spec.is_gateway:
-                # 本地模型显示 API 地址
+                # 网关类型：显示 API 地址
                 if p.api_base:
                     console.print(f"{spec.display_name}: [green]✓ {p.api_base}[/green]")
                 else:
@@ -638,106 +635,7 @@ def status():
                 console.print(f"{spec.display_name}: {'[green]✓[/green]' if has_key else '[dim]not set[/dim]'}")
 
 
-# ============================================================================
-# AI 服务商 OAuth 登录命令组
-# ============================================================================
-# 创建子命令：provider，管理 AI 服务商认证
-provider_app = typer.Typer(help="Manage providers")
-app.add_typer(provider_app, name="provider")
-
-# 登录处理器注册表：key=服务商名，value=登录函数
-_LOGIN_HANDLERS: dict[str, callable] = {}
-
-
-def _register_login(name: str):
-    """
-    【装饰器】注册 OAuth 登录处理器
-    :param name: 服务商名称
-    """
-    def decorator(fn):
-        _LOGIN_HANDLERS[name] = fn
-        return fn
-    return decorator
-
-
-@provider_app.command("login")
-def provider_login(
-    provider: str = typer.Argument(..., help="OAuth provider (e.g. 'openai-codex', 'github-copilot')"),
-):
-    """
-    AI 服务商 OAuth 登录
-    支持：OpenAI Codex / GitHub Copilot
-    """
-    from nanobot.providers.registry import PROVIDERS
-
-    # 格式化名称，匹配配置
-    key = provider.replace("-", "_")
-    # 查找对应的 OAuth 服务商
-    spec = next((s for s in PROVIDERS if s.name == key and s.is_oauth), None)
-    if not spec:
-        names = ", ".join(s.name.replace("_", "-") for s in PROVIDERS if s.is_oauth)
-        console.print(f"[red]Unknown OAuth provider: {provider}[/red]  Supported: {names}")
-        raise typer.Exit(1)
-
-    # 获取登录处理器
-    handler = _LOGIN_HANDLERS.get(spec.name)
-    if not handler:
-        console.print(f"[red]Login not implemented for {spec.display_name}[/red]")
-        raise typer.Exit(1)
-
-    # 执行登录
-    console.print(f"{__logo__} OAuth Login - {spec.display_name}\n")
-    handler()
-
-
-@_register_login("openai_codex")
-def _login_openai_codex() -> None:
-    """OpenAI Codex 交互式 OAuth 登录"""
-    try:
-        from oauth_cli_kit import get_token, login_oauth_interactive
-        token = None
-        # 尝试读取已有令牌
-        try:
-            token = get_token()
-        except Exception:
-            pass
-        # 无令牌则启动交互式登录
-        if not (token and token.access):
-            console.print("[cyan]Starting interactive OAuth login...[/cyan]\n")
-            token = login_oauth_interactive(
-                print_fn=lambda s: console.print(s),
-                prompt_fn=lambda s: typer.prompt(s),
-            )
-        if not (token and token.access):
-            console.print("[red]✗ Authentication failed[/red]")
-            raise typer.Exit(1)
-        console.print(f"[green]✓ Authenticated with OpenAI Codex[/green]  [dim]{token.account_id}[/dim]")
-    except ImportError:
-        console.print("[red]oauth_cli_kit not installed. Run: pip install oauth-cli-kit[/red]")
-        raise typer.Exit(1)
-
-
-@_register_login("github_copilot")
-def _login_github_copilot() -> None:
-    """GitHub Copilot 设备码登录"""
-    import asyncio
-
-    console.print("[cyan]Starting GitHub Copilot device flow...[/cyan]\n")
-
-    # 触发 LiteLLM 设备码认证流程
-    async def _trigger():
-        from litellm import acompletion
-        await acompletion(model="github_copilot/gpt-4o", messages=[{"role": "user", "content": "hi"}], max_tokens=1)
-
-    try:
-        asyncio.run(_trigger())
-        console.print("[green]✓ Authenticated with GitHub Copilot[/green]")
-    except Exception as e:
-        console.print(f"[red]Authentication error: {e}[/red]")
-        raise typer.Exit(1)
-
 
 # 主入口：运行 CLI 应用
 if __name__ == "__main__":
     app()
-
