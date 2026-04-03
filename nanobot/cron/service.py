@@ -9,9 +9,13 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Coroutine
+from zoneinfo import ZoneInfo
 from loguru import logger
 
 from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
+
+
+BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 # -------------------------- 工具函数 --------------------------
@@ -46,11 +50,9 @@ def _compute_next_run(schedule: CronSchedule,now_ms: int) ->int | None:
     # 模式3：Cron表达式执行（比如 0 0 * * * 每天凌晨执行）
     if schedule.kind == "cron" and schedule.expr:
         try:
-            from zoneinfo import ZoneInfo   # 时区处理库
             from croniter import croniter   # Cron表达式解析库
             base_time = now_ms / 1000       # 毫秒转秒（时间戳基准）
-            tz = ZoneInfo(schedule.tz) if schedule.tz else datetime.now().astimezone().tzinfo   # 设置时区：优先用任务指定的时区，否则用系统本地时区
-            base_dt = datetime.fromtimestamp(base_time, tz=tz)  # 转换为带时区的时间对象
+            base_dt = datetime.fromtimestamp(base_time, tz=BEIJING_TZ)
             cron = croniter(schedule.expr, base_dt)    # 解析Cron表达式
             next_dt = cron.get_next(datetime)          # 计算下一次执行时间
             return int(next_dt.timestamp() * 1000)     # 转回毫秒级时间戳
@@ -65,17 +67,28 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
     添加任务前的【调度规则校验】
     避免创建无法执行的无效任务
     """
-    # 校验1：时区(tz)只能用于Cron表达式模式
-    if schedule.tz and schedule.kind != "cron":
-        raise ValueError("tz can only be used with cron schedules")
+    if schedule.kind == "at":
+        if schedule.at_ms is None:
+            raise ValueError("at_ms is required for at schedules")
+        return
 
-    # 校验2：如果是Cron模式+指定时区，校验时区是否合法
-    if schedule.kind == "cron" and schedule.tz:
+    if schedule.kind == "every":
+        if schedule.every_ms is None or schedule.every_ms <= 0:
+            raise ValueError("every_ms must be greater than 0")
+        return
+
+    if schedule.kind == "cron":
+        if not schedule.expr:
+            raise ValueError("expr is required for cron schedules")
         try:
-            from zoneinfo import ZoneInfo
-            ZoneInfo(schedule.tz)
-        except Exception:
-            raise ValueError(f"unknown timezone '{schedule.tz}'") from None
+            from croniter import croniter
+        except Exception as exc:
+            raise ValueError("croniter is required for cron schedules") from exc
+        if not croniter.is_valid(schedule.expr):
+            raise ValueError(f"invalid cron expression '{schedule.expr}'")
+        return
+
+    raise ValueError(f"unsupported schedule kind '{schedule.kind}'")
 
 class CronService:
     """定时任务服务类：管理所有任务的创建、执行、存储、调度"""
@@ -124,7 +137,6 @@ class CronService:
                             at_ms=j["schedule"].get("atMs"),
                             every_ms=j["schedule"].get("everyMs"),
                             expr=j["schedule"].get("expr"),
-                            tz=j["schedule"].get("tz"),
                         ),
                         payload=CronPayload(  # 任务执行的内容（给Agent的指令）
                             kind=j["payload"].get("kind", "agent_turn"),
@@ -178,7 +190,6 @@ class CronService:
                         "atMs": j.schedule.at_ms,
                         "everyMs": j.schedule.every_ms,
                         "expr": j.schedule.expr,
-                        "tz": j.schedule.tz,
                     },
                     "payload": {
                         "kind": j.payload.kind,
@@ -328,10 +339,9 @@ class CronService:
         logger.info("Cron: executing job '{}' ({})", job.name, job.id)
 
         try:
-            response = None
             # 如果设置了回调函数，执行业务逻辑
             if self.on_job:
-                response = await self.on_job(job)
+                await self.on_job(job)
 
             # 任务执行成功：更新状态
             job.state.last_status = "ok"
@@ -425,36 +435,6 @@ class CronService:
             logger.info("Cron: removed job {}", job_id)
 
         return removed
-
-    def enable_job(self, job_id: str, enabled: bool = True) -> CronJob | None:
-        """启用/禁用任务"""
-        store = self._load_store()
-        for job in store.jobs:
-            if job.id == job_id:
-                job.enabled = enabled
-                job.updated_at_ms = _now_ms()
-                # 启用：重新计算下次执行时间；禁用：清空下次执行时间
-                if enabled:
-                    job.state.next_run_at_ms = _compute_next_run(job.schedule, _now_ms())
-                else:
-                    job.state.next_run_at_ms = None
-                self._save_store()
-                self._arm_timer()
-                return job
-        return None
-
-    async def run_job(self, job_id: str, force: bool = False) -> bool:
-        """手动执行任务（force=True可强制执行禁用的任务）"""
-        store = self._load_store()
-        for job in store.jobs:
-            if job.id == job_id:
-                if not force and not job.enabled:
-                    return False
-                await self._execute_job(job)
-                self._save_store()
-                self._arm_timer()
-                return True
-        return False
 
     def status(self) -> dict:
         """获取服务状态（是否运行、任务数量、下次唤醒时间）"""

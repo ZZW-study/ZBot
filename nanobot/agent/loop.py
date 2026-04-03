@@ -9,7 +9,7 @@ import re
 import weakref
 from contextlib import AsyncExitStack
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 # 日志库：打印程序运行日志
 from loguru import logger
@@ -30,7 +30,7 @@ from nanobot.session.manager import Session, SessionManager     # 会话管理�
 
 # 类型检查：仅开发时校验类型，不运行
 if TYPE_CHECKING:
-    from nanobot.config.schema import ExecToolConfig
+    from nanobot.config.schema import ExecToolConfig, WebSearchConfig
     from nanobot.cron.service import CronService
 
 # ====================== 核心类：AI大脑引擎 ======================
@@ -60,7 +60,7 @@ class AgentLoop:
         max_tokens: int = 4096,   # AI最大响应长度
         memory_window: int = 100, # 对话历史窗口（保留最近100条）
         reasoning_effort: str | None = None, # 推理强度
-        brave_api_key: str | None = None,    # 网页搜索API密钥
+        web_search_config: WebSearchConfig | None = None,  # 网页搜索工具配置
         web_proxy: str | None = None,        # 网页代理
         exec_config: ExecToolConfig | None = None, # Shell命令配置
         cron_service: CronService | None = None,   # 定时任务服务
@@ -69,7 +69,7 @@ class AgentLoop:
         mcp_servers: dict | None = None,               # MCP扩展工具服务器
     ):
         # 导入配置类
-        from nanobot.config.schema import ExecToolConfig
+        from nanobot.config.schema import ExecToolConfig, WebSearchConfig
         # 绑定核心依赖
         self.bus = bus
         self.provider = provider
@@ -83,7 +83,7 @@ class AgentLoop:
         self.memory_window = memory_window
         self.reasoning_effort = reasoning_effort
         # 工具配置
-        self.brave_api_key = brave_api_key
+        self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
@@ -130,7 +130,7 @@ class AgentLoop:
             path_append=self.exec_config.path_append,
         ))
         # 注册网页搜索/抓取工具
-        self.tools.register(WebSearchTool(proxy=self.web_proxy))
+        self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
         # 如果有定时任务服务，注册定时工具
         if self.cron_service:
@@ -162,7 +162,7 @@ class AgentLoop:
             self._mcp_connecting = False
 
     # ====================== 设置工具上下文（渠道/聊天ID） ======================
-    def _set_tool_context(self, channel: str, chat_id: str, message_id: str | None = None) -> None:
+    def _set_tool_context(self, channel: str, chat_id: str) -> None:
         """给工具设置上下文：告诉工具消息来自哪个渠道、哪个聊天"""
         for name in ("cron",):
             if tool := self.tools.get(name):
@@ -357,8 +357,9 @@ class AgentLoop:
         if self._mcp_stack:
             try:
                 await self._mcp_stack.aclose()
-            except (RuntimeError, BaseExceptionGroup):
-                pass
+            except BaseException as exc:
+                if not (isinstance(exc, RuntimeError) or exc.__class__.__name__ == "BaseExceptionGroup"):
+                    raise
             self._mcp_stack = None
 
     # ====================== 停止AI引擎 ======================
@@ -382,7 +383,7 @@ class AgentLoop:
             logger.info("Processing system message from {}", msg.sender_id)
             key = f"{channel}:{chat_id}"
             session = self.sessions.get_or_create(key)
-            self._set_tool_context(channel, chat_id, msg.metadata.get("message_id"))
+            self._set_tool_context(channel, chat_id)
             # 获取对话历史
             history = session.get_history(max_messages=self.memory_window)
             # 构建AI上下文
@@ -462,7 +463,7 @@ class AgentLoop:
             self._consolidation_tasks.add(_task)
 
         # 设置工具上下文
-        self._set_tool_context(msg.channel, msg.chat_id, msg.metadata.get("message_id"))
+        self._set_tool_context(msg.channel, msg.chat_id)
 
         # 获取对话历史
         history = session.get_history(max_messages=self.memory_window)

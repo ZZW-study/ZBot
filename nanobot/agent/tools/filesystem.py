@@ -271,14 +271,14 @@ def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
         return None, 0
 
     # 将旧文本的每行去掉首尾空白
-    stripped_old = [l.strip() for l in old_lines]
+    stripped_old = [line.strip() for line in old_lines]
     content_lines = content.splitlines()
 
     candidates = []
     # 滑动窗口，按行比较去除空白后的内容
     for i in range(len(content_lines) - len(stripped_old) + 1):
         window = content_lines[i : i + len(stripped_old)]
-        if [l.strip() for l in window] == stripped_old:
+        if [line.strip() for line in window] == stripped_old:
             candidates.append("\n".join(window))
 
     if candidates:

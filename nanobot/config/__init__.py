@@ -19,7 +19,7 @@ from nanobot.config.schema import Config
 __all__ = [ # __all__ 是 Python 的模块导出白名单，作用是：当其他代码用 from 模块名 import * 导入时，只会导入 __all__ 里列出的名称；
     "Config",
     "load_config",
-    "get_config_path",
+    "get_path_config",
     "get_data_dir",
     "get_runtime_subdir",
     "get_media_dir",

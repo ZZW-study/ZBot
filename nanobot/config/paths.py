@@ -38,7 +38,7 @@ def get_cron_dir() ->Path:
     函数作用：返回【定时任务文件夹】路径
     用途：存放定时任务的配置、记录（比如每天定时发消息、定时执行任务）
     """
-    return get_runtime_subdir("corn")
+    return get_runtime_subdir("cron")
 
 
 def get_logs_dir() ->Path:

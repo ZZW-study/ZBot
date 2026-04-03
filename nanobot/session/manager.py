@@ -46,7 +46,7 @@ class Session:
         msg = {
             "role": role,
             "content": content,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.now().isoformat(),
             **kwargs
         }
 
@@ -100,13 +100,13 @@ class SessionManager:
     会话管理器：负责所有会话的【内存缓存】+【磁盘持久化】+【文件迁移】
     存储规则：每个会话对应一个JSONL文件，存储在工作区的sessions目录下
     """
-    def __init__(self,workspace: str):
+    def __init__(self, workspace: Path | str):
         """
         初始化会话管理器
         """
-        self.workspace = workspace
-        self.sessions_dir = self.workspace / "sessions"      # 会话存储目录
-        self.legacy_sessions_dir = get_legacy_sessions_dir() # 旧版本（遗留）会话目录
+        self.workspace = Path(workspace)
+        self.sessions_dir = ensure_dir(self.workspace / "sessions")      # 会话存储目录
+        self.legacy_sessions_dir = get_legacy_sessions_dir()             # 旧版本（遗留）会话目录，仅在迁移时访问
         self._cache: dict[str, Session] = {}                 # 内存缓存：key=会话标识，value=Session对象
 
 

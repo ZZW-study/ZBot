@@ -29,14 +29,6 @@ class ToolRegistry:
         """
         self._tools[tool.name] = tool
 
-    def unregister(self, name: str) -> None:
-        """
-        从工具箱中注销一个工具
-        :param name: 工具名称（如 read_file）
-        """
-        # pop：删除键值对，不存在则忽略，不报错
-        self._tools.pop(name, None)
-
     def get(self, name: str) -> Tool | None:
         """
         根据工具名称，获取工具实例

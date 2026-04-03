@@ -10,12 +10,12 @@ class CronSchedule:
     """
     【核心】定时任务的调度规则
     定义：任务「什么时候执行」，支持三种模式：指定时间/固定间隔/Cron表达式
+    所有时间统一使用北京时间（UTC+8）
     """
     kind: Literal["at","every","cron"] # 调度类型：只能是 at/every/cron 三选一
     at_ms: int | None = None    # 仅用于 at 模式：指定执行的时间戳（毫秒级）
     every_ms: int | None = None # 仅用于 every 模式：执行间隔（毫秒级)
-    expr: str | None = None     # 仅用于 cron 模式：Cron表达式（如 "0 9 * * *" 表示每天早上9点）
-    tz: str | None = None 
+    expr: str | None = None     # 仅用于 cron 模式：Cron表达式（如 "0 9 * * *" 表示北京时间早上9点） 
 
 @dataclass
 class CronPayload:

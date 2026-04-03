@@ -49,7 +49,7 @@ class LiteLLMProvider(LLMProvider):
         self.default_model = default_model
 
         # 自动检测网关/本地部署,返回ProviderSpec类
-        self._gateway = find_gateway(provider_name, api_key, api_base) 
+        self._gateway = find_gateway(provider_name)
 
         if api_key:  #  设置环境变量（API密钥）
             self._setup_env(api_key,api_base,default_model)
@@ -79,9 +79,9 @@ class LiteLLMProvider(LLMProvider):
         # 解析扩展环境变量占位符
         effective_base = api_base or spec.default_api_base
         for env_name,env_value in spec.env_extras:
-            resolved = env_name.replace("{api_key}",api_key)
-            resolved = env_value.replace("{api_base}",effective_base)
-            os.environ.setdefault(env_name,env_value)
+            resolved_name = env_name.replace("{api_key}", api_key).replace("{api_base}", effective_base)
+            resolved_value = env_value.replace("{api_key}", api_key).replace("{api_base}", effective_base)
+            os.environ.setdefault(resolved_name, resolved_value)
 
 
     def _resolve_model(self, model: str) -> str:
