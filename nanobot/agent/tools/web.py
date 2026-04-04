@@ -74,9 +74,9 @@ def _validate_url(url: str) -> tuple[bool, str]:
     try:
         p = urlparse(url)
         if p.scheme not in ('http', 'https'):
-            return False, f"Only http/https allowed, got '{p.scheme or 'none'}'"
+            return False, f"仅允许 http/https 协议，当前是 '{p.scheme or '未提供'}'"
         if not p.netloc:
-            return False, "Missing domain"
+            return False, "缺少域名"
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -95,8 +95,8 @@ def _format_results(query: str, items: list[dict[str, Any]], n: int) -> str:
         格式化后的字符串，包含查询词、编号、标题、URL 和摘要。
     """
     if not items:
-        return f"No results for: {query}"
-    lines = [f"Results for: {query}\n"]
+        return f"没有找到与“{query}”相关的结果。"
+    lines = [f"“{query}”的搜索结果：\n"]
     for i, item in enumerate(items[:n], 1):
         # 对标题和摘要进行标签去除和空白规范化
         title = _normalize(_strip_tags(item.get("title", "")))
@@ -114,12 +114,12 @@ class WebSearchTool(Tool):
 
     # 类属性定义工具名称、描述和参数 JSON Schema
     name = "web_search"
-    description = "Search the web. Returns titles, URLs, and snippets."
+    description = "搜索网页内容，返回标题、链接和摘要。"
     parameters = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Search query"},
-            "count": {"type": "integer", "description": "Results (1-10)", "minimum": 1, "maximum": 10},
+            "query": {"type": "string", "description": "搜索关键词。"},
+            "count": {"type": "integer", "description": "返回结果数量（1 到 10）。", "minimum": 1, "maximum": 10},
         },
         "required": ["query"],
     }
@@ -136,6 +136,8 @@ class WebSearchTool(Tool):
 
         self.config = config if config is not None else WebSearchConfig()
         self.proxy = proxy
+        # proxy: 可选的 HTTP 代理地址，会传递给 httpx.AsyncClient
+        # config 包含 provider/api_key/base_url 等运行时配置
 
     async def execute(self, query: str, count: int | None = None, **kwargs: Any) -> str:
         """
@@ -166,7 +168,7 @@ class WebSearchTool(Tool):
         elif provider == "brave":
             return await self._search_brave(query, n)
         else:
-            return f"Error: unknown search provider '{provider}'"
+            return f"错误：未知的搜索提供商“{provider}”。"
 
     # ---------- 各提供商的具体实现 ----------
 
@@ -177,7 +179,7 @@ class WebSearchTool(Tool):
         """
         api_key = self.config.api_key or os.environ.get("BRAVE_API_KEY", "")
         if not api_key:
-            logger.warning("BRAVE_API_KEY not set, falling back to DuckDuckGo")
+            logger.warning("未设置 BRAVE_API_KEY，自动回退到 DuckDuckGo 搜索")
             return await self._search_duckduckgo(query, n)  # 降级到 DuckDuckGo
 
         try:
@@ -196,7 +198,7 @@ class WebSearchTool(Tool):
             ]
             return _format_results(query, items, n)
         except Exception as e:
-            return f"Error: {e}"
+            return f"错误：Brave 搜索失败：{e}"
 
     async def _search_tavily(self, query: str, n: int) -> str:
         """
@@ -205,7 +207,7 @@ class WebSearchTool(Tool):
         """
         api_key = self.config.api_key or os.environ.get("TAVILY_API_KEY", "")
         if not api_key:
-            logger.warning("TAVILY_API_KEY not set, falling back to DuckDuckGo")
+            logger.warning("未设置 TAVILY_API_KEY，自动回退到 DuckDuckGo 搜索")
             return await self._search_duckduckgo(query, n)
 
         try:
@@ -219,7 +221,7 @@ class WebSearchTool(Tool):
                 r.raise_for_status()
             return _format_results(query, r.json().get("results", []), n)
         except Exception as e:
-            return f"Error: {e}"
+            return f"错误：Tavily 搜索失败：{e}"
 
     async def _search_searxng(self, query: str, n: int) -> str:
         """
@@ -228,13 +230,13 @@ class WebSearchTool(Tool):
         """
         base_url = (self.config.base_url or os.environ.get("SEARXNG_BASE_URL", "")).strip()
         if not base_url:
-            logger.warning("SEARXNG_BASE_URL not set, falling back to DuckDuckGo")
+            logger.warning("未设置 SEARXNG_BASE_URL，自动回退到 DuckDuckGo 搜索")
             return await self._search_duckduckgo(query, n)
 
         endpoint = f"{base_url.rstrip('/')}/search"
         is_valid, error_msg = _validate_url(endpoint)
         if not is_valid:
-            return f"Error: invalid SearXNG URL: {error_msg}"
+            return f"错误：SearXNG 地址不合法：{error_msg}"
 
         try:
             async with httpx.AsyncClient(proxy=self.proxy) as client:
@@ -247,7 +249,7 @@ class WebSearchTool(Tool):
                 r.raise_for_status()
             return _format_results(query, r.json().get("results", []), n)
         except Exception as e:
-            return f"Error: {e}"
+            return f"错误：SearXNG 搜索失败：{e}"
 
     async def _search_jina(self, query: str, n: int) -> str:
         """
@@ -256,7 +258,7 @@ class WebSearchTool(Tool):
         """
         api_key = self.config.api_key or os.environ.get("JINA_API_KEY", "")
         if not api_key:
-            logger.warning("JINA_API_KEY not set, falling back to DuckDuckGo")
+            logger.warning("未设置 JINA_API_KEY，自动回退到 DuckDuckGo 搜索")
             return await self._search_duckduckgo(query, n)
 
         try:
@@ -276,7 +278,7 @@ class WebSearchTool(Tool):
             ]
             return _format_results(query, items, n)
         except Exception as e:
-            return f"Error: {e}"
+            return f"错误：Jina 搜索失败：{e}"
 
     async def _search_duckduckgo(self, query: str, n: int) -> str:
         """
@@ -290,15 +292,15 @@ class WebSearchTool(Tool):
             # 由于 ddgs 是同步库，使用 asyncio.to_thread 在线程池中执行
             raw = await asyncio.to_thread(ddgs.text, query, max_results=n)
             if not raw:
-                return f"No results for: {query}"
+                return f"没有找到与“{query}”相关的结果。"
             items = [
                 {"title": r.get("title", ""), "url": r.get("href", ""), "content": r.get("body", "")}
                 for r in raw
             ]
             return _format_results(query, items, n)
         except Exception as e:
-            logger.warning("DuckDuckGo search failed: {}", e)
-            return f"Error: DuckDuckGo search failed ({e})"
+            logger.warning("DuckDuckGo 搜索失败：{}", e)
+            return f"错误：DuckDuckGo 搜索失败（{e}）"
 
 
 # ========================= WebFetchTool 类 =========================
@@ -307,13 +309,13 @@ class WebFetchTool(Tool):
     """网页抓取工具：从 URL 获取内容并提取可读文本（HTML → Markdown/纯文本）。"""
 
     name = "web_fetch"
-    description = "Fetch URL and extract readable content (HTML → markdown/text)."
+    description = "抓取网页链接并提取适合阅读的正文内容（HTML 转 Markdown 或纯文本）。"
     parameters = {
         "type": "object",
         "properties": {
-            "url": {"type": "string", "description": "URL to fetch"},
+            "url": {"type": "string", "description": "要抓取的网页链接。"},
             "extractMode": {"type": "string", "enum": ["markdown", "text"], "default": "markdown"},
-            "maxChars": {"type": "integer", "minimum": 100},
+            "maxChars": {"type": "integer", "minimum": 100, "description": "返回内容的最大字符数。"},
         },
         "required": ["url"],
     }
@@ -328,6 +330,7 @@ class WebFetchTool(Tool):
         """
         self.max_chars = max_chars
         self.proxy = proxy
+        # max_chars: 最大提取字符数，超过则截断。proxy 同样透传给 httpx 客户端。
 
     async def execute(self, url: str, extractMode: str = "markdown", maxChars: int | None = None, **kwargs: Any) -> str:
         """
@@ -345,11 +348,11 @@ class WebFetchTool(Tool):
         max_chars = maxChars or self.max_chars
         is_valid, error_msg = _validate_url(url)
         if not is_valid:
-            return json.dumps({"error": f"URL validation failed: {error_msg}", "url": url}, ensure_ascii=False)
+            return json.dumps({"error": f"URL 校验失败：{error_msg}", "url": url}, ensure_ascii=False)
 
-        # 优先尝试 Jina Reader API（高可靠性）
+        # 优先尝试外部的 Jina Reader 接口（可靠且能做较好结构化抽取）。
+        # 若 Jina 不可用或被限流，则降级到本地的 readability 提取实现。
         result = await self._fetch_jina(url, max_chars)
-        # 如果 Jina 失败，降级到本地 readability-lxml
         if result is None:
             result = await self._fetch_readability(url, extractMode, max_chars)
         return result
@@ -369,7 +372,7 @@ class WebFetchTool(Tool):
             async with httpx.AsyncClient(proxy=self.proxy, timeout=20.0) as client:
                 r = await client.get(f"https://r.jina.ai/{url}", headers=headers)
                 if r.status_code == 429:
-                    logger.debug("Jina Reader rate limited, falling back to readability")
+                    logger.debug("Jina Reader 被限流，自动回退到 readability 提取")
                     return None  # 限流时降级
                 r.raise_for_status()
 
@@ -390,8 +393,44 @@ class WebFetchTool(Tool):
                 "extractor": "jina", "truncated": truncated, "length": len(text), "text": text,
             }, ensure_ascii=False)
         except Exception as e:
-            logger.debug("Jina Reader failed for {}, falling back to readability: {}", url, e)
+            logger.debug("Jina Reader 处理 {} 失败，自动回退到 readability：{}", url, e)
             return None
+
+    def _extract_title_from_html(self, html_text: str) -> str:
+        """在不依赖第三方库的情况下，从原始 HTML 中提取标题。"""
+        match = re.search(r"<title[^>]*>([\s\S]*?)</title>", html_text, flags=re.I)
+        if not match:
+            return ""
+        return _normalize(_strip_tags(match.group(1)))
+
+    def _extract_html_content(self, html_text: str, extract_mode: str) -> tuple[str, str]:
+        """从 HTML 中提取正文；若缺少 readability，则自动降级。"""
+        title = ""
+        extractor = "html"
+
+        try:
+            from readability import Document
+
+            doc = Document(html_text)
+            title = _normalize(_strip_tags(doc.title() or ""))
+            body_html = doc.summary()
+            extractor = "readability"
+        except Exception as exc:
+            logger.debug("readability 不可用或提取失败，改用基础 HTML 提取：{}", exc)
+            title = self._extract_title_from_html(html_text)
+            body_match = re.search(r"<body[^>]*>([\s\S]*?)</body>", html_text, flags=re.I)
+            body_html = body_match.group(1) if body_match else html_text
+
+        if extract_mode == "markdown":
+            content = self._to_markdown(body_html)
+        else:
+            content = _normalize(_strip_tags(body_html))
+
+        if title and content:
+            return f"# {title}\n\n{content}", extractor
+        if title:
+            return title, extractor
+        return content, extractor
 
     async def _fetch_readability(self, url: str, extract_mode: str, max_chars: int) -> str:
         """
@@ -405,8 +444,6 @@ class WebFetchTool(Tool):
         返回：
             JSON 字符串，包含提取结果。
         """
-        from readability import Document
-
         try:
             async with httpx.AsyncClient(
                 follow_redirects=True,
@@ -424,15 +461,8 @@ class WebFetchTool(Tool):
                 # JSON 响应：直接格式化输出
                 text, extractor = json.dumps(r.json(), indent=2, ensure_ascii=False), "json"
             elif "text/html" in ctype or r.text[:256].lower().startswith(("<!doctype", "<html")):
-                # HTML 响应：使用 readability 提取主体内容
-                doc = Document(r.text)
-                # 根据模式选择 Markdown 或纯文本
-                if extract_mode == "markdown":
-                    content = self._to_markdown(doc.summary())
-                else:
-                    content = _strip_tags(doc.summary())
-                text = f"# {doc.title()}\n\n{content}" if doc.title() else content
-                extractor = "readability"
+                # HTML 响应：优先用 readability，缺失依赖时回退到基础 HTML 提取
+                text, extractor = self._extract_html_content(r.text, extract_mode)
             else:
                 # 其他类型（如纯文本）直接返回原始文本
                 text, extractor = r.text, "raw"
@@ -446,11 +476,11 @@ class WebFetchTool(Tool):
                 "extractor": extractor, "truncated": truncated, "length": len(text), "text": text,
             }, ensure_ascii=False)
         except httpx.ProxyError as e:
-            logger.error("WebFetch proxy error for {}: {}", url, e)
-            return json.dumps({"error": f"Proxy error: {e}", "url": url}, ensure_ascii=False)
+            logger.error("网页抓取代理错误，链接 {}：{}", url, e)
+            return json.dumps({"error": f"代理错误：{e}", "url": url}, ensure_ascii=False)
         except Exception as e:
-            logger.error("WebFetch error for {}: {}", url, e)
-            return json.dumps({"error": str(e), "url": url}, ensure_ascii=False)
+            logger.error("网页抓取失败，链接 {}：{}", url, e)
+            return json.dumps({"error": f"网页抓取失败：{e}", "url": url}, ensure_ascii=False)
 
     def _to_markdown(self, html_content: str) -> str:
         """
