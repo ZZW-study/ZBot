@@ -1,6 +1,7 @@
 """文件系统工具集：读取、写入、编辑、列出目录。"""
 
 import difflib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -37,9 +38,21 @@ def _resolve_path(
         # 收集所有允许的目录
         all_dirs = [allowed_dir] + (extra_allowed_dirs or [])
         # 检查解析后的路径是否至少在一个允许目录内
+        # 使用 _is_under 逐一判断，避免简单前缀比较带来的越界风险
         if not any(_is_under(resolved, d) for d in all_dirs):
-            raise PermissionError(f"Path {path} is outside allowed directory {allowed_dir}")
+            raise PermissionError(f"路径 {path} 超出了允许访问的目录范围：{allowed_dir}")
     return resolved
+
+
+def _strip_code_fence(content: str) -> str:
+    """
+    如果内容被 Markdown 三反引号或三波浪线包裹，去除外层围栏并返回内部代码。
+    只处理在全文首尾成对出现的外层围栏，保留其它内容不变。
+    """
+    m = re.match(r'^\s*(```|~~~)[^\n]*\n([\s\S]*?)\n\1\s*$', content, re.DOTALL)
+    if m:
+        return m.group(2)
+    return content
 
 
 def _is_under(path: Path, directory: Path) -> bool:
@@ -84,6 +97,7 @@ class _FsTool(Tool):
 
     def _resolve(self, path: str) -> Path:
         """内部辅助方法：根据当前配置解析路径。"""
+        # 统一调用 _resolve_path，集中做权限与工作区解析逻辑
         return _resolve_path(path, self._workspace, self._allowed_dir, self._extra_allowed_dirs)
 
 
@@ -142,33 +156,32 @@ class ReadFileTool(_FsTool):
             带行号的文本内容，或错误信息。
         """
         try:
+            # 解析并校验路径（含工作区与允许目录检查）
             fp = self._resolve(path)          # 解析路径，安全检查
             if not fp.exists():
-                return f"Error: File not found: {path}"
+                return f"错误：文件不存在：{path}"
             if not fp.is_file():
-                return f"Error: Not a file: {path}"
+                return f"错误：目标不是文件：{path}"
 
-            # 读取所有行，并统一使用 \n 换行符
+            # 读取文件文本并标准化为 LF 换行，便于后续按行处理
             all_lines = fp.read_text(encoding="utf-8").splitlines()
             total = len(all_lines)
 
-            # 边界校验
+            # 边界校验与空文件处理
             if offset < 1:
                 offset = 1
             if total == 0:
-                return f"(Empty file: {path})"
+                return f"（空文件：{path}）"
             if offset > total:
-                return f"Error: offset {offset} is beyond end of file ({total} lines)"
+                return f"错误：起始行号 {offset} 超出了文件末尾（总行数 {total}）"
 
-            # 计算需要读取的范围
+            # 计算需要读取的行区间并生成带行号的输出
             start = offset - 1
             end = min(start + (limit or self._DEFAULT_LIMIT), total)
-
-            # 生成带行号的文本
             numbered = [f"{start + i + 1}| {line}" for i, line in enumerate(all_lines[start:end])]
             result = "\n".join(numbered)
 
-            # 如果结果超过最大字符限制，进一步截断
+            # 防止返回体过大，对字符数超限进行截断
             if len(result) > self._MAX_CHARS:
                 trimmed, chars = [], 0
                 for line in numbered:
@@ -179,17 +192,17 @@ class ReadFileTool(_FsTool):
                 end = start + len(trimmed)
                 result = "\n".join(trimmed)
 
-            # 添加分页提示
+            # 添加分页或结束提示，便于用户继续翻页或知道已到文件末尾
             if end < total:
-                result += f"\n\n(Showing lines {offset}-{end} of {total}. Use offset={end + 1} to continue.)"
+                result += f"\n\n（当前显示第 {offset} 到 {end} 行，共 {total} 行；如需继续，请使用 offset={end + 1}）"
             else:
-                result += f"\n\n(End of file — {total} lines total)"
+                result += f"\n\n（文件结束，共 {total} 行）"
             return result
 
         except PermissionError as e:
-            return f"Error: {e}"
+            return f"错误：{e}"
         except Exception as e:
-            return f"Error reading file: {e}"
+            return f"错误：读取文件失败：{e}"
 
 
 # ---------------------------------------------------------------------------
@@ -231,15 +244,14 @@ class WriteFileTool(_FsTool):
         """
         try:
             fp = self._resolve(path)
-            # 创建父目录（如果不存在）
+            # 确保父目录存在，再写入（原子性可由上层/工具框架额外保障）
             fp.parent.mkdir(parents=True, exist_ok=True)
-            # 写入内容，使用 UTF-8 编码
             fp.write_text(content, encoding="utf-8")
-            return f"Successfully wrote {len(content)} bytes to {fp}"
+            return f"已成功写入文件：{fp}（共 {len(content)} 个字符）"
         except PermissionError as e:
-            return f"Error: {e}"
+            return f"错误：{e}"
         except Exception as e:
-            return f"Error writing file: {e}"
+            return f"错误：写入文件失败：{e}"
 
 
 # ---------------------------------------------------------------------------
@@ -337,45 +349,43 @@ class EditFileTool(_FsTool):
         try:
             fp = self._resolve(path)
             if not fp.exists():
-                return f"Error: File not found: {path}"
+                return f"错误：文件不存在：{path}"
 
-            # 读取原始字节，检测换行符类型（CRLF 或 LF）
+            # 读取原始字节，检测换行符类型（CRLF 或 LF），并统一为 LF 方便匹配
             raw = fp.read_bytes()
             uses_crlf = b"\r\n" in raw
-            # 统一转换为 LF 换行符以简化处理
             content = raw.decode("utf-8").replace("\r\n", "\n")
 
-            # 查找匹配的文本（支持宽松匹配）
+            # 在统一格式下查找要替换的片段（支持宽松匹配）
             match, count = _find_match(content, old_text.replace("\r\n", "\n"))
 
             if match is None:
-                # 未找到，生成带有相似性提示的错误信息
+                # 未找到时返回带 diff 的提示，帮助用户定位最接近的片段
                 return self._not_found_msg(old_text, content, path)
 
-            # 如果匹配多次且未指定全替换，则警告并拒绝
+            # 如果匹配出现多次且未明确要求全部替换，则拒绝以避免误替换
             if count > 1 and not replace_all:
                 return (
-                    f"Warning: old_text appears {count} times. "
-                    "Provide more context to make it unique, or set replace_all=true."
+                    f"警告：old_text 在文件中出现了 {count} 次。"
+                    "请补充更多上下文让它唯一，或显式传入 replace_all=true。"
                 )
 
-            # 规范化新文本的换行符
+            # 规范化替换文本并执行替换操作（可选全替换）
             norm_new = new_text.replace("\r\n", "\n")
-            # 执行替换（全替换或仅首次）
             new_content = content.replace(match, norm_new) if replace_all else content.replace(match, norm_new, 1)
 
-            # 如果原文件使用 CRLF，恢复换行符
+            # 恢复原文件的换行风格（若之前是 CRLF）
             if uses_crlf:
                 new_content = new_content.replace("\n", "\r\n")
 
-            # 写回文件
+            # 写回文件并返回成功信息
             fp.write_bytes(new_content.encode("utf-8"))
-            return f"Successfully edited {fp}"
+            return f"已成功编辑文件：{fp}"
 
         except PermissionError as e:
-            return f"Error: {e}"
+            return f"错误：{e}"
         except Exception as e:
-            return f"Error editing file: {e}"
+            return f"错误：编辑文件失败：{e}"
 
     @staticmethod
     def _not_found_msg(old_text: str, content: str, path: str) -> str:
@@ -406,12 +416,15 @@ class EditFileTool(_FsTool):
         if best_ratio > 0.5:
             diff = "\n".join(difflib.unified_diff(
                 old_lines, lines[best_start : best_start + window],
-                fromfile="old_text (provided)",
-                tofile=f"{path} (actual, line {best_start + 1})",
+                fromfile="old_text（输入内容）",
+                tofile=f"{path}（文件实际内容，第 {best_start + 1} 行起）",
                 lineterm="",
             ))
-            return f"Error: old_text not found in {path}.\nBest match ({best_ratio:.0%} similar) at line {best_start + 1}:\n{diff}"
-        return f"Error: old_text not found in {path}. No similar text found. Verify the file content."
+            return (
+                f"错误：在 {path} 中找不到 old_text。\n"
+                f"最接近的片段位于第 {best_start + 1} 行起（相似度 {best_ratio:.0%}）：\n{diff}"
+            )
+        return f"错误：在 {path} 中找不到 old_text，且没有发现足够接近的片段。请先核对文件内容。"
 
 
 # ---------------------------------------------------------------------------
@@ -478,9 +491,9 @@ class ListDirTool(_FsTool):
         try:
             dp = self._resolve(path)
             if not dp.exists():
-                return f"Error: Directory not found: {path}"
+                return f"错误：目录不存在：{path}"
             if not dp.is_dir():
-                return f"Error: Not a directory: {path}"
+                return f"错误：目标不是目录：{path}"
 
             cap = max_entries or self._DEFAULT_MAX
             items: list[str] = []
@@ -504,19 +517,19 @@ class ListDirTool(_FsTool):
                         continue
                     total += 1
                     if len(items) < cap:
-                        pfx = "📁 " if item.is_dir() else "📄 "
+                        pfx = "[DIR] " if item.is_dir() else "[FILE] "
                         items.append(f"{pfx}{item.name}")
 
             if not items and total == 0:
-                return f"Directory {path} is empty"
+                return f"目录为空：{path}"
 
             result = "\n".join(items)
             # 如果条目过多，提示截断
             if total > cap:
-                result += f"\n\n(truncated, showing first {cap} of {total} entries)"
+                result += f"\n\n（结果已截断，当前显示前 {cap} 项，共 {total} 项）"
             return result
 
         except PermissionError as e:
-            return f"Error: {e}"
+            return f"错误：{e}"
         except Exception as e:
-            return f"Error listing directory: {e}"
+            return f"错误：列出目录失败：{e}"

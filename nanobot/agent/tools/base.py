@@ -200,11 +200,11 @@ class Tool(ABC):
             错误列表
         """
         if not isinstance(params, dict):
-            return [f"parameters must be an object, got {type(params).__name__}"]
+            return [f"参数必须是对象类型，当前收到的是 {type(params).__name__}"]
         schema = self.parameters or {}
         # 确保根 schema 类型为 object
         if schema.get("type", "object") != "object":
-            raise ValueError(f"Schema must be object type, got {schema.get('type')!r}")
+            raise ValueError(f"工具参数的 Schema 根类型必须是 object，当前是 {schema.get('type')!r}")
         # 将根 schema 标记为 object 后调用递归验证
         return self._validate(params, {**schema, "type": "object"}, "")
 
@@ -220,37 +220,37 @@ class Tool(ABC):
         返回：
             错误列表
         """
-        t, label = schema.get("type"), path or "parameter"
+        t, label = schema.get("type"), path or "参数"
 
         # 基本类型检查（类型不匹配时直接返回单项错误）
         if t == "integer" and (not isinstance(val, int) or isinstance(val, bool)):
-            return [f"{label} should be integer"]
+            return [f"{label} 应为整数"]
         if t == "number" and (
             not isinstance(val, self._TYPE_MAP[t]) or isinstance(val, bool)
         ):
-            return [f"{label} should be number"]
+            return [f"{label} 应为数字"]
         if t in self._TYPE_MAP and t not in ("integer", "number") and not isinstance(val, self._TYPE_MAP[t]):
-            return [f"{label} should be {t}"]
+            return [f"{label} 的类型应为 {t}"]
 
         errors = []
 
         # 枚举值检查
         if "enum" in schema and val not in schema["enum"]:
-            errors.append(f"{label} must be one of {schema['enum']}")
+            errors.append(f"{label} 必须是以下值之一：{schema['enum']}")
 
         # 数值约束
         if t in ("integer", "number"):
             if "minimum" in schema and val < schema["minimum"]:
-                errors.append(f"{label} must be >= {schema['minimum']}")
+                errors.append(f"{label} 必须大于等于 {schema['minimum']}")
             if "maximum" in schema and val > schema["maximum"]:
-                errors.append(f"{label} must be <= {schema['maximum']}")
+                errors.append(f"{label} 必须小于等于 {schema['maximum']}")
 
         # 字符串长度约束
         if t == "string":
             if "minLength" in schema and len(val) < schema["minLength"]:
-                errors.append(f"{label} must be at least {schema['minLength']} chars")
+                errors.append(f"{label} 长度不能少于 {schema['minLength']} 个字符")
             if "maxLength" in schema and len(val) > schema["maxLength"]:
-                errors.append(f"{label} must be at most {schema['maxLength']} chars")
+                errors.append(f"{label} 长度不能超过 {schema['maxLength']} 个字符")
 
         # 对象：验证必需属性以及每个属性值的有效性
         if t == "object":
@@ -258,7 +258,7 @@ class Tool(ABC):
             # 检查 required 字段是否存在
             for k in schema.get("required", []):
                 if k not in val:
-                    errors.append(f"missing required {path + '.' + k if path else k}")
+                    errors.append(f"缺少必填字段：{path + '.' + k if path else k}")
             # 递归验证每个存在的属性
             for k, v in val.items():
                 if k in props:

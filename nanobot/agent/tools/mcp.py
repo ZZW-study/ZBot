@@ -83,26 +83,26 @@ class MCPToolWrapper(Tool):
             )
         # 异常1：工具调用超时
         except asyncio.TimeoutError:
-            logger.warning("MCP tool '{}' timed out after {}s", self._name, self._tool_timeout)
-            return f"(MCP tool call timed out after {self._tool_timeout}s)"
+            logger.warning("MCP 工具 '{}' 调用超时（{} 秒）", self._name, self._tool_timeout)
+            return f"（MCP 工具调用超时：{self._tool_timeout} 秒）"
         # 异常2：任务被取消
         except asyncio.CancelledError:
             # 处理MCP SDK的取消异常：仅当任务被外部主动取消时才抛出
             task = asyncio.current_task()
             if task is not None and task.cancelling() > 0:
                 raise
-            logger.warning("MCP tool '{}' was cancelled by server/SDK", self._name)
-            return "(MCP tool call was cancelled)"
+            logger.warning("MCP 工具 '{}' 被服务端或 SDK 取消", self._name)
+            return "（MCP 工具调用已被取消）"
         # 异常3：其他所有执行错误
         except Exception as exc:
             # 记录详细异常日志
             logger.exception(
-                "MCP tool '{}' failed: {}: {}",
+                "MCP 工具 '{}' 执行失败：{}：{}",
                 self._name,
                 type(exc).__name__,
                 exc,
             )
-            return f"(MCP tool call failed: {type(exc).__name__})"
+            return f"（MCP 工具调用失败：{type(exc).__name__}）"
 
         # ==================== 解析MCP工具返回结果 ====================
         # 拼接返回内容：MCP返回多块内容，统一转为字符串
@@ -115,7 +115,7 @@ class MCPToolWrapper(Tool):
             else:
                 parts.append(str(block))
         # 返回拼接结果，无内容时返回默认值
-        return "\n".join(parts) or "(no output)"
+        return "\n".join(parts) or "（工具没有返回内容）"
 
 
 # ==================== 核心函数：连接所有MCP服务器并注册工具 ====================
@@ -152,7 +152,7 @@ async def connect_mcp_servers(
                     )
                 # 无command/url → 跳过该服务器
                 else:
-                    logger.warning("MCP server '{}': no command or url configured, skipping", name)
+                    logger.warning("MCP 服务器 '{}' 没有配置 command 或 url，已跳过", name)
                     continue
 
             # ==================== 2. 根据传输类型建立连接 ====================
@@ -163,6 +163,7 @@ async def connect_mcp_servers(
                     command=cfg.command, args=cfg.args, env=cfg.env or None
                 )
                 # 进入异步上下文：自动管理进程读写流
+                # stdio_client 返回一个异步可迭代的读/写对，交给 AsyncExitStack 管理其生命周期
                 read, write = await stack.enter_async_context(stdio_client(params))
 
             # 类型2：sse → 服务器推送事件（远程HTTP服务）
@@ -182,6 +183,7 @@ async def connect_mcp_servers(
                     )
 
                 # 建立SSE连接
+                # SSE 模式由服务端推送事件到客户端，适合服务端主动推送工具更新的场景
                 read, write = await stack.enter_async_context(
                     sse_client(cfg.url, httpx_client_factory=httpx_client_factory)
                 )
@@ -197,19 +199,22 @@ async def connect_mcp_servers(
                     )
                 )
                 # 建立流式HTTP连接
+                # streamable_http_client 返回 read/write/close 三元组，
+                # 其中 write 用于向 MCP 发送请求，read 用于接收响应流
                 read, write, _ = await stack.enter_async_context(
                     streamable_http_client(cfg.url, http_client=http_client)
                 )
 
             # 未知传输类型 → 跳过
             else:
-                logger.warning("MCP server '{}': unknown transport type '{}'", name, transport_type)
+                logger.warning("MCP 服务器 '{}' 的传输类型 '{}' 无法识别，已跳过", name, transport_type)
                 continue
 
             # ==================== 3. 初始化MCP客户端会话 ====================
             # 创建客户端会话：绑定读写流
+            # 使用 ClientSession 包装底层读写流，并在退出时自动关闭
             session = await stack.enter_async_context(ClientSession(read, write))
-            # 初始化MCP会话（握手协议）
+            # 与服务器完成握手、能力协商等初始化流程
             await session.initialize()
 
             # ==================== 4. 拉取MCP服务器的所有工具 ====================
@@ -236,16 +241,17 @@ async def connect_mcp_servers(
                     and wrapped_name not in enabled_tools
                 ):
                     logger.debug(
-                        "MCP: skipping tool '{}' from server '{}' (not in enabledTools)",
-                        wrapped_name,
+                        "MCP：跳过服务器 '{}' 的工具 '{}'（未出现在 enabledTools 中）",
                         name,
+                        wrapped_name,
                     )
                     continue
 
                 # 创建工具包装器 → 注册到框架工具注册表
+                # MCPToolWrapper 将远程工具封装为本地 Tool 实例，负责参数/调用适配
                 wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
                 registry.register(wrapper)
-                logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
+                logger.debug("MCP：已注册服务器 '{}' 提供的工具 '{}'", name, wrapper.name)
                 registered_count += 1
 
                 # 记录匹配到的启用工具
@@ -260,17 +266,16 @@ async def connect_mcp_servers(
                 unmatched_enabled_tools = sorted(enabled_tools - matched_enabled_tools)
                 if unmatched_enabled_tools:
                     logger.warning(
-                        "MCP server '{}': enabledTools entries not found: {}. Available raw names: {}. "
-                        "Available wrapped names: {}",
+                        "MCP 服务器 '{}' 中，enabledTools 指定的这些工具未找到：{}。原始工具名：{}。包装后工具名：{}",
                         name,
                         ", ".join(unmatched_enabled_tools),
-                        ", ".join(available_raw_names) or "(none)",
-                        ", ".join(available_wrapped_names) or "(none)",
+                        ", ".join(available_raw_names) or "（无）",
+                        ", ".join(available_wrapped_names) or "（无）",
                     )
 
             # 连接成功日志
-            logger.info("MCP server '{}': connected, {} tools registered", name, registered_count)
+            logger.info("MCP 服务器 '{}' 已连接，注册工具 {} 个", name, registered_count)
 
         # 服务器连接失败：记录错误日志
         except Exception as e:
-            logger.error("MCP server '{}': failed to connect: {}", name, e)
+            logger.error("MCP 服务器 '{}' 连接失败：{}", name, e)

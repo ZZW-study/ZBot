@@ -1,157 +1,182 @@
-"""Agent loop: the core processing engine."""
-# 核心作用：这是 nanobot 的**大脑核心**，负责接收消息、调用AI、执行工具、返回响应
+"""Agent 主循环与单轮消息处理。
+
+`AgentLoop` 是运行时入口，负责把下面几件事串起来：
+1. 从消息总线或直接调用拿到用户输入。
+2. 找到对应 session，并构造要发给模型的上下文。
+3. 处理模型的普通回复或工具调用。
+4. 把本轮消息安全地写回 session。
+5. 在合适的时机触发长期记忆归档。
+
+因此它既是调度层，也是“消息 -> 模型 -> 工具 -> 会话落盘”这条链路的汇总点。
+"""
+
 from __future__ import annotations
 
-# 标准库导入：异步、JSON、正则、弱引用、上下文管理器、路径、类型注解
 import asyncio
 import json
 import re
-import weakref
 from contextlib import AsyncExitStack
+from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Awaitable, Callable
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-# 日志库：打印程序运行日志
 from loguru import logger
 
-# 导入项目核心模块
-from nanobot.agent.context import ContextBuilder    # 上下文构建器：组装AI需要的对话历史/系统提示
-from nanobot.agent.memory import MemoryStore        # 记忆存储：管理长期对话记忆
-from nanobot.agent.tools.cron import CronTool       # 定时任务工具
-# 文件操作工具：读/写/编辑/列出文件
+from nanobot.agent.context import ContextBuilder
+from nanobot.agent.tools.cron import CronTool
 from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.registry import ToolRegistry           # 工具注册器：管理所有AI可用工具
-from nanobot.agent.tools.shell import ExecTool                  # Shell命令执行工具
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool # 网页抓取/搜索工具
-from nanobot.bus.events import InboundMessage, OutboundMessage  # 入站/出站消息模型
-from nanobot.bus.queue import MessageBus                        # 消息总线：消息收发的中央管道
-from nanobot.providers.base import LLMProvider                  # 大模型接口：对接GPT/DeepSeek等AI
-from nanobot.session.manager import Session, SessionManager     # 会话管理：保存用户对话记录
+from nanobot.agent.tools.registry import ToolRegistry
+from nanobot.agent.tools.shell import ExecTool
+from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
+from nanobot.bus.events import InboundMessage, OutboundMessage
+from nanobot.bus.queue import MessageBus
+from nanobot.providers.base import LLMProvider
+from nanobot.session.manager import Session, SessionManager
 
-# 类型检查：仅开发时校验类型，不运行
 if TYPE_CHECKING:
     from nanobot.config.schema import ExecToolConfig, WebSearchConfig
     from nanobot.cron.service import CronService
+    from nanobot.providers.base import ToolCallRequest
 
-# ====================== 核心类：AI大脑引擎 ======================
+
+_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
+
+
 class AgentLoop:
-    """
-    AI核心处理引擎（AgentLoop）
-    核心工作流程：
-    1. 从消息总线接收用户消息
-    2. 组装对话上下文（历史+记忆+工具）
-    3. 调用大模型（LLM）生成回答
-    4. 如果AI需要工具（读文件/搜网页），自动执行
-    5. 将最终响应返回给用户
+    """运行中的 Agent 实例。
+
+    这个类故意把核心流程收敛成少量 helper：
+    - `_process_message` 负责判断消息类型和命令。
+    - `_run_turn` 负责单轮正常对话。
+    - `_run_agent_loop` 负责模型与工具之间的循环。
+
+    这样每个 helper 都只回答一个问题，便于维护和排错。
     """
 
-    # 常量：工具执行结果最大字符数（超长自动截断，避免AI上下文溢出）
+    # 工具结果如果原样全部写进 session，历史会迅速膨胀，因此对 tool 消息做截断。
     _TOOL_RESULT_MAX_CHARS = 500
 
-    # ====================== 初始化方法：创建AI大脑 ======================
     def __init__(
         self,
-        bus: MessageBus,          # 消息总线：收发消息
-        provider: LLMProvider,    # AI模型提供商（GPT/DeepSeek等）
-        workspace: Path,          # 工作目录：文件操作的根目录
-        model: str | None = None, # AI模型名称（不填则用默认）
-        max_iterations: int = 40, # 最大工具调用次数（防止无限循环）
-        temperature: float = 0.1, # AI温度：0=严谨，1=创意
-        max_tokens: int = 4096,   # AI最大响应长度
-        memory_window: int = 100, # 对话历史窗口（保留最近100条）
-        reasoning_effort: str | None = None, # 推理强度
-        web_search_config: WebSearchConfig | None = None,  # 网页搜索工具配置
-        web_proxy: str | None = None,        # 网页代理
-        exec_config: ExecToolConfig | None = None, # Shell命令配置
-        cron_service: CronService | None = None,   # 定时任务服务
-        restrict_to_workspace: bool = False,       # 是否限制文件操作仅在工作目录内
-        session_manager: SessionManager | None = None, # 会话管理器
-        mcp_servers: dict | None = None,               # MCP扩展工具服务器
+        bus: MessageBus,
+        provider: LLMProvider,
+        workspace: Path,
+        model: str | None = None,
+        max_iterations: int = 40,
+        temperature: float = 0.1,
+        max_tokens: int = 4096,
+        memory_window: int = 100,
+        reasoning_effort: str | None = None,
+        web_search_config: WebSearchConfig | None = None,
+        web_proxy: str | None = None,
+        exec_config: ExecToolConfig | None = None,
+        cron_service: CronService | None = None,
+        restrict_to_workspace: bool = False,
+        session_manager: SessionManager | None = None,
+        mcp_servers: dict[str, Any] | None = None,
     ):
-        # 导入配置类
+        """初始化运行时依赖与内部状态。"""
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
-        # 绑定核心依赖
+
         self.bus = bus
+        # 消息总线，用于接收 inbound 消息和发布 outbound 回复
         self.provider = provider
+        # LLM 提供者抽象（负责与模型交互）
         self.workspace = workspace
-        # AI模型：不传则用提供商默认模型
+        # 工作目录，文件工具等会基于此限制或执行文件操作
         self.model = model or provider.get_default_model()
-        # AI行为参数
+        # 使用的模型名，若未指定则询问 provider 的默认模型
         self.max_iterations = max_iterations
+        # 单轮最大工具调用/迭代次数，防止无限循环
         self.temperature = temperature
+        # 模型的采样温度，决定回答的随机性
         self.max_tokens = max_tokens
+        # 模型返回最大 token 限制
         self.memory_window = memory_window
+        # 回话历史窗口大小，用于构建上下文
         self.reasoning_effort = reasoning_effort
-        # 工具配置
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        # 上下文构建器：负责给AI组装对话上下文
         self.context = ContextBuilder(workspace)
-        # 会话管理器：管理每个用户的对话记录
+        # ContextBuilder 负责把会话历史/当前消息转换为模型输入的 messages
         self.sessions = session_manager or SessionManager(workspace)
-        # 工具注册器：存储AI可用的所有工具
+        # Session 管理器负责会话的创建/保存/加载
         self.tools = ToolRegistry()
+        # 工具注册中心，包含文件/网络/执行等工具实例
 
-        # 状态标志：引擎是否运行
         self._running = False
-        # MCP扩展工具相关
         self._mcp_servers = mcp_servers or {}
         self._mcp_stack: AsyncExitStack | None = None
         self._mcp_connected = False
         self._mcp_connecting = False
-        # 记忆 Consolidate（压缩对话历史）相关
-        self._consolidating: set[str] = set()
-        self._consolidation_tasks: set[asyncio.Task] = set()
-        self._consolidation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
-        # 活跃任务：存储每个会话的正在运行的任务（用于/stop停止）
-        self._active_tasks: dict[str, list[asyncio.Task]] = {}
-        # 处理锁：保证消息串行处理，避免并发混乱
-        self._processing_lock = asyncio.Lock()
-        # 注册默认工具（文件/Shell/网页/消息等）
-        self._register_default_tools()
 
-    # ====================== 注册AI默认可用工具 ======================
+        self._consolidating: set[str] = set()
+        self._consolidation_tasks: set[asyncio.Task[Any]] = set()
+        self._consolidation_locks: dict[str, asyncio.Lock] = {}
+        self._active_tasks: dict[str, set[asyncio.Task[Any]]] = {}
+        self._processing_lock = asyncio.Lock()
+        # 全局消息处理锁，保证单条消息的处理是串行的（避免会话竞争）
+
+        self._register_default_tools()
+        # `_active_tasks` 用于跟踪每个 session 下正在执行的 asyncio.Task，
+        # 便于实现像 `/stop` 这样的控制命令时，能够取消这些任务并统计结果。
+        # `_consolidation_*` 系列字段负责长期记忆归档任务的并发控制与回收。
+
+    # ---- 工具注册与初始化 ----
+
     def _register_default_tools(self) -> None:
-        """注册AI默认可用的所有工具，AI可以直接调用这些功能"""
-        # 如果限制工作目录，则文件操作仅允许在workspace内
+        """注册默认工具集。
+
+        文件工具、shell、web 工具默认都会加载；
+        cron 工具只有在外部确实提供了 `CronService` 时才会注册。
+        """
+        # 如果配置了 restrict_to_workspace，则把工作目录作为文件工具的白名单目录
+        # 否则 allowed_dir 为 None，工具不做目录限制（由工具自身进一步校验）
         allowed_dir = self.workspace if self.restrict_to_workspace else None
-        # 注册文件操作工具
-        for cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(cls(workspace=self.workspace, allowed_dir=allowed_dir))
-        # 注册Shell命令执行工具
-        self.tools.register(ExecTool(
-            working_dir=str(self.workspace),
-            timeout=self.exec_config.timeout,
-            restrict_to_workspace=self.restrict_to_workspace,
-            path_append=self.exec_config.path_append,
-        ))
-        # 注册网页搜索/抓取工具
+
+        for tool_cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool):
+            self.tools.register(tool_cls(workspace=self.workspace, allowed_dir=allowed_dir))
+
+        self.tools.register(
+            ExecTool(
+                working_dir=str(self.workspace),
+                timeout=self.exec_config.timeout,
+                restrict_to_workspace=self.restrict_to_workspace,
+                path_append=self.exec_config.path_append,
+            )
+        )
+        # ExecTool: 负责在工作区运行 shell 命令，受 timeout 与路径限制保护，避免越权执行。
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
-        # 如果有定时任务服务，注册定时工具
+
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
 
-    # ====================== 连接MCP扩展工具 ======================
     async def _connect_mcp(self) -> None:
-        """连接MCP服务器（扩展AI工具，一次性懒加载）"""
-        # 如果已连接/正在连接/无MCP配置，直接返回
+        """懒连接 MCP 服务器。
+
+        MCP 是扩展工具来源，不是每次启动都一定需要。
+        因此这里只在首次真正用到 Agent 时才连接，减少启动成本。
+        """
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
             return
-        self._mcp_connecting = True
+
         from nanobot.agent.tools.mcp import connect_mcp_servers
+
+        self._mcp_connecting = True
         try:
+            # 使用 AsyncExitStack 管理 MCP 连接生命周期，确保在关闭时能统一释放所有资源
             self._mcp_stack = AsyncExitStack()
             await self._mcp_stack.__aenter__()
-            # 连接所有MCP服务器，加载扩展工具
+            # connect_mcp_servers 会把来自 MCP 的工具注册进 ToolRegistry
             await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
             self._mcp_connected = True
-        except Exception as e:
-            logger.error("Failed to connect MCP servers (will retry next message): {}", e)
+        except Exception as exc:
+            logger.error("连接 MCP 服务器失败（下次收到消息时会重试）：{}", exc)
             if self._mcp_stack:
                 try:
                     await self._mcp_stack.aclose()
@@ -161,410 +186,550 @@ class AgentLoop:
         finally:
             self._mcp_connecting = False
 
-    # ====================== 设置工具上下文（渠道/聊天ID） ======================
     def _set_tool_context(self, channel: str, chat_id: str) -> None:
-        """给工具设置上下文：告诉工具消息来自哪个渠道、哪个聊天"""
-        for name in ("cron",):
-            if tool := self.tools.get(name):
-                if hasattr(tool, "set_context"):
-                    tool.set_context(channel, chat_id)
+        """把当前 channel/chat_id 注入给支持上下文的工具。"""
+        for name in self.tools.tool_names:
+            tool = self.tools.get(name)
+            if tool and hasattr(tool, "set_context"):
+                tool.set_context(channel, chat_id)
 
-    # ====================== 清理AI思考标签 ======================
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
-        """删除AI返回的思考标签，只保留最终回答"""
+        """移除模型输出中的 `<think>...</think>` 思维块。"""
         if not text:
             return None
-        return re.sub(r"[\s\S]*?", "", text).strip() or None
+        cleaned = _THINK_BLOCK_RE.sub("", text).strip()
+        return cleaned or None
 
-    # ====================== 格式化工具调用提示 ======================
     @staticmethod
-    def _tool_hint(tool_calls: list) -> str:
-        """将AI的工具调用格式化为简洁提示，例如：web_search("Python")"""
-        def _fmt(tc):
-            args = (tc.arguments[0] if isinstance(tc.arguments, list) else tc.arguments) or {}
-            val = next(iter(args.values()), None) if isinstance(args, dict) else None
-            if not isinstance(val, str):
-                return tc.name
-            return f'{tc.name}("{val[:40]}…")' if len(val) > 40 else f'{tc.name}("{val}")'
-        return ", ".join(_fmt(tc) for tc in tool_calls)
+    def _tool_hint(tool_calls: list[ToolCallRequest]) -> str:
+        """把工具调用列表压缩成适合进度展示的短提示。"""
+        hints: list[str] = []
+        for tool_call in tool_calls:
+            args = tool_call.arguments
+            if isinstance(args, list) and args:
+                args = args[0]
 
-    # ====================== 核心AI循环：调用LLM+执行工具 ======================
+            preview: str | None = None
+            if isinstance(args, dict):
+                preview = next((value for value in args.values() if isinstance(value, str) and value), None)
+
+            if preview is None:
+                hints.append(tool_call.name)
+            elif len(preview) > 40:
+                hints.append(f'{tool_call.name}("{preview[:40]}...")')
+            else:
+                hints.append(f'{tool_call.name}("{preview}")')
+        return ", ".join(hints)
+
     async def _run_agent_loop(
         self,
-        initial_messages: list[dict], # 初始上下文（对话历史+当前消息）
-        on_progress: Callable[..., Awaitable[None]] | None = None, # 进度回调
-    ) -> tuple[str | None, list[str], list[dict]]:
+        initial_messages: list[dict[str, Any]],
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+    ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
+        """驱动“模型回复 -> 工具执行 -> 再喂回模型”的循环。
+
+        返回三样东西：
+        1. 最终用户可见回复
+        2. 本轮实际调用过的工具列表
+        3. 完整消息链，用于后续写回 session
         """
-        运行AI核心循环
-        返回：(最终回答, 使用的工具列表, 完整对话消息)
-        """
-        messages = initial_messages
-        iteration = 0
-        final_content = None
+        # 复制初始消息链到局部变量，后续会在循环中追加 assistant/tool 的中间消息
+        messages = list(initial_messages)
+        # 本轮实际上被调用过的工具名称（按顺序，会在写回历史时去重）
         tools_used: list[str] = []
+        # 最终返回给用户的文本（清理过 <think> 标签的回复），初始为 None
+        final_content: str | None = None
 
-        # 循环调用AI，最多执行max_iterations次（防止无限工具调用）
-        while iteration < self.max_iterations:
-            iteration += 1
-
-            # 调用大模型AI
+        for _ in range(self.max_iterations):
+            # 每一轮都把“当前消息链 + 工具 schema”发给模型，让模型自行决定
+            # 是直接回答，还是继续调用工具。
+            # 把当前消息链交给 LLMProvider，请求模型决定是回答还是调用工具
             response = await self.provider.chat(
                 messages=messages,
-                tools=self.tools.get_definitions(), # 传给AI所有可用工具
+                tools=self.tools.get_definitions(),
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 reasoning_effort=self.reasoning_effort,
             )
 
-            # 如果AI需要调用工具
             if response.has_tool_calls:
-                # 发送进度提示：AI的思考内容+工具调用提示
+                # 如果模型一边思考一边决定调用工具，这里把精简后的状态向外发送，
+                # 让 CLI 或前端能够展示“正在做什么”。
                 if on_progress:
                     thought = self._strip_think(response.content)
                     if thought:
                         await on_progress(thought)
                     await on_progress(self._tool_hint(response.tool_calls), tool_hint=True)
 
-                # 格式化工具调用消息，加入对话上下文
+                # 将模型返回的 tool_calls 转为写入消息链的“函数调用”结构，
+                # 这样在执行工具前，消息链中就包含了 assistant 的调用意图，
+                # 便于下一轮模型看到自己的调用历史。
                 tool_call_dicts = [
                     {
-                        "id": tc.id,
+                        "id": tool_call.id,
                         "type": "function",
                         "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments, ensure_ascii=False)
-                        }
+                            "name": tool_call.name,
+                            "arguments": json.dumps(tool_call.arguments, ensure_ascii=False),
+                        },
                     }
-                    for tc in response.tool_calls
+                    for tool_call in response.tool_calls
                 ]
-                messages = self.context.add_assistant_message(
-                    messages, response.content, tool_call_dicts,
+                # 先把 assistant 的调用意图写入消息链，再执行工具。
+                # 这样下一轮模型能看到“自己刚才调用了什么”。
+                self.context.add_assistant_message(
+                    messages,
+                    response.content,
+                    tool_call_dicts,
                     reasoning_content=response.reasoning_content,
                     thinking_blocks=response.thinking_blocks,
                 )
 
-                # 遍历所有工具调用，逐个执行
                 for tool_call in response.tool_calls:
+                    # 逐个执行工具，并把结果回填给模型。工具可能涉及网络/IO/子进程，故需 await。
                     tools_used.append(tool_call.name)
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
-                    logger.info("Tool call: {}({})", tool_call.name, args_str[:200])
-                    # 执行工具（读文件/搜网页/执行命令）
+                    logger.info("调用工具：{}({})", tool_call.name, args_str[:200])
+                    # 执行工具，得到任意可序列化的结果（字符串或结构化对象）
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
-                    # 将工具执行结果加入上下文，让AI看到结果
-                    messages = self.context.add_tool_result(
-                        messages, tool_call.id, tool_call.name, result
-                    )
-            # 如果AI不需要工具，直接返回回答
-            else:
-                clean = self._strip_think(response.content)
-                # 如果AI返回错误，不保存到历史，避免污染上下文
-                if response.finish_reason == "error":
-                    logger.error("LLM returned error: {}", (clean or "")[:200])
-                    final_content = clean or "Sorry, I encountered an error calling the AI model."
-                    break
-                # 保存AI的最终回答
-                messages = self.context.add_assistant_message(
-                    messages, clean, reasoning_content=response.reasoning_content,
-                    thinking_blocks=response.thinking_blocks,
-                )
-                final_content = clean
+                    # 将工具执行结果作为一条 role=tool 的消息追加到 messages，供模型下一轮消费
+                    self.context.add_tool_result(messages, tool_call.id, tool_call.name, result)
+                continue
+
+            # 没有工具调用时，本轮对话结束，clean 后的文本就是最终回复。
+            # `_strip_think` 会移除模型可能包含的 <think>...</think> 思考块，只保留最终输出。
+            clean = self._strip_think(response.content)
+            if response.finish_reason == "error":
+                logger.error("大模型返回错误：{}", (clean or "")[:200])
+                final_content = clean or "抱歉，调用大模型时发生了错误。"
                 break
 
-        # 达到最大迭代次数，返回提示
-        if final_content is None and iteration >= self.max_iterations:
-            logger.warning("Max iterations ({}) reached", self.max_iterations)
+            self.context.add_assistant_message(
+                messages,
+                clean,
+                reasoning_content=response.reasoning_content,
+                thinking_blocks=response.thinking_blocks,
+            )
+            final_content = clean
+            break
+
+        if final_content is None:
+            # 如果循环结束仍未产生最终内容，说明已达到 max_iterations 限制。
+            # 这是为了防止模型与工具进入无穷回路。向用户说明原因并建议拆分任务。
+            logger.warning("已达到最大工具迭代次数：{}", self.max_iterations)
             final_content = (
-                f"I reached the maximum number of tool call iterations ({self.max_iterations}) "
-                "without completing the task. You can try breaking the task into smaller steps."
+                f"我已经达到最大工具调用轮数（{self.max_iterations} 次），仍未完成任务。"
+                "你可以把任务拆成更小的步骤后再试。"
             )
 
         return final_content, tools_used, messages
 
-    # ====================== 启动AI引擎 ======================
     async def run(self) -> None:
-        """启动AI核心循环，持续消费消息总线的消息"""
+        """从消息总线持续消费入站消息，直到显式停止。"""
         self._running = True
-        # 连接MCP扩展工具
         await self._connect_mcp()
-        logger.info("Agent loop started")
+        logger.info("Agent 主循环已启动")
 
-        # 无限循环：监听消息总线
         while self._running:
             try:
-                # 每1秒监听一次消息
                 msg = await asyncio.wait_for(self.bus.consume_inbound(), timeout=1.0)
             except asyncio.TimeoutError:
                 continue
 
-            # 如果用户发送 /stop 命令，停止当前任务
             if msg.content.strip().lower() == "/stop":
                 await self._handle_stop(msg)
-            # 否则，异步处理消息（不阻塞主线程）
-            else:
-                task = asyncio.create_task(self._dispatch(msg))
-                self._active_tasks.setdefault(msg.session_key, []).append(task)
-                # 任务完成后，从活跃任务列表移除
-                task.add_done_callback(lambda t, k=msg.session_key: self._active_tasks.get(k, []) and self._active_tasks[k].remove(t) if t in self._active_tasks.get(k, []) else None)
+                continue
 
-    # ====================== 处理 /stop 命令：停止当前任务 ======================
+            # 使用 create_task 将单条消息的处理放到后台任务中，
+            # 保证主循环能快速返回继续消费新消息，避免因单条消息处理耗时而阻塞。
+            task = asyncio.create_task(self._dispatch(msg))
+            # 记录该任务到 _active_tasks，以便实现 /stop 等控制命令时能取消它
+            self._track_active_task(msg.session_key, task)
+
+    def _track_active_task(self, session_key: str, task: asyncio.Task[Any]) -> None:
+        """登记一个正在运行的会话任务，供 `/stop` 使用。"""
+        self._active_tasks.setdefault(session_key, set()).add(task)
+        task.add_done_callback(partial(self._clear_active_task, session_key))
+
+    def _clear_active_task(self, session_key: str, task: asyncio.Task[Any]) -> None:
+        """任务结束后，把它从活跃任务表里清掉。"""
+        tasks = self._active_tasks.get(session_key)
+        if not tasks:
+            return
+        tasks.discard(task)
+        if not tasks:
+            self._active_tasks.pop(session_key, None)
+
     async def _handle_stop(self, msg: InboundMessage) -> None:
-        """取消当前会话的所有正在运行的任务"""
-        tasks = self._active_tasks.pop(msg.session_key, [])
-        cancelled = sum(1 for t in tasks if not t.done() and t.cancel())
-        # 等待任务取消完成
-        for t in tasks:
+        """处理 `/stop` 命令，取消当前会话下仍在运行的任务。"""
+        tasks = list(self._active_tasks.pop(msg.session_key, set()))
+        cancelled = sum(1 for task in tasks if not task.done() and task.cancel())
+
+        for task in tasks:
             try:
-                await t
+                await task
             except (asyncio.CancelledError, Exception):
                 pass
-        # 返回停止提示
-        content = f"⏹ Stopped {cancelled} task(s)." if cancelled else "No active task to stop."
-        await self.bus.publish_outbound(OutboundMessage(
-            channel=msg.channel, chat_id=msg.chat_id, content=content,
-        ))
 
-    # ====================== 消息分发：加锁保证串行处理 ======================
+        content = f"已停止 {cancelled} 个任务。" if cancelled else "当前没有可停止的活动任务。"
+        await self.bus.publish_outbound(
+            OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content=content)
+        )
+
     async def _dispatch(self, msg: InboundMessage) -> None:
-        """分发消息，加锁保证同一时间只处理一条消息（避免并发混乱）"""
+        """串行处理单条消息，并负责把结果重新发布到总线。"""
+        # 使用全局处理锁保证单条消息的处理逻辑在同一时刻只有一个执行体，
+        # 这样可以简化会话落盘逻辑并避免并发写导致的竞态问题。
         async with self._processing_lock:
             try:
-                # 处理消息，获取响应
                 response = await self._process_message(msg)
-                # 将响应发送到消息总线
                 if response is not None:
                     await self.bus.publish_outbound(response)
                 elif msg.channel == "cli":
-                    await self.bus.publish_outbound(OutboundMessage(
-                        channel=msg.channel, chat_id=msg.chat_id,
-                        content="", metadata=msg.metadata or {},
-                    ))
+                    await self.bus.publish_outbound(
+                        OutboundMessage(
+                            channel=msg.channel,
+                            chat_id=msg.chat_id,
+                            content="",
+                            metadata=msg.metadata or {},
+                        )
+                    )
             except asyncio.CancelledError:
-                logger.info("Task cancelled for session {}", msg.session_key)
+                logger.info("会话 {} 的任务已取消", msg.session_key)
                 raise
             except Exception:
-                logger.exception("Error processing message for session {}", msg.session_key)
-                # 异常时返回错误提示
-                await self.bus.publish_outbound(OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id,
-                    content="Sorry, I encountered an error.",
-                ))
+                logger.exception("处理会话 {} 的消息时发生异常", msg.session_key)
+                await self.bus.publish_outbound(
+                    OutboundMessage(
+                        channel=msg.channel,
+                        chat_id=msg.chat_id,
+                        content="抱歉，处理这条消息时发生了错误。",
+                    )
+                )
 
-    # ====================== 关闭MCP连接 ======================
     async def close_mcp(self) -> None:
-        """关闭MCP扩展工具连接"""
-        if self._mcp_stack:
-            try:
-                await self._mcp_stack.aclose()
-            except BaseException as exc:
-                if not (isinstance(exc, RuntimeError) or exc.__class__.__name__ == "BaseExceptionGroup"):
-                    raise
+        """关闭 MCP 连接栈，通常在进程退出前调用。"""
+        if not self._mcp_stack:
+            return
+        try:
+            await self._mcp_stack.aclose()
+        except BaseException as exc:
+            if not (isinstance(exc, RuntimeError) or exc.__class__.__name__ == "BaseExceptionGroup"):
+                raise
+        finally:
             self._mcp_stack = None
+            self._mcp_connected = False
 
-    # ====================== 停止AI引擎 ======================
     def stop(self) -> None:
-        """停止AI核心循环"""
+        """请求主循环停止，不再继续消费新消息。"""
         self._running = False
-        logger.info("Agent loop stopping")
+        logger.info("Agent 主循环准备停止")
 
-    # ====================== 核心：处理单条用户消息 ======================
     async def _process_message(
         self,
-        msg: InboundMessage,          # 入站用户消息
-        session_key: str | None = None, # 会话ID
-        on_progress: Callable[[str], Awaitable[None]] | None = None, # 进度回调
+        msg: InboundMessage,
+        session_key: str | None = None,
+        on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> OutboundMessage | None:
-        """处理单条消息，返回出站响应（核心业务逻辑）"""
-        # 处理系统消息
+        """处理单条消息，并返回最终的 outbound 消息。
+
+        这里会先按消息来源做分流：
+        - `system` 消息走后台任务路径
+        - 普通消息走用户会话路径
+
+        普通消息内部还会进一步处理内建命令，例如 `/new`、`/help`。
+        """
         if msg.channel == "system":
-            channel, chat_id = (msg.chat_id.split(":", 1) if ":" in msg.chat_id
-                                else ("cli", msg.chat_id))
-            logger.info("Processing system message from {}", msg.sender_id)
-            key = f"{channel}:{chat_id}"
-            session = self.sessions.get_or_create(key)
-            self._set_tool_context(channel, chat_id)
-            # 获取对话历史
-            history = session.get_history(max_messages=self.memory_window)
-            # 构建AI上下文
-            messages = self.context.build_messages(
-                history=history,
-                current_message=msg.content, channel=channel, chat_id=chat_id,
+            # system 消息的 chat_id 允许带 `channel:chat_id` 复合格式，
+            # 这样后台任务可以精准落到原始目标对话。
+            channel, chat_id = self._resolve_system_target(msg.chat_id)
+            logger.info("正在处理来自 {} 的系统消息", msg.sender_id)
+            session = self.sessions.get_or_create(f"{channel}:{chat_id}")
+            # 对 system 消息直接触发一次完整的对话回合，on_progress 由调用者传入用于反馈进度
+            content = await self._run_turn(
+                session,
+                content=msg.content,
+                channel=channel,
+                chat_id=chat_id,
+                on_progress=on_progress,
             )
-            # 运行AI核心循环
-            final_content, _, all_msgs = await self._run_agent_loop(messages)
-            # 保存对话记录
-            self._save_turn(session, all_msgs, 1 + len(history))
-            self.sessions.save(session)
-            return OutboundMessage(channel=channel, chat_id=chat_id,
-                                  content=final_content or "Background task completed.")
+            return OutboundMessage(
+                channel=channel,
+                chat_id=chat_id,
+                content=content or "后台任务已执行完成。",
+            )
 
-        # 日志：打印收到的消息
         preview = msg.content[:80] + "..." if len(msg.content) > 80 else msg.content
-        logger.info("Processing message from {}:{}: {}", msg.channel, msg.sender_id, preview)
+        logger.info("正在处理来自 {}:{} 的消息：{}", msg.channel, msg.sender_id, preview)
 
-        # 获取/创建用户会话（每个用户独立对话记录）
         key = session_key or msg.session_key
         session = self.sessions.get_or_create(key)
+        # session_key 允许外部指定（例如 CLI 的一次性调用），否则使用消息自带的 session_key
+        command = msg.content.strip().lower()
 
-        # ====================== 处理用户命令 ======================
-        cmd = msg.content.strip().lower()
-        # 命令1：/new 新建会话（清空对话历史）
-        if cmd == "/new":
-            lock = self._consolidation_locks.setdefault(session.key, asyncio.Lock())
-            self._consolidating.add(session.key)
-            try:
-                async with lock:
-                    snapshot = session.messages[session.last_consolidated:]
-                    if snapshot:
-                        temp = Session(key=session.key)
-                        temp.messages = list(snapshot)
-                        if not await self._consolidate_memory(temp, archive_all=True):
-                            return OutboundMessage(
-                                channel=msg.channel, chat_id=msg.chat_id,
-                                content="Memory archival failed, session not cleared. Please try again.",
-                            )
-            except Exception:
-                logger.exception("/new archival failed for {}", session.key)
+        if command == "/new":
+            # /new 的语义不是简单清空，而是“先归档，再开始新会话”。
+            if not await self._archive_and_reset_session(session):
                 return OutboundMessage(
-                    channel=msg.channel, chat_id=msg.chat_id,
-                    content="Memory archival failed, session not cleared. Please try again.",
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content="长期记忆归档失败，会话未清空，请稍后重试。",
                 )
-            finally:
-                self._consolidating.discard(session.key)
+            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id, content="已开始新的会话。")
 
-            session.clear() # 清空会话
-            self.sessions.save(session)
-            self.sessions.invalidate(session.key)
-            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="New session started.")
-        # 命令2：/help 帮助
-        if cmd == "/help":
-            return OutboundMessage(channel=msg.channel, chat_id=msg.chat_id,
-                                  content="🐈 nanobot commands:\n/new — 新建对话\n/stop — 停止任务\n/help — 帮助")
+        if command == "/help":
+            return OutboundMessage(
+                channel=msg.channel,
+                chat_id=msg.chat_id,
+                content="nanobot 可用命令：\n/new - 开始新会话\n/stop - 停止当前任务\n/help - 查看帮助",
+            )
 
-        # 自动压缩对话历史（防止过长）
-        unconsolidated = len(session.messages) - session.last_consolidated
-        if (unconsolidated >= self.memory_window and session.key not in self._consolidating):
-            self._consolidating.add(session.key)
-            lock = self._consolidation_locks.setdefault(session.key, asyncio.Lock())
+        # 只有会话累计到一定长度时，才在后台触发长期记忆归档。
+        self._schedule_consolidation(session)
 
-            async def _consolidate_and_unlock():
-                try:
-                    async with lock:
-                        await self._consolidate_memory(session)
-                finally:
-                    self._consolidating.discard(session.key)
-                    _task = asyncio.current_task()
-                    if _task is not None:
-                        self._consolidation_tasks.discard(_task)
-
-            _task = asyncio.create_task(_consolidate_and_unlock())
-            self._consolidation_tasks.add(_task)
-
-        # 设置工具上下文
-        self._set_tool_context(msg.channel, msg.chat_id)
-
-        # 获取对话历史
-        history = session.get_history(max_messages=self.memory_window)
-        # 构建AI上下文（支持图片/文本消息）
-        initial_messages = self.context.build_messages(
-            history=history,
-            current_message=msg.content,
-            media=msg.media if msg.media else None,
-            channel=msg.channel, chat_id=msg.chat_id,
-        )
-
-        # 进度回调：实时发送AI思考/工具调用提示
         async def _bus_progress(content: str, *, tool_hint: bool = False) -> None:
-            meta = dict(msg.metadata or {})
-            meta["_progress"] = True
-            meta["_tool_hint"] = tool_hint
-            await self.bus.publish_outbound(OutboundMessage(
-                channel=msg.channel, chat_id=msg.chat_id, content=content, metadata=meta,
-            ))
+            """把模型中间进度包装成 outbound 消息发回前端。"""
+            metadata = dict(msg.metadata or {})
+            metadata["_progress"] = True
+            metadata["_tool_hint"] = tool_hint
+            await self.bus.publish_outbound(
+                OutboundMessage(
+                    channel=msg.channel,
+                    chat_id=msg.chat_id,
+                    content=content,
+                    metadata=metadata,
+                )
+            )
 
-        # 运行AI核心循环，生成最终回答
-        final_content, _, all_msgs = await self._run_agent_loop(
-            initial_messages, on_progress=on_progress or _bus_progress,
+        final_content = await self._run_turn(
+            session,
+            content=msg.content,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            media=msg.media or None,
+            on_progress=on_progress or _bus_progress,
         )
-
-        # 兜底：如果AI无响应，返回默认文本
-        if final_content is None:
-            final_content = "I've completed processing but have no response to give."
-
-        # 保存对话记录到会话
-        self._save_turn(session, all_msgs, 1 + len(history))
-        self.sessions.save(session)
-
-        # 日志：打印AI响应
         preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info("Response to {}:{}: {}", msg.channel, msg.sender_id, preview)
-        # 返回最终响应
+        logger.info("发送给 {}:{} 的回复：{}", msg.channel, msg.sender_id, preview)
+
         return OutboundMessage(
-            channel=msg.channel, chat_id=msg.chat_id, content=final_content,
+            channel=msg.channel,
+            chat_id=msg.chat_id,
+            content=final_content,
             metadata=msg.metadata or {},
         )
 
-    # ====================== 保存对话轮次 ======================
-    def _save_turn(self, session: Session, messages: list[dict], skip: int) -> None:
-        """保存一轮对话（用户消息+AI响应），截断超长工具结果"""
-        from datetime import datetime
-        for m in messages[skip:]:
-            entry = dict(m)
-            role, content = entry.get("role"), entry.get("content")
-            # 跳过空消息
-            if role == "assistant" and not content and not entry.get("tool_calls"):
-                continue
-            # 截断超长工具结果
-            if role == "tool" and isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
-                entry["content"] = content[:self._TOOL_RESULT_MAX_CHARS] + "\n... (truncated)"
-            # 清理用户消息的上下文标签
-            elif role == "user":
-                if isinstance(content, str) and content.startswith(ContextBuilder._RUNTIME_CONTEXT_TAG):
-                    parts = content.split("\n\n", 1)
-                    if len(parts) > 1 and parts[1].strip():
-                        entry["content"] = parts[1]
-                    else:
-                        continue
-                if isinstance(content, list):
-                    filtered = []
-                    for c in content:
-                        if c.get("type") == "text" and isinstance(c.get("text"), str) and c["text"].startswith(ContextBuilder._RUNTIME_CONTEXT_TAG):
-                            continue
-                        if (c.get("type") == "image_url"
-                                and c.get("image_url", {}).get("url", "").startswith("data:image/")):
-                            filtered.append({"type": "text", "text": "[image]"})
-                        else:
-                            filtered.append(c)
-                    if not filtered:
-                        continue
-                    entry["content"] = filtered
-            entry.setdefault("timestamp", datetime.now().isoformat())
-            session.messages.append(entry)
-        session.updated_at = datetime.now()
+    @staticmethod
+    def _resolve_system_target(chat_id: str) -> tuple[str, str]:
+        """解析 system 消息的目标 channel/chat_id。"""
+        if ":" in chat_id:
+            return tuple(chat_id.split(":", 1))  # type: ignore[return-value]
+        return "cli", chat_id
 
-    # ====================== 记忆 Consolidate：压缩对话历史 ======================
-    async def _consolidate_memory(self, session, archive_all: bool = False) -> bool:
-        """压缩对话历史，将长对话总结为记忆，节省上下文空间"""
-        return await MemoryStore(self.workspace).consolidate(
-            session, self.provider, self.model,
-            archive_all=archive_all, memory_window=self.memory_window,
+    async def _run_turn(
+        self,
+        session: Session,
+        *,
+        content: str,
+        channel: str,
+        chat_id: str,
+        media: list[str] | None = None,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+    ) -> str:
+        """执行一轮标准对话。
+
+        这层是普通消息和 system 消息共用的主路径：
+        1. 注入工具上下文
+        2. 从 session 取历史
+        3. 构造模型请求
+        4. 执行模型/工具循环
+        5. 把本轮结果写回 session
+        """
+        self._set_tool_context(channel, chat_id)
+
+        history = session.get_history(max_messages=self.memory_window)
+        initial_messages = self.context.build_messages(
+            history=history,
+            current_message=content,
+            media=media,
+            channel=channel,
+            chat_id=chat_id,
         )
 
-    # ====================== 直接调用AI（CLI/定时任务） ======================
+        final_content, tools_used, all_messages = await self._run_agent_loop(
+            initial_messages,
+            on_progress=on_progress,
+        )
+        final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
+
+        self._save_turn(session, all_messages, 1 + len(history), tools_used)
+        self.sessions.save(session)
+        return final_content
+
+    async def _archive_and_reset_session(self, session: Session) -> bool:
+        """归档当前会话剩余消息，并把会话清空重置。"""
+        lock = self._get_consolidation_lock(session.key)
+        self._consolidating.add(session.key)
+        try:
+            async with lock:
+                snapshot = session.messages[session.last_consolidated :]
+                if snapshot:
+                    temp = Session(key=session.key, messages=list(snapshot))
+                    if not await self._consolidate_memory(temp, archive_all=True):
+                        return False
+        except Exception:
+            logger.exception("会话 {} 在执行 /new 归档时失败", session.key)
+            return False
+        finally:
+            self._consolidating.discard(session.key)
+
+        session.clear()
+        self.sessions.save(session)
+        self.sessions.invalidate(session.key)
+        return True
+
+    def _schedule_consolidation(self, session: Session) -> None:
+        """在满足阈值时，为会话安排后台记忆归档任务。"""
+        unconsolidated = len(session.messages) - session.last_consolidated
+        if unconsolidated < self.memory_window or session.key in self._consolidating:
+            return
+
+        self._consolidating.add(session.key)
+        task = asyncio.create_task(self._run_consolidation(session))
+        self._consolidation_tasks.add(task)
+        task.add_done_callback(self._consolidation_tasks.discard)
+
+    async def _run_consolidation(self, session: Session) -> None:
+        """真正执行后台归档任务，并保证状态标记能被回收。"""
+        try:
+            async with self._get_consolidation_lock(session.key):
+                await self._consolidate_memory(session)
+        finally:
+            self._consolidating.discard(session.key)
+
+    def _get_consolidation_lock(self, session_key: str) -> asyncio.Lock:
+        """获取某个 session 专属的归档锁。"""
+        lock = self._consolidation_locks.get(session_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._consolidation_locks[session_key] = lock
+        return lock
+
+    def _save_turn(
+        self,
+        session: Session,
+        messages: list[dict[str, Any]],
+        skip: int,
+        tools_used: list[str] | None = None,
+    ) -> None:
+        """把本轮新增消息写回 session。
+
+        `messages` 里包含 system prompt、历史消息和当前轮消息，
+        因此这里通过 `skip` 跳过前半段，只保留本轮真正新增的消息。
+        """
+        from datetime import datetime
+
+        turn_messages = [dict(message) for message in messages[skip:]]
+        # `skip` 通常等于 1 + len(history)，用于跳过 system + 已有历史，
+        # 仅把本轮新增的 assistant/tool/user 消息写进 session。
+        self._annotate_tools_used(turn_messages, tools_used or [])
+
+        for entry in turn_messages:
+            role = entry.get("role")
+            content = entry.get("content")
+
+            if role == "assistant" and not content and not entry.get("tool_calls"):
+                continue
+
+            # tool 结果通常最容易失控增长，落盘前在这里做统一截断。
+            if role == "tool" and isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
+                entry["content"] = content[: self._TOOL_RESULT_MAX_CHARS] + "\n……（内容已截断）"
+            elif role == "user":
+                # user 消息里会混入当前轮的运行时元信息，写回历史前必须去掉。
+                stripped = self._strip_runtime_context(content)
+                if stripped is None:
+                    continue
+                entry["content"] = stripped
+
+            entry.setdefault("timestamp", datetime.now().isoformat())
+            session.messages.append(entry)
+
+        session.updated_at = datetime.now()
+
+    @staticmethod
+    def _annotate_tools_used(messages: list[dict[str, Any]], tools_used: list[str]) -> None:
+        """把本轮使用过的工具集合挂到最后一条 assistant 消息上。"""
+        if not tools_used:
+            return
+
+        unique_tools = list(dict.fromkeys(tools_used))
+        for message in reversed(messages):
+            if message.get("role") == "assistant":
+                message["tools_used"] = unique_tools
+                return
+
+    @staticmethod
+    def _strip_runtime_context(content: Any) -> str | list[dict[str, Any]] | None:
+        """从 user 消息里移除运行时元信息。
+
+        运行时信息只对当前轮推理有意义，长期保留在 session 里会污染历史，
+        所以这里在落盘前主动清理。
+        """
+        if isinstance(content, str):
+            if content.startswith(ContextBuilder._RUNTIME_CONTEXT_TAG) or content.startswith(ContextBuilder._LEGACY_RUNTIME_CONTEXT_TAG):
+                parts = content.split("\n\n", 1)
+                return parts[1] if len(parts) > 1 and parts[1].strip() else None
+            return content
+
+        if not isinstance(content, list):
+            return content
+
+        # 对于 list 形式的混合内容（例如图片+文本），逐项过滤运行时上下文并把图片替换为占位
+        filtered: list[dict[str, Any]] = []
+        for item in content:
+            if (
+                item.get("type") == "text"
+                and isinstance(item.get("text"), str)
+                and (
+                    item["text"].startswith(ContextBuilder._RUNTIME_CONTEXT_TAG)
+                    or item["text"].startswith(ContextBuilder._LEGACY_RUNTIME_CONTEXT_TAG)
+                )
+            ):
+                continue
+            if (
+                item.get("type") == "image_url"
+                and item.get("image_url", {}).get("url", "").startswith("data:image/")
+            ):
+                filtered.append({"type": "text", "text": "[image]"})
+            else:
+                filtered.append(item)
+        return filtered or None
+
+    async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
+        """把会话交给 `MemoryStore` 做长期记忆归档。"""
+        # 这里把 session 的未归档段落交给 MemoryStore 处理，
+        # MemoryStore 负责生成摘要、向持久化/向量库落盘并决定是否归档到长期记忆。
+        return await self.context.memory.consolidate(
+            session,
+            self.provider,
+            self.model,
+            archive_all=archive_all,
+            memory_window=self.memory_window,
+        )
+
     async def process_direct(
         self,
-        content: str,                # 消息内容
+        content: str,
         session_key: str = "cli:direct",
         channel: str = "cli",
         chat_id: str = "direct",
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
-        """直接处理消息（用于CLI命令行或定时任务）"""
+        """供 CLI 或脚本直接调用的一次性入口。"""
+        # 用于脚本/测试/CLI 的同步入口：确保 MCP 已连接（若需要），然后同步处理一条消息并返回文本。
         await self._connect_mcp()
         msg = InboundMessage(channel=channel, sender_id="user", chat_id=chat_id, content=content)
         response = await self._process_message(msg, session_key=session_key, on_progress=on_progress)
         return response.content if response else ""
-    
-    

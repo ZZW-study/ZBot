@@ -74,7 +74,7 @@ class CronTool(Tool):
     @property
     def description(self) -> str:
         """工具功能描述，让大模型理解工具的用途"""
-        return "Schedule reminders and recurring tasks. Actions: add, list, remove."
+        return "创建、查看和删除定时提醒或循环任务。支持 add、list、remove 三种动作。"
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -89,27 +89,27 @@ class CronTool(Tool):
                 "action": {
                     "type": "string",
                     "enum": ["add", "list", "remove"],  # 限定仅支持这三个动作
-                    "description": "Action to perform",
+                    "description": "要执行的动作：add、list 或 remove。",
                 },
                 # 可选参数：提醒消息（添加任务时必填）
-                "message": {"type": "string", "description": "Reminder message (for add)"},
+                "message": {"type": "string", "description": "提醒内容（action=add 时必填）。"},
                 # 可选参数：循环间隔（秒），用于循环执行任务
                 "every_seconds": {
                     "type": "integer",
-                    "description": "Interval in seconds (for recurring tasks)",
+                    "description": "循环任务的间隔秒数。",
                 },
                 # 可选参数：Cron表达式（如 0 9 * * * = 每天早上9点）
                 "cron_expr": {
                     "type": "string",
-                    "description": "Cron expression like '0 9 * * *' in Beijing time (UTC+8)",
+                    "description": "北京时间的 Cron 表达式，例如 '0 9 * * *' 表示每天上午 9 点。",
                 },
                 # 可选参数：ISO格式时间，用于一次性定时任务
                 "at": {
                     "type": "string",
-                    "description": "ISO datetime in Beijing time (e.g. '2026-02-12T10:30:00')",
+                    "description": "北京时间的 ISO 时间，例如 '2026-02-12T10:30:00'。",
                 },
                 # 可选参数：任务ID（删除任务时必填）
-                "job_id": {"type": "string", "description": "Job ID (for remove)"},
+                "job_id": {"type": "string", "description": "任务 ID（action=remove 时必填）。"},
             },
             "required": ["action"],  # 仅action为必填参数，其余根据动作动态必填
         }
@@ -134,7 +134,7 @@ class CronTool(Tool):
         if action == "add":
             # 安全校验：禁止在定时任务内部创建新任务，防止嵌套死循环
             if self._in_cron_context.get():
-                return "Error: cannot schedule new jobs from within a cron job execution"
+                return "错误：不能在定时任务执行过程中再次创建新的定时任务。"
             # 调用私有方法创建任务
             return self._add_job(message, every_seconds, cron_expr, at)
         
@@ -147,7 +147,7 @@ class CronTool(Tool):
             return self._remove_job(job_id)
         
         # 未知动作，返回错误提示
-        return f"Unknown action: {action}"
+        return f"错误：未知动作 {action}"
 
     # ==================== 私有方法：添加定时任务（核心业务逻辑） ====================
     def _add_job(
@@ -163,11 +163,11 @@ class CronTool(Tool):
         """
         # 校验1：添加任务必须填写提醒消息
         if not message:
-            return "Error: message is required for add"
+            return "错误：创建任务时必须提供提醒内容。"
         
         # 校验2：必须设置会话上下文，否则无法推送消息
         if not self._channel or not self._chat_id:
-            return "Error: no session context (channel/chat_id)"
+            return "错误：当前没有可用的会话上下文，无法确定提醒要发往哪个渠道。"
         
         # ==================== 构建任务调度规则 ====================
         # 标记：一次性任务执行后是否自动删除（循环任务为False）
@@ -188,7 +188,7 @@ class CronTool(Tool):
                 # 解析ISO格式时间字符串
                 dt = datetime.fromisoformat(at)
             except ValueError:
-                return f"Error: invalid ISO datetime format '{at}'. Expected format: YYYY-MM-DDTHH:MM:SS"
+                return f"错误：时间格式无效：{at}。正确格式示例：YYYY-MM-DDTHH:MM:SS"
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=BEIJING_TZ)
             else:
@@ -201,7 +201,7 @@ class CronTool(Tool):
         
         # 校验5：必须指定一种调度方式（循环/cron/一次性）
         else:
-            return "Error: either every_seconds, cron_expr, or at is required"
+            return "错误：必须提供 every_seconds、cron_expr 或 at 其中之一。"
 
         # 调用底层服务，创建定时任务
         job = self._cron.add_job(
@@ -215,7 +215,7 @@ class CronTool(Tool):
         )
         
         # 返回创建成功提示，包含任务ID（用于后续删除）
-        return f"Created job '{job.name}' (id: {job.id})"
+        return f"已创建任务“{job.name}”（ID：{job.id}）"
 
     # ==================== 私有方法：查询所有定时任务 ====================
     def _list_jobs(self) -> str:
@@ -224,19 +224,19 @@ class CronTool(Tool):
         jobs = self._cron.list_jobs()
         # 无任务时返回空提示
         if not jobs:
-            return "No scheduled jobs."
+            return "当前没有已安排的定时任务。"
         # 格式化任务列表：名称 + ID + 调度类型
-        lines = [f"- {j.name} (id: {j.id}, {j.schedule.kind})" for j in jobs]
-        return "Scheduled jobs:\n" + "\n".join(lines)
+        lines = [f"- {j.name}（ID：{j.id}，类型：{j.schedule.kind}）" for j in jobs]
+        return "当前定时任务列表：\n" + "\n".join(lines)
 
     # ==================== 私有方法：删除指定定时任务 ====================
     def _remove_job(self, job_id: str | None) -> str:
         """根据任务ID删除定时任务"""
         # 校验：删除任务必须传入任务ID
         if not job_id:
-            return "Error: job_id is required for remove"
+            return "错误：删除任务时必须提供 job_id。"
         # 执行删除操作
         if self._cron.remove_job(job_id):
-            return f"Removed job {job_id}"
+            return f"已删除任务：{job_id}"
         # 任务ID不存在，返回错误
-        return f"Job {job_id} not found"
+        return f"错误：未找到任务 {job_id}"

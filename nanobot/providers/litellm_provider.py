@@ -71,12 +71,14 @@ class LiteLLMProvider(LLMProvider):
         if not spec or not spec.env_key:
             return
         
+        # 如果是网关模式，覆盖对应的 env 变量；否则保守设置（不覆盖已有）
         if self._gateway:
             os.environ[spec.env_key] = api_key
         else:
             os.environ.setdefault(spec.env_key,api_key)
 
         # 解析扩展环境变量占位符
+        # 解析注册表中定义的额外环境变量占位符（例如某些厂商需要多个变量）
         effective_base = api_base or spec.default_api_base
         for env_name,env_value in spec.env_extras:
             resolved_name = env_name.replace("{api_key}", api_key).replace("{api_base}", effective_base)
@@ -91,19 +93,20 @@ class LiteLLMProvider(LLMProvider):
         标准模式：应用厂商前缀
         """
         if self._gateway:
-            # 网关：剥离原有前缀 → 添加网关前缀
+            # 网关模式：有些网关要求去掉厂商前缀再加上网关前缀，保证路由到网关内部的模型池
             prefix = self._gateway.litellm_prefix
             if self._gateway.strip_model_prefix:
-                model = model.split("/")[-1] # 以 / 为分隔符，把字符串切割成列表
+                model = model.split("/")[-1]
             if prefix and not model.startswith(f"{prefix}/"):
                 model = f"{prefix}/{model}"
             return model
 
         # 标准厂商：自动添加前缀
+        # 标准厂商模式：根据注册表将厂商前缀规范化（例如把 github-copilot 映射为 canonical 前缀）
         spec = find_by_model(model)
         if spec and spec.litellm_prefix:
             model = self._canonicalize_explicit_prefix(model, spec.name, spec.litellm_prefix)
-            if not any(model.startswith(s) for s in spec.skip_prefixes): # any 任意一个是True，则是True
+            if not any(model.startswith(s) for s in spec.skip_prefixes):
                 model = f"{spec.litellm_prefix}/{model}"
 
         return model
@@ -137,19 +140,23 @@ class LiteLLMProvider(LLMProvider):
         注入提示词缓存控制
         为系统消息和最后一个工具添加缓存标记，降低Token费用
         """
+        # 为 system 消息和最后一个工具注入 cache_control 字段，提示网关/SDK 进行短期缓存
         new_messages = []
         for msg in messages:
             if msg.get("role") == "system":
                 content = msg["content"]
                 if isinstance(content, str):
+                    # 把纯文本包装为 list[type=text]，并标记为 ephemeral（短期缓存）
                     new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
                 else:
+                    # 如果已经是 list 结构则只在最后一项注入 cache_control
                     new_content = list(content)
                     new_content[-1] = {**new_content[-1], "cache_control": {"type": "ephemeral"}}
                 new_messages.append({**msg, "content": new_content})
             else:
                 new_messages.append(msg)
 
+        # 给最后一个工具也加上 cache_control，减少模型重复调用成本
         new_tools = tools
         if tools:
             new_tools = list(tools)
@@ -195,17 +202,21 @@ class LiteLLMProvider(LLMProvider):
         1. 保留标准+厂商专属字段
         2. 标准化工具ID，保证工具调用链路完整
         """
+        # 允许的字段集合 = 通用字段 + 厂商额外字段
         allowed = _ALLOWED_MSG_KEYS | extra_keys
         sanitized = LLMProvider._sanitize_request_messages(messages, allowed)
+        # id_map 用于把任意工具调用ID规范化为短ID，并保证同一原始ID映射到同一短ID
         id_map: dict[str, str] = {}
 
         def map_id(value: Any) -> Any:
             if not isinstance(value, str):
                 return value
+            # 如果之前已经映射过则复用，否则用标准化函数生成9位ID
             return id_map.setdefault(value, LiteLLMProvider._normalize_tool_call_id(value))
 
         # 标准化工具调用ID
         for clean in sanitized:
+            # 标准化消息中嵌套的 tool_calls 字段（如果存在）
             if isinstance(clean.get("tool_calls"), list):
                 normalized_tool_calls = []
                 for tc in clean["tool_calls"]:
@@ -217,6 +228,7 @@ class LiteLLMProvider(LLMProvider):
                     normalized_tool_calls.append(tc_clean)
                 clean["tool_calls"] = normalized_tool_calls
 
+            # 标准化消息级别的 tool_call_id（如模型直接返回tool_call_id）
             if "tool_call_id" in clean and clean["tool_call_id"]:
                 clean["tool_call_id"] = map_id(clean["tool_call_id"])
         return sanitized
@@ -245,13 +257,16 @@ class LiteLLMProvider(LLMProvider):
         extra_msg_keys = self._extra_msg_keys(original_model, model)
 
         # 开启提示词缓存
+        # 若厂商/网关支持提示词缓存，则注入 cache_control 优化 token 使用
         if self._supports_cache_control(original_model):
             messages, tools = self._apply_cache_control(messages, tools)
 
         # 最小Token限制
+        # 确保 max_tokens 至少为1，避免传入0导致SDK报错
         max_tokens = max(1, max_tokens)
 
         # 构造请求参数
+        # 构造传入 litellm 的参数字典
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": self._sanitize_messages(self._sanitize_empty_content(messages), extra_keys=extra_msg_keys),
@@ -269,23 +284,25 @@ class LiteLLMProvider(LLMProvider):
             kwargs["api_base"] = self.api_base
         
         # 推理强度参数
+        # 区分 reasoning 强度参数（部分模型支持 chain-of-thought 强化）
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
             kwargs["drop_params"] = True
         
         # 工具调用配置
+        # 如果传入 tools 配置，启用自动工具选择（由模型决定何时调用工具）
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
 
         try:
-            # 异步调用LiteLLM
+            # 异步调用 LiteLLM SDK 的 acompletion 接口
             response = await acompletion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
-            # 异常捕获：返回错误响应，不崩溃
+            # 捕获调用中的任意异常并以 LLMResponse 错误形式返回，避免上层抛出
             return LLMResponse(
-                content=f"Error calling LLM: {str(e)}",
+                content=f"调用大模型失败：{str(e)}",
                 finish_reason="error",
             )
 
@@ -294,12 +311,14 @@ class LiteLLMProvider(LLMProvider):
         解析LiteLLM响应 → 标准化LLMResponse
         兼容多Choice响应、工具调用合并、Token统计、思考内容
         """
+        # 解析第一个 choice（多数 SDK 保证至少有一个 choice）
         choice = response.choices[0]
         message = choice.message
         content = message.content
         finish_reason = choice.finish_reason
 
         # 合并多Choice的工具调用（Copilot等厂商）
+        # 合并所有 choice 里的 tool_calls（一些厂商可能把工具调用分散在多个候选里）
         raw_tool_calls = []
         for ch in response.choices:
             msg = ch.message
@@ -307,19 +326,24 @@ class LiteLLMProvider(LLMProvider):
                 raw_tool_calls.extend(msg.tool_calls)
                 if ch.finish_reason in ("tool_calls", "stop"):
                     finish_reason = ch.finish_reason
+            # 如果主 choice 没有 content，回退到其他候选的 content
             if not content and msg.content:
                 content = msg.content
 
         # 日志：多Choice合并
         if len(response.choices) > 1:
-            logger.debug("LiteLLM response has {} choices, merged {} tool_calls",
-                         len(response.choices), len(raw_tool_calls))
+            logger.debug(
+                "LiteLLM 返回了 {} 个候选结果，已合并 {} 个工具调用",
+                len(response.choices),
+                len(raw_tool_calls),
+            )
 
         # 构造工具调用列表
+        # 把 raw_tool_calls 转为内部的 ToolCallRequest 结构，统一 id/name/arguments 字段
         tool_calls = []
         for tc in raw_tool_calls:
             args = tc.function.arguments
-            # 修复不规范JSON
+            # 有些厂商会返回不合规的字符串 JSON，需要恢复为 dict
             if isinstance(args, str):
                 args = json_repair.loads(args)
 
@@ -330,6 +354,7 @@ class LiteLLMProvider(LLMProvider):
             ))
 
         # Token统计
+        # 收集 Token 使用统计（如果厂商返回了 usage 字段）
         usage = {}
         if hasattr(response, "usage") and response.usage:
             usage = {
@@ -339,6 +364,7 @@ class LiteLLMProvider(LLMProvider):
             }
 
         # 思考内容
+        # 某些厂商会携带中间思考链或扩展的 thinking_blocks，需要保留以便调试/展示
         reasoning_content = getattr(message, "reasoning_content", None)
         thinking_blocks = getattr(message, "thinking_blocks", None)
 
