@@ -54,7 +54,8 @@ class AgentLoop:
     """
 
     # 工具结果如果原样全部写进 session，历史会迅速膨胀，因此对 tool 消息做截断。
-    _TOOL_RESULT_MAX_CHARS = 500
+    # 注意：这个截断只影响写入 session 的历史记录，不影响发送给模型的内容
+    _TOOL_RESULT_MAX_CHARS = 2000
 
     def __init__(
         self,
@@ -78,22 +79,15 @@ class AgentLoop:
         """初始化运行时依赖与内部状态。"""
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
-        self.bus = bus
-        # 消息总线，用于接收 inbound 消息和发布 outbound 回复
-        self.provider = provider
-        # LLM 提供者抽象（负责与模型交互）
-        self.workspace = workspace
-        # 工作目录，文件工具等会基于此限制或执行文件操作
-        self.model = model or provider.get_default_model()
-        # 使用的模型名，若未指定则询问 provider 的默认模型
-        self.max_iterations = max_iterations
-        # 单轮最大工具调用/迭代次数，防止无限循环
-        self.temperature = temperature
-        # 模型的采样温度，决定回答的随机性
-        self.max_tokens = max_tokens
-        # 模型返回最大 token 限制
-        self.memory_window = memory_window
-        # 回话历史窗口大小，用于构建上下文
+        self.bus = bus                                      # 消息总线，用于接收 inbound 消息和发布 outbound 回复
+        self.provider = provider                            # LLM 提供者抽象（负责与模型交互）
+        self.workspace = workspace                          # 工作目录，文件工具等会基于此限制或执行文件操作
+        self.model = model or provider.get_default_model()  
+        self.max_iterations = max_iterations                # 单轮最大工具调用/迭代次数，防止无限循环
+        self.temperature = temperature                      # 模型的采样温度，决定回答的随机性
+        self.max_tokens = max_tokens                        # 模型返回最大 token 限制
+        self.memory_window = memory_window                  # 回话历史窗口大小，用于构建上下文
+        
         self.reasoning_effort = reasoning_effort
         self.web_search_config = web_search_config or WebSearchConfig()
         self.web_proxy = web_proxy
@@ -101,12 +95,12 @@ class AgentLoop:
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
 
-        self.context = ContextBuilder(workspace)
-        # ContextBuilder 负责把会话历史/当前消息转换为模型输入的 messages
-        self.sessions = session_manager or SessionManager(workspace)
-        # Session 管理器负责会话的创建/保存/加载
-        self.tools = ToolRegistry()
-        # 工具注册中心，包含文件/网络/执行等工具实例
+        self.context = ContextBuilder(workspace)            # ContextBuilder 负责把会话历史/当前消息转换为模型输入的 messages
+        
+        self.sessions = session_manager or SessionManager(workspace)    # Session 管理器负责会话的创建/保存/加载
+        
+        self.tools = ToolRegistry()                         # 工具注册中心，包含文件/网络/执行等工具实例
+        
 
         self._running = False
         self._mcp_servers = mcp_servers or {}
@@ -234,17 +228,16 @@ class AgentLoop:
         2. 本轮实际调用过的工具列表
         3. 完整消息链，用于后续写回 session
         """
-        # 复制初始消息链到局部变量，后续会在循环中追加 assistant/tool 的中间消息
-        messages = list(initial_messages)
-        # 本轮实际上被调用过的工具名称（按顺序，会在写回历史时去重）
-        tools_used: list[str] = []
-        # 最终返回给用户的文本（清理过 <think> 标签的回复），初始为 None
-        final_content: str | None = None
+        
+        messages = list(initial_messages)       # 复制初始消息链到局部变量，后续会在循环中追加 assistant/tool 的中间消息
+        tools_used: list[str] = []              # 本轮实际上被调用过的工具名称（按顺序，会在写回历史时去重）
+        final_content: str | None = None        # 最终返回给用户的文本（清理过 <think> 标签的回复），初始为 None
 
         for _ in range(self.max_iterations):
-            # 每一轮都把“当前消息链 + 工具 schema”发给模型，让模型自行决定
+            # 每一轮都把”当前消息链 + 工具 schema”发给模型，让模型自行决定
             # 是直接回答，还是继续调用工具。
             # 把当前消息链交给 LLMProvider，请求模型决定是回答还是调用工具
+            logger.debug("Agent loop iteration {}, messages count: {}", _ + 1, len(messages))
             response = await self.provider.chat(
                 messages=messages,
                 tools=self.tools.get_definitions(),
@@ -253,6 +246,9 @@ class AgentLoop:
                 max_tokens=self.max_tokens,
                 reasoning_effort=self.reasoning_effort,
             )
+            logger.debug("Model response: has_tool_calls={}, finish_reason={}, content_preview={}",
+                        response.has_tool_calls, response.finish_reason,
+                        (response.content or "")[:100] if response.content else None)
 
             if response.has_tool_calls:
                 # 如果模型一边思考一边决定调用工具，这里把精简后的状态向外发送，

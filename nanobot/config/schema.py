@@ -16,23 +16,15 @@ class Base(BaseModel):
 
 class AgentDefaults(Base):
     """AI助手（Agent）的默认配置项,定义AI回答的基础规则，比如用哪个模型、回答长度/随机性、工具调用次数等"""
-     # 工作目录（默认在用户家目录下的.nanobot/workspace，存放AI生成的文件、缓存等）
-    workspace: str = "~/.nanobot/workspace"
-    model: str = "anthropic/claude-opus-4-5"   # 必须是供应商/模型名称
-    # LLM提供商（auto=自动匹配；也可指定anthropic/openrouter等）
-    provider: str = (
-        "openrouter"
-    )
-    # AI回答的最大令牌数（8192≈6000中文字符，限制回答长度，防止超长回复）
-    max_tokens: int = 8192
-    # 回答随机性（0=完全固定，1=极度随机，0.1表示AI回答更稳定、可预测）
-    temperature: float = 0.1
-    # 工具调用最大迭代次数（AI调用工具（如搜索/执行命令）的最大重试/循环次数，40次足够覆盖大部分场景）
-    max_tool_iterations: int = 40
-    # 记忆窗口大小（AI能记住的对话轮数，100表示能记住最近100轮对话）
-    memory_window: int = 100
-    # 推理强度（low/medium/high，控制AI思考的深度，None=使用模型默认）
-    reasoning_effort: str | None = None
+     
+    workspace: str = "~/.nanobot/workspace"       # 工作目录（默认在用户家目录下的.nanobot/workspace，存放AI生成的文件、缓存等）
+    model: str = "anthropic/claude-opus-4-5"      # 必须是供应商/模型名称                       
+    provider: str = ("openrouter")                # LLM提供商（auto=自动匹配；也可指定anthropic/openrouter等）
+    max_tokens: int = 8192                        # AI回答的最大令牌数（8192≈6000中文字符，限制回答长度，防止超长回复）
+    temperature: float = 0.1                      # 回答随机性（0=完全固定，1=极度随机，0.1表示AI回答更稳定、可预测）
+    max_tool_iterations: int = 40                 # 工具调用最大迭代次数（AI调用工具（如搜索/执行命令）的最大重试/循环次数，40次足够覆盖大部分场景）  
+    memory_window: int = 100                      # 记忆窗口大小（AI能记住的对话轮数，100表示能记住最近100轮对话）
+    reasoning_effort: str | None = None           # 推理强度（low/medium/high，控制AI思考的深度，None=使用模型默认）
 
 
 class AgentsConfig(Base):
@@ -94,6 +86,7 @@ class ExecToolConfig(Base):
     path_append: str = ""  # 追加系统路径（可选，让AI能找到更多可执行命令）
 
 
+
 class MCPServerConfig(Base):
     """
     MCP服务器连接配置（stdio/HTTP/SSE）
@@ -108,6 +101,7 @@ class MCPServerConfig(Base):
     url: str = ""  # HTTP/SSE模式：接口地址
     headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE模式：自定义请求头
     tool_timeout: int = 30  # 工具调用超时时间（30秒，超时取消调用）
+
 
 
 
@@ -162,6 +156,6 @@ class Config(BaseSettings):
 
 
     model_config = ConfigDict(
-        env_prefix="NANOBOT_",  # 环境变量前缀（如NANOBOT_AGENTS__DEFAULTS__MODEL）
+        env_prefix="NANOBOT_",     # 环境变量前缀（如NANOBOT_AGENTS__DEFAULTS__MODEL）
         env_nested_delimiter="__"  # 嵌套配置的分隔符（AgentsConfig.defaults.model → AGENTS__DEFAULTS__MODEL）
     )

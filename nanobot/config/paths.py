@@ -3,24 +3,16 @@
 from __future__ import annotations     # 让类型注解（Type Hints）变成「延迟求值的字符串」，解决提前定义的类型报错问题
 from pathlib import Path
 from nanobot.config.loader import get_path_config
-from nanobot.utils.helpers import ensure_dir
 
-
-def get_data_dir() ->Path:
-    """
-    函数作用：返回 nanobot 的【根数据文件夹】路径
-    位置：配置文件所在的上级文件夹（所有运行时数据都存在这）
-    自动操作：如果文件夹不存在，自动创建
-    """
-    return get_path_config().parent
 
 
 def get_runtime_subdir(name: str) ->Path:
     """
-    函数作用：通用工具函数 → 在【根数据文件夹】下，创建/返回一个指定名字的子文件夹
+    函数作用：通用工具函数 → 在【根数据文件夹】下，返回一个指定名字的子文件夹路径
     参数name：子文件夹的名字（比如 media、logs、cron）
     """
-    return get_data_dir() / name
+    
+    return get_path_config().parent / name
 
 
 def get_media_dir(channel: str | None = None) ->Path:
@@ -56,8 +48,8 @@ def get_workspace_path(workspace: str | None = None) ->Path:
     默认位置：你电脑用户目录下的 .nanobot/workspace
     """
     path = Path(workspace).expanduser() if workspace else Path.home() / ".nanobot" / "workspace"  # expanduser--展开路径中的用户目录简写 ~
-    ensure_dir(path)
     return path
+
 
 def get_cli_history_path() ->Path:
     """
@@ -67,14 +59,6 @@ def get_cli_history_path() ->Path:
     """
     return Path.home() / ".nanobot" / "history" / "cli_history"
 
-
-def get_bridge_install_dir() -> Path:
-    """
-    函数作用：返回【桥接服务的安装文件夹】
-    位置：你电脑用户目录下的 .nanobot/bridge
-    用途：存放Node.js桥接服务的所有代码、依赖、运行文件
-    """
-    return Path.home() / ".nanobot" / "bridge"
 
 
 def get_legacy_sessions_dir() -> Path:

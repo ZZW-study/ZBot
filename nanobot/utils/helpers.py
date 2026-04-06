@@ -104,3 +104,4 @@ def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]
             console.print(f"[dim]已创建模板：{name}[/dim]")
 
     return added
+

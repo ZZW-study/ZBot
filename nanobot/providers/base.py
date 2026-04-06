@@ -53,7 +53,7 @@ class LLMProvider(ABC):
         """清洗空内容消息，避免部分厂商因空字符串直接报错。
 
         处理策略如下：
-        1. 空字符串内容：替换成占位文本或 `None`。
+        1. 空字符串内容：替换成占位文本或空字符串。
         2. 多模态列表：过滤掉空文本块。
         3. 字典格式内容：标准化为列表，方便后续统一处理。
         """
@@ -64,7 +64,7 @@ class LLMProvider(ABC):
             if isinstance(content, str) and not content:
                 clean = dict(msg)
                 if clean.get("role") == "assistant" and msg.get("tool_calls"):
-                    clean["content"] = None
+                    clean["content"] = ""  # 部分厂商不接受 null，改用空字符串
                 else:
                     clean["content"] = "(空内容)"
                 result.append(clean)
@@ -85,7 +85,7 @@ class LLMProvider(ABC):
                     if filtered:
                         clean["content"] = filtered
                     elif msg.get("role") == "assistant" and msg.get("tool_calls"):
-                        clean["content"] = None
+                        clean["content"] = ""  # 部分厂商不接受 null，改用空字符串
                     else:
                         clean["content"] = "(空内容)"
                     result.append(clean)
@@ -94,6 +94,13 @@ class LLMProvider(ABC):
             if isinstance(content, dict):
                 clean = dict(msg)
                 clean["content"] = list(content)
+                result.append(clean)
+                continue
+
+            # 处理 content 为 None 的情况
+            if content is None and msg.get("role") == "assistant" and msg.get("tool_calls"):
+                clean = dict(msg)
+                clean["content"] = ""  # 部分厂商不接受 null，改用空字符串
                 result.append(clean)
                 continue
 

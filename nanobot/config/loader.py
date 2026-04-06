@@ -31,16 +31,15 @@ def get_path_config() -> Path:
 
 
 def _coerce_env_value(raw: str) -> Any:
-    """尽量把环境变量值解析为 JSON；解析失败时保留原始字符串。
-
+    """尝试将环境变量的字符串按 JSON 格式解析为 Python 对象；解析失败则保留原始字符串。
     例如：
-    - `"true"` -> `True`
-    - `"123"` -> `123`
-    - `"["a"]"` -> `["a"]`
-    - `"abc"` -> `"abc"`
+    - "true"  -> True  (Python布尔值)
+    - "123"   -> 123   (Python整数)
+    - '["a"]' -> ["a"] (Python列表)
+    - "abc"   -> "abc" (原始字符串)
     """
     try:
-        return json.loads(raw)
+        return json.loads(raw)    # 将JSON格式的字符串，转化为python对象
     except json.JSONDecodeError:
         return raw
 
@@ -98,9 +97,9 @@ def _normalize_config_data(data: dict[str, Any], *, exclude_unset: bool) -> dict
     这样无论输入里使用驼峰键还是下划线键，最终都会被统一为模型字段名，
     后面的合并逻辑也就不需要关心别名差异。
     """
-    return Config.model_validate(data).model_dump(
+    return Config.model_validate(data).model_dump(  # 先进行校验，转化为pydantic对象，然后转化为字典
         by_alias=False,
-        exclude_unset=exclude_unset,
+        exclude_unset=exclude_unset,  # 看是否排除未显式赋值的值
     )
 
 
@@ -118,7 +117,7 @@ def load_config(config_path: Path | None = None) -> Config:
     if path.exists():
         try:
             with open(path, encoding="utf-8") as file:
-                loaded = json.load(file)
+                loaded = json.load(file)  # 从 JSON 格式的文件中读取数据，把 JSON 文本转换成 Python 所对应的对象
             if isinstance(loaded, dict):
                 file_data = _normalize_config_data(loaded, exclude_unset=False)
             else:
