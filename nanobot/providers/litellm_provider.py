@@ -5,6 +5,7 @@
 """
 
 import hashlib
+import json
 import os
 import secrets  # 安全随机，random伪随机
 import string
@@ -174,13 +175,6 @@ class LiteLLMProvider(LLMProvider):
                     kwargs.update(overrides)
                     return
 
-    @staticmethod
-    def _extra_msg_keys(original_model: str, resolved_model: str) -> frozenset[str]:
-        """获取厂商专属消息字段（如Anthropic的thinking_blocks）"""
-        spec = find_by_model(original_model) or find_by_model(resolved_model)
-        if (spec and spec.name == "anthropic") or "claude" in original_model.lower() or resolved_model.startswith("anthropic/"):
-            return _ANTHROPIC_EXTRA_KEYS
-        return frozenset()
 
     @staticmethod
     def _normalize_tool_call_id(tool_call_id: Any) -> Any:
@@ -201,6 +195,7 @@ class LiteLLMProvider(LLMProvider):
         消息最终清洗：
         1. 保留标准+厂商专属字段
         2. 标准化工具ID，保证工具调用链路完整
+        3. 移除 tool 消息中的 name 字段（OpenAI 兼容 API 不接受）
         """
         # 允许的字段集合 = 通用字段 + 厂商额外字段
         allowed = _ALLOWED_MSG_KEYS | extra_keys
@@ -231,7 +226,18 @@ class LiteLLMProvider(LLMProvider):
             # 标准化消息级别的 tool_call_id（如模型直接返回tool_call_id）
             if "tool_call_id" in clean and clean["tool_call_id"]:
                 clean["tool_call_id"] = map_id(clean["tool_call_id"])
+
+            # OpenAI 兼容 API 的 tool 消息不应包含 name 字段
+            if clean.get("role") == "tool":
+                clean.pop("name", None)
         return sanitized
+
+    def _extra_msg_keys(self, original_model: str, resolved_model: str) -> frozenset[str]:
+        """根据模型类型返回额外的允许消息字段。"""
+        # Anthropic 模型支持 thinking_blocks 字段
+        if "anthropic" in original_model.lower() or "anthropic" in resolved_model.lower():
+            return _ANTHROPIC_EXTRA_KEYS
+        return frozenset()
 
     async def chat(
         self,
@@ -297,6 +303,7 @@ class LiteLLMProvider(LLMProvider):
 
         try:
             # 异步调用 LiteLLM SDK 的 acompletion 接口
+            logger.debug("发送给模型的消息：{}", json.dumps(kwargs.get("messages", []), ensure_ascii=False, indent=2))
             response = await acompletion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
@@ -311,8 +318,8 @@ class LiteLLMProvider(LLMProvider):
         解析LiteLLM响应 → 标准化LLMResponse
         兼容多Choice响应、工具调用合并、Token统计、思考内容
         """
-        # 解析第一个 choice（多数 SDK 保证至少有一个 choice）
-        choice = response.choices[0]
+        # 解析第一个 choice（多数 SDK 保证至少有一个 choice，会有多种回复，选第一个）
+        choice = response.choices[0]  
         message = choice.message
         content = message.content
         finish_reason = choice.finish_reason

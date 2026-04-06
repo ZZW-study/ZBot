@@ -15,7 +15,7 @@ from typing import Any
 from nanobot.agent.tools.base import Tool
 
 
-_RETRY_HINT = "\n\n[请先分析上面的报错原因，再尝试另一种处理方式。]"
+_RETRY_HINT = "\n\n[工具执行失败。请分析错误原因，然后继续尝试其他方法完成任务，不要停下来。]"
 
 
 class ToolRegistry:

@@ -348,7 +348,7 @@ class WebFetchTool(Tool):
         max_chars = maxChars or self.max_chars
         is_valid, error_msg = _validate_url(url)
         if not is_valid:
-            return json.dumps({"error": f"URL 校验失败：{error_msg}", "url": url}, ensure_ascii=False)
+            return f"错误：URL 校验失败（{error_msg}）。建议：检查网址格式是否正确。"
 
         # 优先尝试外部的 Jina Reader 接口（可靠且能做较好结构化抽取）。
         # 若 Jina 不可用或被限流，则降级到本地的 readability 提取实现。
@@ -386,12 +386,11 @@ class WebFetchTool(Tool):
                 text = f"# {title}\n\n{text}"
             truncated = len(text) > max_chars
             if truncated:
-                text = text[:max_chars]
+                text = text[:max_chars] + "\n...（内容已截断）"
 
-            return json.dumps({
-                "url": url, "finalUrl": data.get("url", url), "status": r.status_code,
-                "extractor": "jina", "truncated": truncated, "length": len(text), "text": text,
-            }, ensure_ascii=False)
+            # 返回简洁的纯文本格式，便于模型理解
+            final_url = data.get("url", url)
+            return f"网页内容（来源：{final_url}）：\n\n{text}"
         except Exception as e:
             logger.debug("Jina Reader 处理 {} 失败，自动回退到 readability：{}", url, e)
             return None
@@ -469,18 +468,19 @@ class WebFetchTool(Tool):
 
             truncated = len(text) > max_chars
             if truncated:
-                text = text[:max_chars]
+                text = text[:max_chars] + "\n...（内容已截断）"
 
-            return json.dumps({
-                "url": url, "finalUrl": str(r.url), "status": r.status_code,
-                "extractor": extractor, "truncated": truncated, "length": len(text), "text": text,
-            }, ensure_ascii=False)
+            # 返回简洁的纯文本格式，便于模型理解
+            return f"网页内容（来源：{str(r.url)}）：\n\n{text}"
         except httpx.ProxyError as e:
             logger.error("网页抓取代理错误，链接 {}：{}", url, e)
-            return json.dumps({"error": f"代理错误：{e}", "url": url}, ensure_ascii=False)
+            return f"错误：网页抓取遇到代理问题（{e}）。建议：检查代理配置，或尝试使用 web_search 搜索其他来源。"
+        except httpx.HTTPStatusError as e:
+            logger.error("网页抓取 HTTP 错误，链接 {}：{}", url, e)
+            return f"错误：网页返回 HTTP {e.response.status_code}，无法获取内容。建议：尝试其他网址，或使用 web_search 搜索相关信息。"
         except Exception as e:
             logger.error("网页抓取失败，链接 {}：{}", url, e)
-            return json.dumps({"error": f"网页抓取失败：{e}", "url": url}, ensure_ascii=False)
+            return f"错误：网页抓取失败（{e}）。建议：检查网址是否正确，或使用 web_search 搜索其他来源。"
 
     def _to_markdown(self, html_content: str) -> str:
         """
