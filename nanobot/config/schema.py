@@ -1,3 +1,9 @@
+"""配置模式（Pydantic schema）定义。
+
+本模块使用 Pydantic 定义 nanobot 的配置结构与默认值，
+并通过 `Config` 提供统一的配置加载/校验接口。
+"""
+
 from typing import Literal
 from pathlib import Path
 
