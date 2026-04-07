@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 """
 技能打包工具 - 将技能文件夹打包为可分发的 .skill 格式文件
+"""
+技能打包工具 - 将技能文件夹打包为可分发的 .skill 文件（ZIP 格式）
 
-用法:
+用法：
     python package_skill.py <技能文件夹路径> [输出目录]
 
-示例:
+示例：
     python package_skill.py skills/public/my-skill
     python package_skill.py skills/public/my-skill ./dist
-"""
 
-import sys
+说明：本脚本会执行基本的安全与格式校验，确保生成的 .skill 包不包含符号链接、
+也不会将输出压缩包自身包含进压缩文件中，适用于本地打包与发布前的检查。
+"""
 import zipfile
 from pathlib import Path
 
@@ -19,14 +22,9 @@ from quick_validate import validate_skill
 
 
 def _is_within(path: Path, root: Path) -> bool:
-    """
-    私有工具函数：判断文件路径是否在指定根目录内部
-    防止路径穿越、非法访问外部文件
-    Args:
-        path: 待检查的文件路径
-        root: 根目录路径
-    Returns:
-        合法返回True，非法返回False
+    """判断文件路径是否位于指定根目录内部，防止路径穿越攻击。
+
+    返回 True 表示 path 在 root 内部；否则返回 False。
     """
     try:
         # 尝试获取相对路径，成功则说明在根目录内
@@ -38,11 +36,7 @@ def _is_within(path: Path, root: Path) -> bool:
 
 
 def _cleanup_partial_archive(skill_filename: Path) -> None:
-    """
-    私有工具函数：清理打包失败产生的不完整压缩文件
-    Args:
-        skill_filename: 压缩包文件路径
-    """
+    """删除打包失败时遗留的不完整压缩文件，忽略删除错误。"""
     try:
         if skill_filename.exists():
             skill_filename.unlink()
@@ -52,13 +46,13 @@ def _cleanup_partial_archive(skill_filename: Path) -> None:
 
 
 def package_skill(skill_path, output_dir=None):
-    """
-    核心函数：将技能文件夹打包为 .skill 格式（ZIP压缩包）
-    Args:
-        skill_path: 技能文件夹的路径
-        output_dir: 可选参数，输出目录（默认当前目录）
-    Returns:
-        成功返回打包后的文件路径，失败返回None
+    """将技能目录打包为 `.skill` 文件（ZIP），并返回生成的文件路径。
+
+    参数：
+    - skill_path: 技能目录路径（字符串或 Path）
+    - output_dir: 可选的输出目录（未指定则使用当前工作目录）
+
+    返回：打包成功返回 Path 对象；失败返回 None。
     """
     # 标准化路径为绝对路径
     skill_path = Path(skill_path).resolve()

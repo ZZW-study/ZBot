@@ -1,7 +1,10 @@
-# python包的"身份证"
+"""nanobot 包元信息。
 
-__version__ = "0.1.4.post3"  # nanobot 的版本号
-__logo__ = "🐈"  # nanobot 的 logo 图标
+这个模块只保存包的元信息（版本号与图标），供 CLI 和状态显示调用。
+"""
+
+__version__ = "0.1.4.post3"  
+__logo__ = "🐈"  
 
 
 

@@ -1,3 +1,7 @@
-#  Command Line Interface（命令行界面），指通过终端 / 命令行与程序交互的方式，而非图形界面（GUI）。
-#  这是为 nanobot 程序提供命令行界面功能的模块。
+"""命令行接口包初始化。
+
+此模块用于标识 nanobot 的 CLI 包，实际命令实现放在
+`nanobot.cli.commands` 中。保留简单导出与包级说明，便于阅读。
+"""
+
 

@@ -1,34 +1,24 @@
-"""Agent 主循环与单轮消息处理。
+"""Agent 主循环与单轮消息处理。"""
 
-`AgentLoop` 是运行时入口，负责把下面几件事串起来：
-1. 从直接调用拿到用户输入。
-2. 找到对应 session，并构造要发给模型的上下文。
-3. 处理模型的普通回复或工具调用。
-4. 把本轮消息安全地写回 session。
-5. 在合适的时机触发长期记忆归档。
+from __future__ import annotations  # 使用推迟注解，避免运行时的前置导入成本
 
-因此它既是调度层，也是"消息 -> 模型 -> 工具 -> 会话落盘"这条链路的汇总点。
-"""
+import asyncio  # 异步支持
+import json  # JSON 编解码
+import re  # 正则处理
+from contextlib import AsyncExitStack  # 管理多个异步上下文
+from pathlib import Path  # 文件/路径处理
+from typing import TYPE_CHECKING, Any, Awaitable, Callable  # 类型注解
 
-from __future__ import annotations
+from loguru import logger  # 日志
 
-import asyncio
-import json
-import re
-from contextlib import AsyncExitStack
-from pathlib import Path
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
-
-from loguru import logger
-
-from nanobot.agent.context import ContextBuilder
-from nanobot.agent.tools.cron import CronTool
-from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
-from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.agent.tools.shell import ExecTool
-from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
-from nanobot.providers.base import LLMProvider
-from nanobot.session.manager import Session, SessionManager
+from nanobot.agent.context import ContextBuilder  # 上下文构造器
+from nanobot.agent.tools.cron import CronTool  # 定时任务工具
+from nanobot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool  # 文件工具
+from nanobot.agent.tools.registry import ToolRegistry  # 工具注册中心
+from nanobot.agent.tools.shell import ExecTool  # 执行 shell 的工具
+from nanobot.agent.tools.web import WebFetchTool, WebSearchTool  # web 工具
+from nanobot.providers.base import LLMProvider  # 大模型提供者接口
+from nanobot.session.manager import Session, SessionManager  # 会话管理
 
 if TYPE_CHECKING:
     from nanobot.config.schema import ExecToolConfig, WebSearchConfig
@@ -36,23 +26,13 @@ if TYPE_CHECKING:
     from nanobot.providers.base import ToolCallRequest
 
 
-_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
+_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)  # 匹配模型的思考块
 
 
 class AgentLoop:
-    """运行中的 Agent 实例。
+    """运行中的 Agent 实例：构建上下文、调用模型、执行工具并写回会话。"""
 
-    这个类故意把核心流程收敛成少量 helper：
-    - `process_direct` 负责直接处理用户输入。
-    - `_run_turn` 负责单轮正常对话。
-    - `_run_agent_loop` 负责模型与工具之间的循环。
-
-    这样每个 helper 都只回答一个问题，便于维护和排错。
-    """
-
-    # 工具结果如果原样全部写进 session，历史会迅速膨胀，因此对 tool 消息做截断。
-    # 注意：这个截断只影响写入 session 的历史记录，不影响发送给模型的内容
-    _TOOL_RESULT_MAX_CHARS = 2000
+    _TOOL_RESULT_MAX_CHARS = 2000  # 写回时 tool 内容截断阈值
 
     def __init__(
         self,
@@ -75,56 +55,45 @@ class AgentLoop:
         """初始化运行时依赖与内部状态。"""
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
-        self.provider = provider                            # LLM 提供者抽象（负责与模型交互）
-        self.workspace = workspace                          # 工作目录，文件工具等会基于此限制或执行文件操作
-        self.model = model or provider.get_default_model()
-        self.max_iterations = max_iterations                # 单轮最大工具调用/迭代次数，防止无限循环
-        self.temperature = temperature                      # 模型的采样温度，决定回答的随机性
-        self.max_tokens = max_tokens                        # 模型返回最大 token 限制
-        self.memory_window = memory_window                  # 回话历史窗口大小，用于构建上下文
+        self.provider = provider  # LLM 提供者实例
+        self.workspace = workspace  # 工作目录
+        self.model = model or provider.get_default_model()  # 使用显式或默认模型
+        self.max_iterations = max_iterations  # 单轮最大迭代次数
+        self.temperature = temperature  # 采样温度
+        self.max_tokens = max_tokens  # 模型返回 token 限制
+        self.memory_window = memory_window  # 构建上下文时保留的历史条目数
 
-        self.reasoning_effort = reasoning_effort
-        self.web_search_config = web_search_config or WebSearchConfig()
-        self.web_proxy = web_proxy
-        self.exec_config = exec_config or ExecToolConfig()
-        self.cron_service = cron_service
-        self.restrict_to_workspace = restrict_to_workspace
+        self.reasoning_effort = reasoning_effort  # 可选的推理强度参数
+        self.web_search_config = web_search_config or WebSearchConfig()  # web 搜索配置
+        self.web_proxy = web_proxy  # HTTP 代理
+        self.exec_config = exec_config or ExecToolConfig()  # Exec 工具配置
+        self.cron_service = cron_service  # 可选的定时服务实例
+        self.restrict_to_workspace = restrict_to_workspace  # 是否限制文件工具到 workspace
 
-        self.context = ContextBuilder(workspace)            # ContextBuilder 负责把会话历史/当前消息转换为模型输入的 messages
+        self.context = ContextBuilder(workspace)  # 构造模型需要的 messages
 
-        self.sessions = session_manager or SessionManager(workspace)    # Session 管理器负责会话的创建/保存/加载
+        self.sessions = session_manager or SessionManager(workspace)  # 会话管理器
 
-        self.tools = ToolRegistry()                         # 工具注册中心，包含文件/网络/执行等工具实例
+        self.tools = ToolRegistry()  # 工具注册中心
 
+        self._mcp_servers = mcp_servers or {}  # MCP 配置
+        self._mcp_stack: AsyncExitStack | None = None  # MCP 连接的上下文栈
+        self._mcp_connected = False  # MCP 是否已连接
+        self._mcp_connecting = False  # MCP 是否在连接中
 
-        self._mcp_servers = mcp_servers or {}
-        self._mcp_stack: AsyncExitStack | None = None
-        self._mcp_connected = False
-        self._mcp_connecting = False
+        self._consolidating: set[str] = set()  # 当前正在归档的 session keys
+        self._consolidation_tasks: set[asyncio.Task[Any]] = set()  # 后台归档任务集合
+        self._consolidation_locks: dict[str, asyncio.Lock] = {}  # 每个 session 的归档锁
+        self._processing_lock = asyncio.Lock()  # 全局消息处理锁
 
-        self._consolidating: set[str] = set()
-        self._consolidation_tasks: set[asyncio.Task[Any]] = set()
-        self._consolidation_locks: dict[str, asyncio.Lock] = {}
-        self._processing_lock = asyncio.Lock()
-        # 全局消息处理锁，保证单条消息的处理是串行的（避免会话竞争）
-
-        self._register_default_tools()
-        # `_consolidation_*` 系列字段负责长期记忆归档任务的并发控制与回收。
-
-    # ---- 工具注册与初始化 ----
+        self._register_default_tools()  # 注册默认工具
 
     def _register_default_tools(self) -> None:
-        """注册默认工具集。
-
-        文件工具、shell、web 工具默认都会加载；
-        cron 工具只有在外部确实提供了 `CronService` 时才会注册。
-        """
-        # 如果配置了 restrict_to_workspace，则把工作目录作为文件工具的白名单目录
-        # 否则 allowed_dir 为 None，工具不做目录限制（由工具自身进一步校验）
-        allowed_dir = self.workspace if self.restrict_to_workspace else None
+        """注册默认工具：文件、Exec、Web，若提供 CronService 则注册 CronTool。"""
+        allowed_dir = self.workspace if self.restrict_to_workspace else None  # 文件工具允许目录
 
         for tool_cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool):
-            self.tools.register(tool_cls(workspace=self.workspace, allowed_dir=allowed_dir))
+            self.tools.register(tool_cls(workspace=self.workspace, allowed_dir=allowed_dir))  # 注册文件工具
 
         self.tools.register(
             ExecTool(
@@ -133,20 +102,16 @@ class AgentLoop:
                 restrict_to_workspace=self.restrict_to_workspace,
                 path_append=self.exec_config.path_append,
             )
-        )
-        # ExecTool: 负责在工作区运行 shell 命令，受 timeout 与路径限制保护，避免越权执行。
-        self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
-        self.tools.register(WebFetchTool(proxy=self.web_proxy))
+        )  # 注册执行工具
+
+        self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))  # 注册搜索工具
+        self.tools.register(WebFetchTool(proxy=self.web_proxy))  # 注册抓取工具
 
         if self.cron_service:
-            self.tools.register(CronTool(self.cron_service))
+            self.tools.register(CronTool(self.cron_service))  # 注册定时任务工具（若可用）
 
     async def _connect_mcp(self) -> None:
-        """懒连接 MCP 服务器。
-
-        MCP 是扩展工具来源，不是每次启动都一定需要。
-        因此这里只在首次真正用到 Agent 时才连接，减少启动成本。
-        """
+        """懒连接 MCP：仅在首次需要 MCP 工具时建立连接以减少启动开销。"""
         if self._mcp_connected or self._mcp_connecting or not self._mcp_servers:
             return
 
@@ -154,11 +119,9 @@ class AgentLoop:
 
         self._mcp_connecting = True
         try:
-            # 使用 AsyncExitStack 管理 MCP 连接生命周期，确保在关闭时能统一释放所有资源
             self._mcp_stack = AsyncExitStack()
             await self._mcp_stack.__aenter__()
-            # connect_mcp_servers 会把来自 MCP 的工具注册进 ToolRegistry
-            await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)
+            await connect_mcp_servers(self._mcp_servers, self.tools, self._mcp_stack)  # 注册远程工具
             self._mcp_connected = True
         except Exception as exc:
             logger.error("连接 MCP 服务器失败（下次收到消息时会重试）：{}", exc)
@@ -173,7 +136,7 @@ class AgentLoop:
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
-        """移除模型输出中的 `<think>...</think>` 思维块。"""
+        """移除模型输出中的 `<think>...</think>` 思考块并返回清理后的文本（或 None）。"""
         if not text:
             return None
         cleaned = _THINK_BLOCK_RE.sub("", text).strip()
@@ -181,7 +144,7 @@ class AgentLoop:
 
     @staticmethod
     def _tool_hint(tool_calls: list[ToolCallRequest]) -> str:
-        """把工具调用列表压缩成适合进度展示的短提示。"""
+        """把工具调用列表压缩成一行简短提示，便于进度展示。"""
         hints: list[str] = []
         for tool_call in tool_calls:
             args = tool_call.arguments
@@ -205,22 +168,13 @@ class AgentLoop:
         initial_messages: list[dict[str, Any]],
         on_progress: Callable[..., Awaitable[None]] | None = None,
     ) -> tuple[str | None, list[str], list[dict[str, Any]]]:
-        """驱动"模型回复 -> 工具执行 -> 再喂回模型"的循环。
+        """执行模型与工具的交互循环，直到得到最终回复或达到迭代上限。"""
 
-        返回三样东西：
-        1. 最终用户可见回复
-        2. 本轮实际调用过的工具列表
-        3. 完整消息链，用于后续写回 session
-        """
-
-        messages = list(initial_messages)       # 复制初始消息链到局部变量，后续会在循环中追加 assistant/tool 的中间消息
-        tools_used: list[str] = []              # 本轮实际上被调用过的工具名称（按顺序，会在写回历史时去重）
-        final_content: str | None = None        # 最终返回给用户的文本（清理过 <think> 标签的回复），初始为 None
+        messages = list(initial_messages)  # 复制消息链以免修改输入参数
+        tools_used: list[str] = []  # 本轮实际调用过的工具名
+        final_content: str | None = None  # 最终返回给用户的文本
 
         for _ in range(self.max_iterations):
-            # 每一轮都把"当前消息链 + 工具 schema"发给模型，让模型自行决定
-            # 是直接回答，还是继续调用工具。
-            # 把当前消息链交给 LLMProvider，请求模型决定是回答还是调用工具
             logger.debug("Agent loop iteration {}, messages count: {}", _ + 1, len(messages))
             response = await self.provider.chat(
                 messages=messages,
@@ -230,9 +184,12 @@ class AgentLoop:
                 max_tokens=self.max_tokens,
                 reasoning_effort=self.reasoning_effort,
             )
-            logger.debug("Model response: has_tool_calls={}, finish_reason={}, content_preview={}",
-                        response.has_tool_calls, response.finish_reason,
-                        (response.content or "")[:100] if response.content else None)
+            logger.debug(
+                "Model response: has_tool_calls={}, finish_reason={}, content_preview={}",
+                response.has_tool_calls,
+                response.finish_reason,
+                (response.content or "")[:100] if response.content else None,
+            )
 
             if response.has_tool_calls:
                 # 如果模型一边思考一边决定调用工具，这里把精简后的状态向外发送，
@@ -257,8 +214,7 @@ class AgentLoop:
                     }
                     for tool_call in response.tool_calls
                 ]
-                # 先把 assistant 的调用意图写入消息链，再执行工具。
-                # 这样下一轮模型能看到"自己刚才调用了什么"。
+
                 self.context.add_assistant_message(
                     messages,
                     response.content,
@@ -307,7 +263,7 @@ class AgentLoop:
         return final_content, tools_used, messages
 
     async def close_mcp(self) -> None:
-        """关闭 MCP 连接栈，通常在进程退出前调用。"""
+        """关闭 MCP 连接栈并清理资源。"""
         if not self._mcp_stack:
             return
         try:
@@ -325,10 +281,7 @@ class AgentLoop:
         session_key: str,
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
-        """处理单条消息，并返回最终回复。
-
-        这里会处理内建命令，例如 `/new`、`/help`。
-        """
+        """处理单条消息，并返回最终回复；支持内置命令处理。"""
         preview = content[:80] + "..." if len(content) > 80 else content
         logger.info("正在处理消息：{}", preview)
 
@@ -365,14 +318,7 @@ class AgentLoop:
         media: list[str] | None = None,
         on_progress: Callable[..., Awaitable[None]] | None = None,
     ) -> str:
-        """执行一轮标准对话。
-
-        这层是主路径：
-        1. 从 session 取历史
-        2. 构造模型请求
-        3. 执行模型/工具循环
-        4. 把本轮结果写回 session
-        """
+        """执行一轮标准对话：构造上下文、运行 agent_loop、写回会话。"""
         history = session.get_history(max_messages=self.memory_window)
         initial_messages = self.context.build_messages(
             history=history,
@@ -391,7 +337,7 @@ class AgentLoop:
         return final_content
 
     async def _archive_and_reset_session(self, session: Session) -> bool:
-        """归档当前会话剩余消息，并把会话清空重置。"""
+        """归档当前会话未归档消息并清空会话。"""
         lock = self._get_consolidation_lock(session.key)
         self._consolidating.add(session.key)
         try:
@@ -413,7 +359,7 @@ class AgentLoop:
         return True
 
     def _schedule_consolidation(self, session: Session) -> None:
-        """在满足阈值时，为会话安排后台记忆归档任务。"""
+        """当未归档消息达到阈值时，安排后台归档任务。"""
         unconsolidated = len(session.messages) - session.last_consolidated
         if unconsolidated < self.memory_window or session.key in self._consolidating:
             return
@@ -424,7 +370,7 @@ class AgentLoop:
         task.add_done_callback(self._consolidation_tasks.discard)
 
     async def _run_consolidation(self, session: Session) -> None:
-        """真正执行后台归档任务，并保证状态标记能被回收。"""
+        """执行后台归档任务并确保状态回收。"""
         try:
             async with self._get_consolidation_lock(session.key):
                 await self._consolidate_memory(session)
@@ -432,7 +378,7 @@ class AgentLoop:
             self._consolidating.discard(session.key)
 
     def _get_consolidation_lock(self, session_key: str) -> asyncio.Lock:
-        """获取某个 session 专属的归档锁。"""
+        """返回指定 session 的归档锁，若不存在则创建并返回。"""
         lock = self._consolidation_locks.get(session_key)
         if lock is None:
             lock = asyncio.Lock()
@@ -446,11 +392,7 @@ class AgentLoop:
         skip: int,
         tools_used: list[str] | None = None,
     ) -> None:
-        """把本轮新增消息写回 session。
-
-        `messages` 里包含 system prompt、历史消息和当前轮消息，
-        因此这里通过 `skip` 跳过前半段，只保留本轮真正新增的消息。
-        """
+        """把本轮新增消息写回 session（跳过历史部分）。"""
         from datetime import datetime
 
         turn_messages = [dict(message) for message in messages[skip:]]
