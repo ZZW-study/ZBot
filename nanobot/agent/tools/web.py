@@ -3,24 +3,26 @@
 
 from __future__ import annotations
 
-import html
+import html                             # 导入 HTML 处理模块，用于转义、解析等操作
 import json
 import os
 import re
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse
-
-import httpx
-
+from urllib.parse import urlparse       # 导入 URL 解析模块，用于分解、拼接、验证 URL 
+import httpx                            # 导入 httpx 库，一个功能强大的 HTTP 客户端，支持同步和异步请求
 from nanobot.agent.tools.base import Tool
 
+# 类型检查块：仅在类型检查阶段导入 WebSearchConfig，避免运行时循环依赖
 if TYPE_CHECKING:
     from nanobot.config.schema import WebSearchConfig
 
-
+# 定义常量 USER_AGENT，用于 HTTP 请求头中的 User-Agent 字段
+# 模拟 macOS 上的 Chrome 浏览器，避免被服务器拒绝
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
-MAX_REDIRECTS = 5
 
+# 定义常量 MAX_REDIRECTS，用于限制 HTTP 请求时跟随重定向的最大次数
+# 防止无限重定向，保证客户端安全
+MAX_REDIRECTS = 5
 
 def _strip_tags(text: str) -> str:
     """去除 HTML 标签并解码 HTML 实体"""
@@ -78,51 +80,46 @@ def _format_results(query: str, items: list[dict[str, Any]], n: int) -> str:
 
 
 class WebSearchTool(Tool):
-    """网页搜索工具，支持 Brave 和 Tavily"""
+    """网页搜索工具，支持 Bocha 和 Tavily"""
 
     # 直接用 类属性 实现了抽象属性，可以。
-    name = "web_search"
-    description = "Search the web and return titles, links and summaries."
+
+    name = "web_search",
+    description ="搜索网页并返回标题、链接和摘要。"
     parameters = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "Search query."},
-            "count": {"type": "integer", "description": "Number of results (1-10).", "minimum": 1, "maximum": 10},
+            "query": {"type": "string", "description": "搜索查询词。"},
+            "count": {"type": "integer", "description": "返回结果数量（1-10）。", "minimum": 1, "maximum": 10}
         },
-        "required": ["query"],
+        "required": ["query"]
     }
+
 
     def __init__(self, config: WebSearchConfig | None = None, proxy: str | None = None):
         from nanobot.config.schema import WebSearchConfig
-        # 使用传入配置或默认配置
-        self.config = config if config is not None else WebSearchConfig()
-        # HTTP 代理地址
-        self.proxy = proxy
+        
+        self.config = config if config is not None else WebSearchConfig()  # 使用传入配置或默认配置
+        self.proxy = proxy                                                 # HTTP 代理地址
 
     async def execute(self, query: str, count: int | None = None, **kwargs: Any) -> str:
-        # 确定搜索提供商（默认 brave）
-        provider = self.config.provider.strip().lower() or "brave"
         # 限制结果数量在 1-10 之间
         n = min(max(count or self.config.max_results, 1), 10)
 
-        # 根据提供商分发到对应方法
-        if provider == "tavily":
-            return await self._search_tavily(query, n)
-        else:
-            return await self._search_brave(query, n)
+        return await self._search_brave(query, n)
 
     async def _search_brave(self, query: str, n: int) -> str:
-        """使用 Brave Search API"""
+        """使用bocha Search API"""
         # 从配置或环境变量获取 API 密钥
-        api_key = self.config.api_key or os.environ.get("BRAVE_API_KEY", "")
+        api_key = self.config.api_key or os.environ.get("BOCHA_API_KEY", "")
         if not api_key:
-            return "Error: BRAVE_API_KEY not set. Please configure it in config file or environment variable."
+            return "错误：未设置 BOCHA_API_KEY。请在配置文件或环境变量中配置它。"
 
         try:
             # 使用异步 HTTP 客户端发送搜索请求
             async with httpx.AsyncClient(proxy=self.proxy) as client:
                 r = await client.get(
-                    "https://api.search.brave.com/res/v1/web/search",
+                    "https://api.bocha.cn/v1/web-search",
                     params={"q": query, "count": n},
                     headers={"Accept": "application/json", "X-Subscription-Token": api_key},
                     timeout=10.0,
@@ -136,41 +133,21 @@ class WebSearchTool(Tool):
             ]
             return _format_results(query, items, n)
         except Exception as e:
-            return f"Error: Brave search failed: {e}"
+            return f"Error: bocha 搜索失败: {e}"
 
-    async def _search_tavily(self, query: str, n: int) -> str:
-        """使用 Tavily API"""
-        # 从配置或环境变量获取 API 密钥
-        api_key = self.config.api_key or os.environ.get("TAVILY_API_KEY", "")
-        if not api_key:
-            return "Error: TAVILY_API_KEY not set. Please configure it in config file or environment variable."
-
-        try:
-            # 使用异步 HTTP 客户端发送 POST 搜索请求
-            async with httpx.AsyncClient(proxy=self.proxy) as client:
-                r = await client.post(
-                    "https://api.tavily.com/search",
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    json={"query": query, "max_results": n},
-                    timeout=15.0,
-                )
-                r.raise_for_status()
-            return _format_results(query, r.json().get("results", []), n)
-        except Exception as e:
-            return f"Error: Tavily search failed: {e}"
-
+    
 
 class WebFetchTool(Tool):
     """网页抓取工具"""
 
     name = "web_fetch"
-    description = "Fetch a web page and extract its main content."
+    description = "获取网页并提取其主要内容。"
     parameters = {
         "type": "object",
         "properties": {
-            "url": {"type": "string", "description": "URL to fetch."},
+            "url": {"type": "string", "description": "要获取的URL。"},
             "extractMode": {"type": "string", "enum": ["markdown", "text"], "default": "markdown"},
-            "maxChars": {"type": "integer", "minimum": 100, "description": "Max characters to return."},
+            "maxChars": {"type": "integer", "minimum": 100, "description": "返回的最大字符数。"},
         },
         "required": ["url"],
     }
@@ -197,10 +174,10 @@ class WebFetchTool(Tool):
         try:
             # 创建 HTTP 客户端，配置跟随重定向、超时、代理
             async with httpx.AsyncClient(
-                follow_redirects=True,  # 自动跟随重定向
-                max_redirects=MAX_REDIRECTS,  # 最多重定向次数
-                timeout=30.0,  # 超时时间
-                proxy=self.proxy,  # 代理设置
+                follow_redirects=True,          # 自动跟随重定向
+                max_redirects=MAX_REDIRECTS,    # 最多重定向次数
+                timeout=30.0,                   # 超时时间
+                proxy=self.proxy,               # 代理设置
             ) as client:
                 # 发送 GET 请求
                 r = await client.get(url, headers={"User-Agent": USER_AGENT})

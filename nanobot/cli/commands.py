@@ -354,10 +354,10 @@ def agent(
     2. 交互模式：不带 -m 参数，进入持续对话直到用户输入 exit 或 Ctrl+C
     """
     # 延迟导入运行时依赖模块
-    from loguru import logger  # 日志库
-    from nanobot.agent.loop import AgentLoop  # AI 智能体核心循环
-    from nanobot.config.loader import load_config  # 配置加载
-    from nanobot.cron.service import CronService  # 定时任务服务
+    from loguru import logger  
+    from nanobot.agent.loop import AgentLoop        # AI 智能体核心循环
+    from nanobot.config.loader import load_config   # 配置加载
+    from nanobot.cron.service import CronService    # 定时任务服务
 
     # 加载配置文件
     config = load_config()
@@ -421,8 +421,8 @@ def agent(
             # 关闭 MCP 连接（如有）
             await agent_loop.close_mcp()
 
-        asyncio.run(run_once())  # 运行异步主函数
-        return  # 单次模式执行完毕直接返回
+        asyncio.run(run_once())     # 运行异步主函数
+        return                      # 单次模式执行完毕直接返回
 
     # ========== 交互模式：持续对话 ==========
     _init_prompt_session()  # 初始化终端输入会话

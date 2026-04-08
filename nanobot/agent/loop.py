@@ -50,16 +50,21 @@ from nanobot.session.manager import Session, SessionManager
 # TYPE_CHECKING 块中的导入只在类型检查时有效，不会影响运行时
 # 这样可以避免循环依赖，同时在 IDE 中获得完整的类型提示
 if TYPE_CHECKING:
-    from nanobot.config.schema import ExecToolConfig, WebSearchConfig  # 执行工具和网页搜索配置
-    from nanobot.cron.service import CronService  # 定时任务服务
-    from nanobot.providers.base import ToolCallRequest  # 工具调用请求
+    from nanobot.config.schema import ExecToolConfig, WebSearchConfig   # 执行工具和网页搜索配置
+    from nanobot.cron.service import CronService                        # 定时任务服务
+    from nanobot.providers.base import ToolCallRequest                  # 工具调用请求
 
 
 # ==================== 模块级常量 ====================
-# 正则表达式：用于匹配大模型输出中的思考块（）
+# 正则表达式：用于匹配大模型输出中的思考块（），怎么匹配，
 # re.IGNORECASE 表示不区分大小写，可以匹配 、 各种变体
 # 思考块是模型在推理过程中产生的中间内容，用户通常不需要看到
-_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)
+# <think>：字面匹配开始标签。
+# [\s\S]*?：
+# [\s\S] 表示匹配任意字符：\s 匹配空白（空格、换行、制表符等），\S 匹配非空白，两者合在一起覆盖所有字符（包括换行符，而单独的 . 不匹配换行）。
+# *? 是非贪婪（懒惰）量词，表示匹配尽可能少的字符，只要能让整个表达式成功。例如对于 <think>aaa</think>bbb</think>，它会匹配第一个 </think> 就停止，而不是一直匹配到最后一个。
+# </think>：字面匹配结束标签。
+_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)  # 方括号 [ ] 表示字符类（character class），用来匹配方括号内列出的任意一个字符。
 
 
 # ==================== 核心类：AgentLoop ====================
@@ -91,22 +96,22 @@ class AgentLoop:
         self,
         provider: LLMProvider,          # 大模型提供者（必填）
         workspace: Path,                # 工作区目录（必填）
-        model: str | None = None,      # 使用的模型名称（可选，默认使用提供商的默认模型）
-        max_iterations: int = 40,      # 最大工具调用迭代次数（防止无限循环）
-        temperature: float = 0.1,     # 采样温度（越低越确定，越高越随机）
-        max_tokens: int = 4096,        # 模型最大输出 token 数
-        memory_window: int = 100,     # 记忆窗口大小（保留最近多少条历史消息）
-        reasoning_effort: str | None = None,  # 推理强度参数（某些模型支持）
+        model: str | None = None,       # 使用的模型名称（可选，默认使用提供商的默认模型）
+        max_iterations: int = 40,       # 最大工具调用迭代次数（防止无限循环）
+        temperature: float = 0.1,       # 采样温度（越低越确定，越高越随机）
+        max_tokens: int = 4096,         # 模型最大输出 token 数
+        memory_window: int = 100,       # 记忆窗口大小（保留最近多少条历史消息）
+        reasoning_effort: str | None = None,               # 推理强度参数（某些模型支持）
         web_search_config: WebSearchConfig | None = None,  # 网页搜索配置
-        web_proxy: str | None = None,  # HTTP 代理地址
-        exec_config: ExecToolConfig | None = None,  # Shell 执行配置
-        cron_service: CronService | None = None,  # 定时任务服务（可选）
-        restrict_to_workspace: bool = False,  # 是否限制文件操作在工作区内
-        session_manager: SessionManager | None = None,  # 会话管理器（可选）
-        mcp_servers: dict[str, Any] | None = None,  # MCP 服务器配置字典
+        web_proxy: str | None = None,                      # HTTP 代理地址
+        exec_config: ExecToolConfig | None = None,         # Shell 执行配置
+        cron_service: CronService | None = None,           # 定时任务服务（可选）
+        restrict_to_workspace: bool = False,               # 是否限制文件操作在工作区内
+        session_manager: SessionManager | None = None,     # 会话管理器（可选）
+        mcp_servers: dict[str, Any] | None = None,         # MCP 服务器配置字典
     ):
         
-        # 延迟导入配置类，避免循环依赖
+
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
         # ==================== 基础配置 ====================
@@ -114,10 +119,10 @@ class AgentLoop:
         self.workspace = workspace  # 工作目录路径
         # 如果未指定模型，使用提供商的默认模型
         self.model = model or provider.get_default_model()
-        self.max_iterations = max_iterations  # 防止无限循环的最大迭代次数
-        self.temperature = temperature  # 采样温度控制输出确定性
-        self.max_tokens = max_tokens  # 单次回复最大 token 数
-        self.memory_window = memory_window  # 记忆窗口大小
+        self.max_iterations = max_iterations    # 防止无限循环的最大迭代次数
+        self.temperature = temperature          # 采样温度控制输出确定性
+        self.max_tokens = max_tokens            # 单次回复最大 token 数
+        self.memory_window = memory_window      # 记忆窗口大小
 
         # ==================== 可选配置 ====================
         self.reasoning_effort = reasoning_effort  # 推理强度（如支持）
@@ -143,10 +148,10 @@ class AgentLoop:
 
         # ==================== MCP 相关状态 ====================
         # MCP（Model Context Protocol）允许 AI 连接外部服务获取更多工具
-        self._mcp_servers = mcp_servers or {}  # MCP 服务器配置
-        self._mcp_stack: AsyncExitStack | None = None  # MCP 连接的生命周期管理
-        self._mcp_connected = False  # 是否已连接
-        self._mcp_connecting = False  # 是否正在连接中
+        self._mcp_servers = mcp_servers or {}           # MCP 服务器配置
+        self._mcp_stack: AsyncExitStack | None = None   # MCP 连接的生命周期管理
+        self._mcp_connected = False                     # 是否已连接
+        self._mcp_connecting = False                    # 是否正在连接中
 
         # ==================== 归档相关状态 ====================
         # 长期记忆归档：将会话历史压缩后存入记忆文件，减轻上下文负担
@@ -181,10 +186,10 @@ class AgentLoop:
         # 注册 Shell 执行工具：允许 AI 运行终端命令
         self.tools.register(
             ExecTool(
-                working_dir=str(self.workspace),  # 默认工作目录
-                timeout=self.exec_config.timeout,  # 命令超时时间
+                working_dir=str(self.workspace),                   # 默认工作目录
+                timeout=self.exec_config.timeout,                  # 命令超时时间
                 restrict_to_workspace=self.restrict_to_workspace,  # 是否限制在 workspace 内
-                path_append=self.exec_config.path_append,  # 额外的 PATH 路径
+                path_append=self.exec_config.path_append,          # 额外的 PATH 路径
             )
         )
 
@@ -345,32 +350,30 @@ class AgentLoop:
             - messages: 完整的消息链（包含所有中间工具调用和结果）
         """
 
-        # 深拷贝初始消息列表，避免修改传入的参数（保护调用者的数据）
-        messages = list(initial_messages)
-        # 记录本轮对话中实际调用过的工具名称（用于后续存档和统计）
-        tools_used: list[str] = []
-        # 最终返回给用户的文本内容（初始为 None，表示尚未产生回复）
-        final_content: str | None = None
+       
+        messages = list(initial_messages)    # 深拷贝初始消息列表，避免修改传入的参数（保护调用者的数据）
+        tools_used: list[str] = []           # 记录本轮对话中实际调用过的工具名称（用于后续存档和统计）
+        final_content: str | None = None     # 最终返回给用户的文本内容（初始为 None，表示尚未产生回复）
 
         # ========== 主交互循环 ==========
         # 最多执行 max_iterations 次迭代，防止工具调用进入死循环
         for _ in range(self.max_iterations):
             # 记录调试日志：当前是第几次迭代，消息链长度
-            logger.debug("Agent loop iteration {}, messages count: {}", _ + 1, len(messages))
+            logger.debug("Agent循环迭代: {}, 消息长度: {}", _ + 1, len(messages))
 
             # 调用大模型（核心 API 调用）
             response = await self.provider.chat(
-                messages=messages,                    # 消息历史（包含用户消息、assistant 回复、工具结果）
-                tools=self.tools.get_definitions(),   # 当前可用的工具定义列表（JSON Schema 格式）
-                model=self.model,                     # 使用的模型名称（如 "claude-sonnet-4-6-20250929"）
-                temperature=self.temperature,         # 温度参数（控制随机性，越高越有创造力）
-                max_tokens=self.max_tokens,           # 最大 token 数（限制回复长度）
+                messages=messages,                      # 消息历史（包含用户消息、assistant 回复、工具结果）
+                tools=self.tools.get_definitions(),     # 当前可用的工具定义列表（JSON Schema 格式）
+                model=self.model,                       # 使用的模型名称（如 "claude-sonnet-4-6-20250929"）
+                temperature=self.temperature,           # 温度参数（控制随机性，越高越有创造力）
+                max_tokens=self.max_tokens,             # 最大 token 数（限制回复长度）
                 reasoning_effort=self.reasoning_effort, # 推理努力程度（仅部分模型支持）
             )
 
             # 记录调试日志：模型响应详情
             logger.debug(
-                "Model response: has_tool_calls={}, finish_reason={}, content_preview={}",
+                "模型回复: 是否包含工具调用={}, 结束原因={}, 回复内容的前100字符={}",
                 response.has_tool_calls,              # 是否包含工具调用
                 response.finish_reason,               # 结束原因（"stop"、"tool_calls"、"error"等）
                 (response.content or "")[:100] if response.content else None,  # 回复内容前 100 字符预览
@@ -406,10 +409,10 @@ class AgentLoop:
                 # 将 assistant 的工具调用意图写入消息链
                 self.context.add_assistant_message(
                     messages,
-                    response.content,                    # 模型原始回复（可能包含思考内容）
-                    tool_call_dicts,                     # 工具调用列表（标准格式）
-                    reasoning_content=response.reasoning_content,  # 推理内容（部分模型支持）
-                    thinking_blocks=response.thinking_blocks,      # 思考块（原始 <think>...</think> 内容）
+                    response.content,                               # 模型原始回复（可能包含思考内容）
+                    tool_call_dicts,                                # 工具调用列表（标准格式）
+                    reasoning_content=response.reasoning_content,   # 推理内容（部分模型支持）
+                    thinking_blocks=response.thinking_blocks,       # 思考块（原始 <think>...</think> 内容）
                 )
 
                 # 逐个执行工具调用
@@ -516,15 +519,11 @@ class AgentLoop:
         Returns:
             最终回复文本
         """
-        # 生成消息预览（超过 80 字符则截断）
-        preview = content[:80] + "..." if len(content) > 80 else content
-        # 记录日志：正在处理什么消息
-        logger.info("正在处理消息：{}", preview)
-
-        # 获取或创建会话对象（Session 存储对话历史）
-        session = self.sessions.get_or_create(session_key)
-        # 将消息转为小写并去除首尾空白（用于命令匹配）
-        command = content.strip().lower()
+        
+        preview = content[:80] + "..." if len(content) > 80 else content   # 生成消息预览（超过 80 字符则截断）
+        logger.info("正在处理消息：{}", preview)                            # 记录日志：正在处理什么消息
+        session = self.sessions.get_or_create(session_key)                 # 获取或创建会话对象（Session 存储对话历史） 
+        command = content.strip().lower()                                  # 将消息转为小写并去除首尾空白（用于命令匹配）
 
         # ========== 处理内置命令 ==========
         if command == "/new":
