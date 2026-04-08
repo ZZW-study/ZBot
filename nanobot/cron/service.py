@@ -19,16 +19,16 @@
 
 from __future__ import annotations  # 启用未来版本的类型注解特性
 
-import asyncio  # 用于异步任务调度和定时器
+import asyncio  
 import json  # 用于持久化任务数据到 JSON 文件
 import time  # 用于获取时间戳
 import uuid  # 用于生成唯一任务 ID
-from datetime import datetime  # 用于处理日期时间
-from pathlib import Path  # 用于路径操作
-from typing import Any, Callable, Coroutine  # 用于类型注解
+from datetime import datetime  
+from pathlib import Path  
+from typing import Any, Callable, Coroutine  
 from zoneinfo import ZoneInfo  # 用于时区处理（北京时间）
 
-from loguru import logger  # 用于日志记录
+from loguru import logger 
 
 from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule, CronStore
 
@@ -44,7 +44,7 @@ def _now_ms() -> int:
 
     系统内部统一使用毫秒时间戳（而非秒）来比较和存储时间，
     以获得更高的精度（例如 1672531200000 表示 2023-01-01 00:00:00）。
-
+    time.time(),返回秒数。
     Returns:
         当前 UTC 时间的毫秒时间戳（Unix timestamp in milliseconds）
     """
@@ -93,16 +93,15 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     # --- cron 类型：使用 croniter 计算下一个匹配时间 ---
     if schedule.kind == "cron" and schedule.expr:
         try:
-            from croniter import croniter
+            from croniter import croniter  # 计算定时任务时间的库
 
             # 把基准时间转换为具有时区信息的 datetime（使用北京时间）
-            # now_ms 是毫秒时间戳，需要除以 1000 转为秒
-            base = datetime.fromtimestamp(now_ms / 1000, tz=BEIJING_TZ)
+            # now_ms 是毫秒时间戳，需要除以 1000 转为秒 
+            base = datetime.fromtimestamp(now_ms / 1000, tz=BEIJING_TZ)   # tz，time zone 时区
             # croniter 返回下一个匹配的 datetime 对象
             # 转换为毫秒整数返回（乘以 1000）
             return int(croniter(schedule.expr, base).get_next(datetime).timestamp() * 1000)
         except Exception:
-            # 如果解析或计算失败（如croniter未安装、表达式无效），视为当前不可用
             return None
 
     # 其它不支持或参数不完整的情况
@@ -188,18 +187,13 @@ class CronService:
             store_path: 任务持久化文件路径（JSON 格式）
             on_job: 任务触发时的回调函数（异步可选，返回字符串结果）
         """
-        # 存储路径（JSON 文件）
-        self.store_path = store_path
-        # 触发任务时的回调（业务侧实现），可以是 async 函数
-        self.on_job = on_job
-        # 内存中的 store 缓存（CronStore），懒加载
-        self._store: CronStore | None = None
-        # 记录上次加载文件的 mtime，用于检测文件变化
-        self._last_mtime = 0.0
-        # 内部计时器的 asyncio.Task（用于定时唤醒）
-        self._timer_task: asyncio.Task | None = None
-        # 服务是否正在运行的标志
-        self._running = False
+        
+        self.store_path = store_path                    # 存储路径（JSON 文件）
+        self.on_job = on_job                            # 触发任务时的回调（业务侧实现），可以是 async 函数
+        self._store: CronStore | None = None            # 内存中的 store 缓存（CronStore），懒加载
+        self._last_mtime = 0.0                          # 记录上次加载文件的 mtime（modified time，修改时间），用于检测文件变化
+        self._timer_task: asyncio.Task | None = None    # 内部计时器的 asyncio.Task（用于定时唤醒）
+        self._running = False                           # 定时任务服务是否正在运行的标志
 
     async def start(self) -> None:
         """

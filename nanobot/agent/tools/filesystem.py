@@ -47,7 +47,7 @@ def _strip_code_fence(content: str) -> str:
 def _is_under(path: Path, directory: Path) -> bool:
     """判断 path 是否位于 directory 目录之下"""
     try:
-        # 尝试计算 path 相对于 directory 的相对路径
+        # 尝试计算 path 相对于 directory 的相对路径,path 必须是 directory 的子路径
         path.relative_to(directory.resolve())
         # 如果没抛异常，说明 path 在 directory 下面
         return True
@@ -59,7 +59,7 @@ def _is_under(path: Path, directory: Path) -> bool:
 class ReadFileTool(Tool):
     """读取文件内容"""
 
-    _MAX_CHARS = 128_000  # 返回内容的最大字符数，超出则截断
+    _MAX_CHARS = 128_000  # 返回内容的最大字符数，超出则截断.数字下划线写法,下划线只用来分隔数字、方便阅读，不影响数值大小
     _DEFAULT_LIMIT = 2000  # 默认读取行数
 
     def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
@@ -98,7 +98,15 @@ class ReadFileTool(Tool):
                 return f"错误：目标不是文件：{path}"
 
             # 读取文件全部行
-            all_lines = fp.read_text(encoding="utf-8").splitlines()
+            all_lines = fp.read_text(encoding="utf-8").splitlines()   
+            # fp.read_text(encoding="utf-8")
+            # 打开文件 fp
+            # 以 UTF-8 编码读取全部内容
+            # 返回一个大字符串（包含所有换行、空格）
+            # splitlines()
+            # 把上面那个大字符串按换行符切割
+            # 自动去掉换行符 \n、\r\n
+            # 返回一个列表，每一项是文件的一行内容
             total = len(all_lines)  # 总行数
 
             # 校正 offset 为最小值 1
@@ -171,11 +179,11 @@ class WriteFileTool(Tool):
 
     async def execute(self, path: str, content: str, **kwargs: Any) -> str:
         try:
-            # 解析路径并检查是否在允许范围内
+            # 解析路径(包含了文件)并检查是否在允许范围内
             fp = _resolve_path(path, self._workspace, self._allowed_dir)
             # 自动创建所有缺失的父目录
             fp.parent.mkdir(parents=True, exist_ok=True)
-            # 写入文件内容
+            # 写入文件内容, write_text() 会自动创建不存在的文件。只会创建文件本身，不会自动创建父级文件夹
             fp.write_text(content, encoding="utf-8")
             return f"已成功写入文件：{fp}（共 {len(content)} 个字符）"
         except PermissionError as e:
@@ -254,7 +262,7 @@ class EditFileTool(Tool):
             if not fp.exists():
                 return f"错误：文件不存在：{path}"
 
-            # 以二进制读取，检测换行符类型（CRLF 还是 LF）
+            # 以二进制读取，返回字节串（bytes），检测换行符类型（CRLF 还是 LF）
             raw = fp.read_bytes()
             uses_crlf = b"\r\n" in raw  # Windows 换行符
             # 统一转为 LF 处理
