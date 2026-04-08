@@ -63,8 +63,8 @@ class ReadFileTool(Tool):
     _DEFAULT_LIMIT = 2000  # 默认读取行数
 
     def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
-        self._workspace = workspace  # 工作区根目录
-        self._allowed_dir = allowed_dir  # 允许访问的目录
+        self._workspace = workspace         # 工作区根目录
+        self._allowed_dir = allowed_dir     # 允许访问的目录
 
     @property
     def name(self) -> str:

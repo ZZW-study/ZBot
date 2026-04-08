@@ -55,9 +55,9 @@ class ProvidersConfig(Base):
 class WebSearchConfig(Base):
     """网页搜索配置。
 
-    用于配置网络搜索的参数，支持 Brave 和 Tavily 两个搜索提供商。
+    用于配置网络搜索的参数，支持 bocha。
     """
-    provider: str = "brave"       # 搜索提供商名称
+    provider: str = "bocha"       # 搜索提供商名称
     api_key: str = ""             # 搜索 API 密钥
     base_url: str | None = None   # 可选的 API 地址
     max_results: int = 5          # 最多返回几条搜索结果
@@ -117,8 +117,8 @@ class Config(BaseSettings):
     """
     # Agent 默认配置（扁平化，不再嵌套）
     workspace: str = "~/.nanobot/workspace"    # 工作区路径
-    model: str = "anthropic/claude-opus-4-5"   # 使用的模型名称
-    provider: str = "openrouter"               # LLM 提供商
+    model: str = "Pro/MiniMaxAI/MiniMax-M2.5"   # 使用的模型名称
+    provider: str = "siliconflow"               # LLM 提供商
     max_tokens: int = 8192                     # 模型最大输出 token 数
     temperature: float = 0.1                   # 采样温度（越低越确定，越高越随机）
     max_tool_iterations: int = 40              # 工具调用最大迭代次数

@@ -38,12 +38,6 @@ _current_config_path: Path | None = None
 def get_path_config() -> Path:
     """
     返回当前生效的配置文件路径。
-
-    默认路径为：~/.nanobot/config.json
-    如果设置了 _current_config_path（测试场景），则返回该路径。
-
-    Returns:
-        配置文件的绝对路径
     """
     if _current_config_path is not None:
         return _current_config_path
@@ -53,25 +47,7 @@ def get_path_config() -> Path:
 
 def _coerce_env_value(raw: str) -> Any:
     """
-    尝试将环境变量的字符串按 JSON 格式解析为 Python 对象；解析失败则保留原始字符串。
-
-    环境变量本质上都是字符串，但有些配置需要布尔值、数字或列表。
-    此函数尝试智能转换：
-
-    示例：
-    - "true"  -> True  (Python布尔值)
-    - "false" -> False (Python布尔值)
-    - "123"   -> 123   (Python整数)
-    - "45.6"  -> 45.6  (Python浮点数)
-    - '["a"]' -> ["a"] (Python列表)
-    - '{"key": "value"}' -> {"key": "value"} (Python字典)
-    - "abc"   -> "abc" (原始字符串，无法解析为JSON)
-
-    Args:
-        raw: 环境变量的原始字符串值
-
-    Returns:
-        解析后的 Python 对象，或原始字符串（如果解析失败）
+    尝试将环境变量的字符串按 JSON 格式解析为 Python 对象；解析失败则保留原始字符串。：
     """
     try:
         # 尝试将字符串解析为 JSON 对象
@@ -84,23 +60,6 @@ def _coerce_env_value(raw: str) -> Any:
 def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """
     递归合并两个字典，并返回新结果。
-
-    合并规则：
-    - `override` 中的值优先级更高
-    - 当同名字段两边都是字典时，继续向下递归合并
-    - 其他情况直接用 override 的值覆盖 base 的值
-
-    示例：
-    base = {"a": 1, "b": {"c": 2}}
-    override = {"b": {"d": 3}, "e": 4}
-    result = {"a": 1, "b": {"c": 2, "d": 3}, "e": 4}
-
-    Args:
-        base: 基础字典（低优先级）
-        override: 覆盖字典（高优先级）
-
-    Returns:
-        合并后的新字典
     """
     merged = dict(base)  # 创建基础字典的副本
     for key, value in override.items():
@@ -117,24 +76,6 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 def _load_env_overrides() -> dict[str, Any]:
     """
     把 `NANOBOT_*` 环境变量转换成嵌套配置字典。
-
-    环境变量命名规则：
-    - 前缀：NANOBOT_
-    - 嵌套分隔符：双下划线 __
-    - 字段名自动转为小写
-
-    命名规则示例：
-    `NANOBOT_AGENTS__DEFAULTS__MODEL=qwen-plus`
-    会被转换成：
-    `{"agents": {"defaults": {"model": "qwen-plus"}}}`
-
-    另一个示例：
-    `NANOBOT_PROVIDERS__OPENAI__API_KEY=sk-xxx`
-    转换为：
-    `{"providers": {"openai": {"api_key": "sk-xxx"}}}`
-
-    Returns:
-        从环境变量构建的嵌套配置字典
     """
     prefix = "NANOBOT_"
     overrides: dict[str, Any] = {}
@@ -168,22 +109,6 @@ def _load_env_overrides() -> dict[str, Any]:
 def _normalize_config_data(data: dict[str, Any], *, exclude_unset: bool) -> dict[str, Any]:
     """
     用 `Config` 对配置字典做一次字段标准化。
-
-    这样无论输入里使用驼峰键还是下划线键，最终都会被统一为模型字段名，
-    后面的合并逻辑也就不需要关心别名差异。
-
-    Pydantic 的 model_validate() 会：
-    1. 验证数据类型是否符合模型定义
-    2. 应用字段别名转换（如 camelCase -> snake_case）
-    3. 设置默认值（对于未提供的字段）
-    4. 执行自定义验证器
-
-    Args:
-        data: 原始配置字典
-        exclude_unset: 是否排除未显式设置的字段（用于环境变量覆盖场景）
-
-    Returns:
-        标准化后的配置字典
     """
     return Config.model_validate(data).model_dump(
         by_alias=False,  # 使用字段名而非别名（确保一致性）
@@ -205,15 +130,6 @@ def load_config(config_path: Path | None = None) -> Config:
     2. 解析环境变量覆盖
     3. 深度合并两个配置源
     4. 通过 Pydantic 模型进行最终验证
-
-    Args:
-        config_path: 可选的配置文件路径（用于测试或特殊场景）
-
-    Returns:
-        验证后的 Config 对象
-
-    Raises:
-        ValidationError: 如果最终合并的配置不符合 Pydantic 模型要求
     """
     # 确定配置文件路径
     path = config_path or get_path_config()
