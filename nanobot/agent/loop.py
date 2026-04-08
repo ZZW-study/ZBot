@@ -17,7 +17,6 @@
 # 这样可以避免循环导入问题（如在类定义中使用尚未定义的类名）
 from __future__ import annotations
 
-# 导入 asyncio：Python 异步编程标准库，用于处理并发任务
 import asyncio
 # 导入 json：用于 JSON 数据的编码和解码（大模型返回的参数是 JSON 字符串）
 import json
@@ -25,12 +24,10 @@ import json
 import re
 # 导入 AsyncExitStack：上下文管理器，用于自动管理多个异步资源的生命周期
 from contextlib import AsyncExitStack
-# 导入 Path：面向对象的文件路径类
 from pathlib import Path
-# 导入类型注解相关类
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
-# 导入 loguru：现代化的日志库（比 Python 标准 logging 更易用）
+
 from loguru import logger
 
 # 导入上下文构造器：负责为对话构建消息列表
@@ -108,33 +105,7 @@ class AgentLoop:
         session_manager: SessionManager | None = None,  # 会话管理器（可选）
         mcp_servers: dict[str, Any] | None = None,  # MCP 服务器配置字典
     ):
-        """初始化运行时依赖与内部状态。
-
-        这个方法会：
-        1. 保存所有配置参数到实例属性
-        2. 创建上下文构造器
-        3. 创建或复用会话管理器
-        4. 创建工具注册中心
-        5. 注册所有默认工具
-        6. 初始化 MCP 相关状态
-
-        参数详解：
-        - provider: 大模型提供商实例，负责与 AI 模型通信
-        - workspace: 工作区目录，AI 可以读取和写入文件的地方
-        - model: 模型名称，如 "anthropic/claude-opus-4-5"，None 则使用默认
-        - max_iterations: 最多调用多少次工具，超过则强制结束（防止死循环）
-        - temperature: 0.0~2.0，越低输出越稳定，越高越有创造性
-        - max_tokens: 单次回复的最大长度（单位：token）
-        - memory_window: 对话历史保留条数，影响上下文长度和费用
-        - reasoning_effort: 部分模型支持（如 Claude），控制推理深度
-        - web_search_config: 搜索引擎 API 配置（Brave、Tavily 等）
-        - web_proxy: 可选的 HTTP 代理，用于访问外网
-        - exec_config: 执行 Shell 命令的配置（超时时间、可执行路径等）
-        - cron_service: 定时任务服务，用于创建和管理定时提醒
-        - restrict_to_workspace: True=禁止访问工作区外的文件，False=允许访问任意文件
-        - session_manager: 会话管理器，负责历史记录的持久化
-        - mcp_servers: MCP（Model Context Protocol）服务器配置字典
-        """
+        
         # 延迟导入配置类，避免循环依赖
         from nanobot.config.schema import ExecToolConfig, WebSearchConfig
 
@@ -179,10 +150,10 @@ class AgentLoop:
 
         # ==================== 归档相关状态 ====================
         # 长期记忆归档：将会话历史压缩后存入记忆文件，减轻上下文负担
-        self._consolidating: set[str] = set()  # 正在归档的会话 key 集合
-        self._consolidation_tasks: set[asyncio.Task[Any]] = set()  # 后台归档任务集合
-        self._consolidation_locks: dict[str, asyncio.Lock] = {}  # 每个会话的归档锁（防止并发冲突）
-        self._processing_lock = asyncio.Lock()  # 全局消息处理锁
+        self._consolidating: set[str] = set()                       # 正在归档的会话 key 集合
+        self._consolidation_tasks: set[asyncio.Task[Any]] = set()   # 后台归档任务集合
+        self._consolidation_locks: dict[str, asyncio.Lock] = {}     # 每个会话的归档锁（防止并发冲突）
+        self._processing_lock = asyncio.Lock()                      # 全局消息处理锁
 
         # ==================== 注册默认工具 ====================
         # 注册 AI 可以使用的各种工具

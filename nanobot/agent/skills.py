@@ -18,11 +18,11 @@
 
 from __future__ import annotations  # 启用未来版本的类型注解特性
 
-import json  # 用于解析技能元数据中的 JSON 配置
-import os  # 用于检查环境变量
-import re  # 用于正则表达式匹配 frontmatter
-import shutil  # 用于检查系统命令是否存在
-from pathlib import Path  # 用于路径操作
+import json                 # 用于解析技能元数据中的 JSON 配置
+import os                   # 用于检查环境变量
+import re                   # 用于正则表达式匹配 frontmatter
+import shutil               # 用于检查系统命令是否存在
+from pathlib import Path    # 用于路径操作
 
 # 内置技能目录路径：相对于当前文件的上级目录的 skills/ 子目录
 # 例如：nanobot/agent/../skills/ = nanobot/skills/

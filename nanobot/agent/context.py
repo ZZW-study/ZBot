@@ -13,16 +13,16 @@
 
 from __future__ import annotations  # 启用未来版本的类型注解特性
 
-import base64  # 用于 base64 编码（图片转 data URL）
-import mimetypes  # 用于根据文件扩展名猜测 MIME 类型
-import platform  # 用于获取运行平台信息（系统、架构、Python 版本）
-from datetime import datetime  # 用于获取当前时间
-from pathlib import Path  # 用于路径操作
-from typing import Any  # 用于类型注解
-from zoneinfo import ZoneInfo  # 用于时区处理（北京时间）
+import base64                   # 用于 base64 编码（图片转 data URL）
+import mimetypes                # 用于根据文件扩展名猜测 MIME 类型
+import platform                 # 用于获取运行平台信息（系统、架构、Python 版本）
+from datetime import datetime   # 用于获取当前时间
+from pathlib import Path        # 用于路径操作
+from typing import Any          # 用于类型注解
+from zoneinfo import ZoneInfo   # 用于时区处理（北京时间）
 
-from nanobot.agent.memory import MemoryStore  # 长期记忆存储模块
-from nanobot.agent.skills import SkillsLoader  # 技能加载器模块
+from nanobot.agent.memory import MemoryStore         # 长期记忆存储模块
+from nanobot.agent.skills import SkillsLoader        # 技能加载器模块
 from nanobot.utils.helpers import detect_image_mime  # 图片 MIME 类型检测工具
 
 
@@ -55,8 +55,8 @@ class ContextBuilder:
         Args:
             workspace: 工作区根目录路径（Path 对象）
         """
-        self.workspace = workspace  # 工作区根目录
-        self.memory = MemoryStore(workspace)  # 长期记忆存储，用于构建 memory context
+        self.workspace = workspace             # 工作区根目录
+        self.memory = MemoryStore(workspace)   # 长期记忆存储，用于构建 memory context
         self.skills = SkillsLoader(workspace)  # 技能加载器，用于读取和管理技能目录
 
     def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
@@ -200,10 +200,10 @@ class ContextBuilder:
         # 构造 tool 消息对象
         messages.append(
             {
-                "role": "tool",           # 固定为 “tool” 角色
-                "tool_call_id": tool_call_id,  # 关联到 assistant 的 tool_call
-                "name": tool_name,        # 工具名称（用于日志和调试）
-                "content": result,        # 工具执行结果
+                "role": "tool",                 # 固定为 “tool” 角色
+                "tool_call_id": tool_call_id,   # 关联到 assistant 的 tool_call
+                "name": tool_name,              # 工具名称（用于日志和调试）
+                "content": result,              # 工具执行结果
             }
         )
         return messages
@@ -295,12 +295,12 @@ class ContextBuilder:
             f"- 历史归档文件：{workspace_path}/memory/HISTORY.md\n"  # 历史归档存储位置
             f"- 自定义技能目录：{workspace_path}/skills/{{skill-name}}/SKILL.md\n\n"  # 技能目录位置模板
             "## 行为准则\n"
-            "- 在调用工具前先说明你准备做什么，但不要在拿到结果前声称已经完成。\n"  # 先声明再执行
-            "- 编辑文件前先读取文件内容。\n"  # 先读后改，避免盲目修改
-            "- 涉及准确性的改动，编辑后要重新检查关键文件。\n"  # 改后复查，确保正确
-            "- 工具失败时，先分析错误原因，再决定是否换一条路径。\n"  # 失败时分析而非重试
-            "- 当用户意图确实存在歧义时，再提出澄清问题。\n\n"  # 只有真正歧义才提问
-            "普通对话时，直接给出自然语言回复即可。"  # 简单对话直接回复
+            "- 在调用工具前先说明你准备做什么，但不要在拿到结果前声称已经完成。\n"   # 先声明再执行
+            "- 编辑文件前先读取文件内容。\n"                                       # 先读后改，避免盲目修改
+            "- 涉及准确性的改动，编辑后要重新检查关键文件。\n"                      # 改后复查，确保正确
+            "- 工具失败时，先分析错误原因，再决定是否换一条路径。\n"                # 失败时分析而非重试
+            "- 当用户意图确实存在歧义时，再提出澄清问题。\n\n"                      # 只有真正歧义才提问
+            "普通对话时，直接给出自然语言回复即可。"                                # 简单对话直接回复
         )
 
     def _bootstrap_prompt(self) -> str:

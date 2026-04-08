@@ -73,12 +73,10 @@ class MemoryStore:
         Args:
             workspace: 工作区根目录路径
         """
-        # 确保 memory 目录存在，如果不存在则创建
-        self.memory_dir = ensure_dir(workspace / "memory")
-        # 长期记忆文件路径
-        self.memory_file = self.memory_dir / "MEMORY.md"
-        # 历史归档文件路径
-        self.history_file = self.memory_dir / "HISTORY.md"
+        
+        self.memory_dir = ensure_dir(workspace / "memory")   # 确保 memory 目录存在，如果不存在则创建
+        self.memory_file = self.memory_dir / "MEMORY.md"     # 长期记忆文件路径
+        self.history_file = self.memory_dir / "HISTORY.md"   # 历史归档文件路径
 
     def read_long_term(self) -> str:
         """

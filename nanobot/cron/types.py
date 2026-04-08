@@ -1,4 +1,4 @@
-"""定时任务的数据类型定义（带中文注释，帮助初学者理解各字段含义）。
+"""定时任务的数据类型定义。
 
 这个模块定义了定时任务系统的核心数据结构，包括：
 1. 调度规则（CronSchedule）- 定义任务何时执行
@@ -81,8 +81,8 @@ class CronJobState:
 
     next_run_at_ms: int | None = None  # 下次计划运行的毫秒时间戳（None 表示未安排）
     last_run_at_ms: int | None = None  # 上次实际执行时间（毫秒）
-    last_status: str | None = None  # 上次执行状态，常见值："ok"、"error"
-    last_error: str | None = None  # 上次执行的错误信息（若有）
+    last_status: str | None = None     # 上次执行状态，常见值："ok"、"error"
+    last_error: str | None = None      # 上次执行的错误信息（若有）
 
 
 @dataclass

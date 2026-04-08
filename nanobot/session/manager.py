@@ -18,13 +18,13 @@
 
 from __future__ import annotations  # 启用未来版本的类型注解特性
 
-import json  # 用于 JSON 格式的数据读写
+import json                               # 用于 JSON 格式的数据读写
 from dataclasses import dataclass, field  # 用于定义数据结构
-from datetime import datetime  # 用于时间戳
-from pathlib import Path  # 用于路径操作
-from typing import Any  # 用于类型注解
+from datetime import datetime             # 用于时间戳
+from pathlib import Path                  
+from typing import Any  
 
-from loguru import logger  # 用于日志记录
+from loguru import logger  
 
 from nanobot.utils.helpers import ensure_dir, safe_filename  # 工具函数
 
@@ -53,12 +53,12 @@ class Session:
         session.add_message("assistant", "你好！有什么可以帮助你的吗？")
     """
 
-    key: str  # 会话的唯一标识符
-    messages: list[dict[str, Any]] = field(default_factory=list)  # 消息列表
-    created_at: datetime = field(default_factory=datetime.now)  # 创建时间
-    updated_at: datetime = field(default_factory=datetime.now)  # 更新时间
-    metadata: dict[str, Any] = field(default_factory=dict)  # 自定义元数据
-    last_consolidated: int = 0  # 已归档的消息索引（用于长期记忆）
+    key: str                                                        # 会话的唯一标识符
+    messages: list[dict[str, Any]] = field(default_factory=list)    # 消息列表
+    created_at: datetime = field(default_factory=datetime.now)      # 创建时间
+    updated_at: datetime = field(default_factory=datetime.now)      # 更新时间
+    metadata: dict[str, Any] = field(default_factory=dict)          # 自定义元数据
+    last_consolidated: int = 0                                      # 已归档的消息索引（用于长期记忆）
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
         """
@@ -71,10 +71,10 @@ class Session:
         """
         self.messages.append(
             {
-                "role": role,           # 消息角色
-                "content": content,     # 消息内容
-                "timestamp": datetime.now().isoformat(),  # 时间戳
-                **kwargs,               # 其他字段（如工具调用信息）
+                "role": role,                               # 消息角色
+                "content": content,                         # 消息内容
+                "timestamp": datetime.now().isoformat(),    # 时间戳
+                **kwargs,                                   # 其他字段（如工具调用信息）
             }
         )
         # 更新最后修改时间
@@ -99,7 +99,7 @@ class Session:
         # 从上次归档位置到末尾，再取最近的 max_messages 条
         messages = self.messages[self.last_consolidated :][-max_messages:]
 
-        # 找到第一条 user 消息的位置
+        # 找到第一条 user 消息的位置,  next(..., None)：取生成器的第一个结果；没找到就返回 None，不抛异常。--生成器表达式，生成器函数
         first_user = next((index for index, message in enumerate(messages) if message.get("role") == "user"), None)
         if first_user is not None:
             # 从第一条 user 消息开始截断
@@ -219,8 +219,8 @@ class SessionManager:
             会话元数据列表，按更新时间倒序排列
         """
         sessions: list[dict[str, Any]] = []
-        # 遍历 sessions 目录下所有 .jsonl 文件
-        for path in self.sessions_dir.glob("*.jsonl"):
+        # 遍历 sessions 目录下所有 .jsonl 文件，每一行 = 一个独立、完整的 JSON 数据（对象 / 数组 / 值），不跨行书写。
+        for path in self.sessions_dir.glob("*.jsonl"): # Path 对象的文件匹配方法，* 是通配符（匹配任意字符），整体匹配该目录下所有后缀为 .jsonl 的文件,返回路径迭代器。
             metadata = self._read_metadata(path)
             if metadata:
                 sessions.append(metadata)
@@ -280,7 +280,7 @@ class SessionManager:
                 last_consolidated=last_consolidated,
             )
         except Exception as exc:
-            logger.warning("Failed to load session {}: {}", key, exc)
+            logger.warning("加载会话失败 {}: {}", key, exc)
             return None
 
     def _session_path(self, key: str) -> Path:

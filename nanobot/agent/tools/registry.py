@@ -55,7 +55,7 @@ class ToolRegistry:
             return f"错误：找不到工具“{name}”。当前可用工具：{available}"
 
         try:
-            # 先把用户/模型传入的原始参数做类型转换（cast）和规范化，
+            # 先把模型传入的原始参数做类型转换（cast）和规范化，
             # 例如把 JSON 数字转换为 int、把字符串解析为期望的子结构等。
             cast_params = tool.cast_params(params)
             # 然后进行语义/格式校验，返回错误列表（若有）
@@ -78,4 +78,4 @@ class ToolRegistry:
     def tool_names(self) -> list[str]:
         """返回当前已注册工具名，主要给外层做遍历和上下文注入。"""
         # 返回工具名列表，顺序由 dict 的内部迭代顺序决定（Python 3.7+ 保持插入顺序）
-        return list(self._tools)
+        return list(self._tools)  # 字典像这样有很多，只会传入键

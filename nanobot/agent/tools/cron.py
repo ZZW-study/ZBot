@@ -2,7 +2,7 @@
 功能：为AI智能体提供 定时提醒、循环任务、一次性定时任务 的调度能力
 支持三种调度模式：秒级循环、Cron表达式、指定ISO时间执行
 """
-from contextvars import ContextVar
+from contextvars import ContextVar    # 上下文变量类，创建线程 / 协程安全的上下文变量，set一次就是一个新的
 from datetime import datetime
 from typing import Any
 
@@ -26,7 +26,7 @@ class CronTool(Tool):
         # 底层定时任务服务实例，真正执行任务调度的核心对象
         self._cron = cron_service
         # 异步安全的上下文变量：标记当前是否正在执行定时任务回调
-        # 作用：禁止在定时任务内部创建新任务，防止嵌套死循环
+        # 作用：禁止在定时任务内部创建新任务，防止嵌套死循环（每 1 秒执行一次 → 执行时又创建一个每 1 秒的任务 → 新任务执行又创建……）
         self._in_cron_context: ContextVar[bool] = ContextVar("cron_in_context", default=False)
 
     def set_cron_context(self, active: bool):

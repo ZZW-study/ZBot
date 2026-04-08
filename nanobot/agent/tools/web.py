@@ -80,6 +80,7 @@ def _format_results(query: str, items: list[dict[str, Any]], n: int) -> str:
 class WebSearchTool(Tool):
     """网页搜索工具，支持 Brave 和 Tavily"""
 
+    # 直接用 类属性 实现了抽象属性，可以。
     name = "web_search"
     description = "Search the web and return titles, links and summaries."
     parameters = {
