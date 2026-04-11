@@ -106,13 +106,13 @@ python -c "import mcp; print('MCP 包已安装')"
 Nanobot 的配置文件位于：
 
 ```
-C:\Users\你的用户名\.nanobot\config.json
+C:\Users\你的用户名\.zbot\config.json
 ```
 
 例如，如果你的用户名是 `15927`，则路径是：
 
 ```
-C:\Users\15927\.nanobot\config.json
+C:\Users\15927\.zbot\config.json
 ```
 
 ### 3.2 打开配置文件
@@ -121,13 +121,13 @@ C:\Users\15927\.nanobot\config.json
 
 1. 打开 VS Code
 2. 按 `Ctrl + O` 打开文件
-3. 在地址栏输入 `C:\Users\15927\.nanobot\config.json`
+3. 在地址栏输入 `C:\Users\15927\.zbot\config.json`
 4. 回车打开
 
 **方法二：使用命令行打开**
 
 ```bash
-notepad C:\Users\15927\.nanobot\config.json
+notepad C:\Users\15927\.zbot\config.json
 ```
 
 ### 3.3 配置文件结构
@@ -136,7 +136,7 @@ notepad C:\Users\15927\.nanobot\config.json
 
 ```json
 {
-  "workspace": "~/.nanobot/workspace",
+  "workspace": "~/.zbot/workspace",
   "model": "Qwen/Qwen2.5-72B-Instruct",
   "provider": "siliconflow",
   "tools": {
@@ -253,14 +253,14 @@ Nanobot ←── HTTP 流式连接 ──→ 远程 MCP 服务器
 1. **打开配置文件**
 
    ```bash
-   notepad C:\Users\15927\.nanobot\config.json
+   notepad C:\Users\15927\.zbot\config.json
    ```
 
 2. **找到 `mcpServers` 字段**，修改为：
 
    ```json
    {
-     "workspace": "~/.nanobot/workspace",
+     "workspace": "~/.zbot/workspace",
      "model": "Pro/MiniMaxAI/MiniMax-M2.5",
      "provider": "siliconflow",
      "tools": {
@@ -287,7 +287,7 @@ Nanobot ←── HTTP 流式连接 ──→ 远程 MCP 服务器
 4. **重启 Nanobot**
 
    ```bash
-   python -m nanobot agent
+   python -m ZBot agent
    ```
 
 5. **测试使用**
@@ -379,7 +379,7 @@ Nanobot ←── HTTP 流式连接 ──→ 远程 MCP 服务器
 
 ```json
 {
-  "workspace": "~/.nanobot/workspace",
+  "workspace": "~/.zbot/workspace",
   "model": "Qwen/Qwen2.5-72B-Instruct",
   "provider": "siliconflow",
   "tools": {
