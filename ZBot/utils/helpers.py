@@ -50,14 +50,7 @@ def detect_image_mime(data: bytes) -> str | None:
 
 
 def ensure_dir(path: Path) -> Path:
-    """确保目录存在，如果不存在则递归创建。
-
-    参数：
-        path: 目标目录路径
-
-    返回：
-        传入的 path（方便链式调用）
-    """
+    """确保目录存在，如果不存在则递归创建。"""
     # parents=True 递归创建所有缺失的父目录
     # exist_ok=True 目录已存在时不报错
     path.mkdir(parents=True, exist_ok=True)
@@ -66,10 +59,8 @@ def ensure_dir(path: Path) -> Path:
 
 def safe_filename(name: str) -> str:
     """将文件名中的不安全字符替换为下划线。
-
     某些字符（如 / \ ? * 等）在文件系统中是非法的，
     此函数将这些字符替换为下划线，保证文件名可用。
-
     参数：
         name: 原始文件名
 
@@ -80,33 +71,18 @@ def safe_filename(name: str) -> str:
     return _UNSAFE_CHARS.sub("_", name).strip()
 
 
-def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
+def ensure_workspace_dirs(workspace: Path) ->None:
     """创建工作区所需的必要目录。
-
     在首次使用 ZBot 或新建工作区时，
     需要创建 memory（记忆）、skills（技能）、sessions（会话）等目录。
-
-    参数：
-        workspace: 工作区根目录路径
-        silent: 是否静默模式（目前未使用，保留供后续扩展）
-
-    返回：
-        本次新创建的目录相对路径列表
     """
-    added: list[str] = []  # 记录本次新增的目录
-
     # 创建工作区必须存在的目录列表
     dirs = [
         workspace / "memory",    # 长期记忆和归档目录
         workspace / "skills",    # 自定义技能目录
         workspace / "sessions",  # 会话历史记录目录
     ]
-
     for d in dirs:
         # 目录不存在时创建
         if not d.exists():
             d.mkdir(parents=True, exist_ok=True)
-            # 记录相对路径
-            added.append(str(d.relative_to(workspace)))
-
-    return added  # 返回新增目录列表

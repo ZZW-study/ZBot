@@ -286,7 +286,6 @@ class CronService:
             enabled=True,
             schedule=schedule,
             payload=CronPayload(
-                kind="agent_turn",  # 任务类型
                 message=message,
                 deliver=deliver,
             ),
@@ -602,7 +601,6 @@ class CronService:
                 expr=data["schedule"].get("expr"),  # 可能不存在
             ),
             payload=CronPayload(
-                kind=data["payload"].get("kind", "agent_turn"),  # 默认为 agent_turn
                 message=data["payload"].get("message", ""),  # 默认空字符串
                 deliver=data["payload"].get("deliver", False),  # 默认不推送
             ),
@@ -642,7 +640,6 @@ class CronService:
                 "expr": job.schedule.expr,
             },
             "payload": {
-                "kind": job.payload.kind,
                 "message": job.payload.message,
                 "deliver": job.payload.deliver,
             },

@@ -1,8 +1,9 @@
 """配置模块"""
 
-from ZBot.config.loader import get_path_config, load_config
+from ZBot.config.loader import load_config
 from ZBot.config.paths import (
     get_cli_history_path,
+    get_path_config,
     get_runtime_subdir,
     get_workspace_path,
 )

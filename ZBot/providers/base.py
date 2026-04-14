@@ -1,10 +1,8 @@
 """大模型提供商的基础抽象接口。
-
 这个模块定义了三件最核心的事情：
 1. 工具调用请求的数据结构。
 2. 大模型响应的统一格式。
 3. 所有提供商必须实现的抽象方法。
-
 这样无论底层接 OpenAI、Anthropic 还是 LiteLLM 网关，上层代码都只面向统一接口编程。
 """
 
@@ -21,7 +19,7 @@ class ToolCallRequest:
 
     id: str
     name: str
-    arguments: dict[str, Any]
+    arguments: dict[str, Any] = field(default_factory=dict)  # 调用工具的入参
 
 
 @dataclass
@@ -29,11 +27,10 @@ class LLMResponse:
     """大模型返回的标准化响应。"""
 
     content: str | None
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)
-    finish_reason: str = "stop"
-    usage: dict[str, int] = field(default_factory=dict)
+    tool_calls: list[ToolCallRequest] = field(default_factory=list)  # 专门用来为数据类字段生成可变类型的默认值,每次都生成全新的
+    finish_reason: str = "stop"                                      # 表示模型停止生成的原因
+    usage: dict[str, int] = field(default_factory=dict)              # 记录本次请求消耗的 Token 数量
     reasoning_content: str | None = None
-    thinking_blocks: list[dict] | None = None
 
     @property
     def has_tool_calls(self) -> bool:
@@ -51,7 +48,6 @@ class LLMProvider(ABC):
     @staticmethod
     def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """清洗空内容消息，避免部分厂商因空字符串直接报错。
-
         处理策略如下：
         1. 空字符串内容：替换成占位文本或空字符串。
         2. 多模态列表：过滤掉空文本块。
@@ -63,7 +59,7 @@ class LLMProvider(ABC):
 
             if isinstance(content, str) and not content:
                 clean = dict(msg)
-                if clean.get("role") == "assistant" and msg.get("tool_calls"):
+                if clean.get("role") == "assistant" and msg.get("tool_calls"): # 大模型返回的空内容，但是调用了工具
                     clean["content"] = ""  # 部分厂商不接受 null，改用空字符串
                 else:
                     clean["content"] = "(空内容)"
