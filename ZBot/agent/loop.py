@@ -115,10 +115,9 @@ class AgentLoop:
         from ZBot.config.schema import ExecToolConfig, WebSearchConfig
 
         # ==================== 基础配置 ====================
-        self.provider = provider  # LLM 提供者实例，用于调用大模型 API
+        self.provider = provider    # LLM 提供者实例，用于调用大模型 API
         self.workspace = workspace  # 工作目录路径
-        # 如果未指定模型，使用提供商的默认模型
-        self.model = model or provider.get_default_model()
+        self.model = model
         self.max_iterations = max_iterations    # 防止无限循环的最大迭代次数
         self.temperature = temperature          # 采样温度控制输出确定性
         self.max_tokens = max_tokens            # 单次回复最大 token 数
@@ -412,8 +411,8 @@ class AgentLoop:
                     response.content,                               # 模型原始回复（可能包含思考内容）
                     tool_call_dicts,                                # 工具调用列表（标准格式）
                     reasoning_content=response.reasoning_content,   # 推理内容（部分模型支持）
-                    thinking_blocks=response.thinking_blocks,       # 思考块（原始 <think>...</think> 内容）
                 )
+                
 
                 # 逐个执行工具调用
                 for tool_call in response.tool_calls:
@@ -451,12 +450,11 @@ class AgentLoop:
             # 将最终回复写入消息链（不包含工具调用，纯文本回复）
             self.context.add_assistant_message(
                 messages,
-                clean,                               # 清理后的回复文本
+                clean,                                         # 清理后的回复文本
                 reasoning_content=response.reasoning_content,  # 推理内容
-                thinking_blocks=response.thinking_blocks,      # 思考块
             )
-            final_content = clean  # 设置为最终回复
-            break  # 跳出循环（已完成任务，无需继续迭代）
+            final_content = clean                              # 设置为最终回复
+            break                                              # 跳出循环（已完成任务，无需继续迭代）
 
         # ========== 循环结束检查 ==========
         if final_content is None:

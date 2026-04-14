@@ -47,6 +47,7 @@ class ContextBuilder:
     # 运行时上下文标签：当前版本写入历史前会识别并剥离这个标记
     # 用于标记那些只对当前轮推理有意义的元信息（如当前时间）
     _RUNTIME_CONTEXT_TAG = "[运行时上下文 - 仅供元数据参考，不是用户指令]"
+    _LEGACY_RUNTIME_CONTEXT_TAG = "[运行时上下文]"
 
     def __init__(self, workspace: Path):
         """
@@ -200,7 +201,7 @@ class ContextBuilder:
         # 构造 tool 消息对象
         messages.append(
             {
-                "role": "tool",                 # 固定为 “tool” 角色
+                "role": "tool",                 # 固定为 "tool" 角色
                 "tool_call_id": tool_call_id,   # 关联到 assistant 的 tool_call
                 "name": tool_name,              # 工具名称（用于日志和调试）
                 "content": result,              # 工具执行结果
@@ -214,7 +215,6 @@ class ContextBuilder:
         content: str | None,
         tool_calls: list[dict[str, Any]] | None = None,
         reasoning_content: str | None = None,
-        thinking_blocks: list[dict] | None = None,
     ) -> list[dict[str, Any]]:
         """
         向消息链追加 assistant 消息，并保留推理相关字段。
@@ -224,19 +224,17 @@ class ContextBuilder:
         - 基础回复内容（content）
         - 工具调用意图（tool_calls）
         - 推理内容（reasoning_content，部分模型支持）
-        - 思考块（thinking_blocks，原始思考内容）
 
         Args:
             messages: 当前消息链列表
             content: 模型回复文本（可能为 None，如只调用工具不说话）
             tool_calls: 可选的工具调用列表（每项包含 id、type、function）
             reasoning_content: 可选的推理内容（部分模型支持的中间思考）
-            thinking_blocks: 可选的思考块列表（厂商特有的结构）
 
         Returns:
             更新后的消息链（原列表被修改，返回引用便于链式调用）
         """
-        # 构造 assistant 消息对象，保留模型的推理内容和思考块
+        # 构造 assistant 消息对象，保留模型的推理内容
         message: dict[str, Any] = {"role": "assistant", "content": content}
 
         # 如果有工具调用，记录模型意图调用的工具
@@ -247,11 +245,6 @@ class ContextBuilder:
         # 推理内容可能包含模型的链式思考或中间分析过程
         if reasoning_content is not None:
             message["reasoning_content"] = reasoning_content
-
-        # 如果有思考块，保留以便调试和展示
-        # thinking_blocks 是厂商特有的结构，保留原始内容
-        if thinking_blocks:
-            message["thinking_blocks"] = thinking_blocks
 
         # 将消息追加到消息链
         messages.append(message)
