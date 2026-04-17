@@ -16,11 +16,10 @@
     SessionManager: 会话管理器，负责多会话的 CRUD 操作
 """
 
-from __future__ import annotations  # 启用未来版本的类型注解特性
-
-import json                               # 用于 JSON 格式的数据读写
-from dataclasses import dataclass, field  # 用于定义数据结构
-from datetime import datetime             # 用于时间戳
+from __future__ import annotations        
+import json                             
+from dataclasses import dataclass, field  
+from datetime import datetime            
 from pathlib import Path                  
 from typing import Any  
 
@@ -36,28 +35,12 @@ _HISTORY_FIELDS = ("tool_calls", "tool_call_id", "name")
 
 @dataclass
 class Session:
-    """
-    单个会话对象。
-
-    表示一次完整的对话会话，包含：
-    - key: 会话唯一标识符（如"cli:default"或"user:123"）
-    - messages: 消息列表（每条消息包含 role、content 等）
-    - created_at: 会话创建时间
-    - updated_at: 最后更新时间
-    - metadata: 可选的元数据字典
-    - last_consolidated: 已归档的消息索引（用于长期记忆机制）
-
-    用法示例：
-        session = Session(key="user:123")
-        session.add_message("user", "你好")
-        session.add_message("assistant", "你好！有什么可以帮助你的吗？")
-    """
+    """单个会话对象。"""
 
     key: str                                                        # 会话的唯一标识符
     messages: list[dict[str, Any]] = field(default_factory=list)    # 消息列表
     created_at: datetime = field(default_factory=datetime.now)      # 创建时间
     updated_at: datetime = field(default_factory=datetime.now)      # 更新时间
-    metadata: dict[str, Any] = field(default_factory=dict)          # 自定义元数据
     last_consolidated: int = 0                                      # 已归档的消息索引（用于长期记忆）
 
     def add_message(self, role: str, content: str, **kwargs: Any) -> None:
@@ -247,7 +230,6 @@ class SessionManager:
             return None
 
         try:
-            metadata: dict[str, Any] = {}
             messages: list[dict[str, Any]] = []
             created_at: datetime | None = None
             updated_at: datetime | None = None
@@ -261,7 +243,6 @@ class SessionManager:
 
                 if data.get("_type") == "metadata":
                     # 第一行是元数据
-                    metadata = data.get("metadata", {})
                     created_at = self._parse_datetime(data.get("created_at"))
                     updated_at = self._parse_datetime(data.get("updated_at"))
                     last_consolidated = data.get("last_consolidated", 0)
@@ -276,7 +257,6 @@ class SessionManager:
                 messages=messages,
                 created_at=created_at or now,
                 updated_at=updated_at or created_at or now,
-                metadata=metadata,
                 last_consolidated=last_consolidated,
             )
         except Exception as exc:
@@ -319,7 +299,6 @@ class SessionManager:
             "key": session.key,           # 会话 ID
             "created_at": session.created_at.isoformat(),  # 创建时间
             "updated_at": session.updated_at.isoformat(),  # 更新时间
-            "metadata": session.metadata,  # 自定义元数据
             "last_consolidated": session.last_consolidated,  # 归档索引
         }
 

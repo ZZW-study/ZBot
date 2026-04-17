@@ -86,34 +86,29 @@ class WebToolsConfig(Base):
 
 
 class ExecToolConfig(Base):
-    """Shell 命令执行工具配置。
-
-    用于配置 AI 执行系统命令时的参数。
+    """Shell 命令执行工具配置,用于配置 AI 执行系统命令时的参数。
     """
     timeout: int = 60        # 命令执行超时时间（秒）
     path_append: str = ""    # 追加到系统 PATH 的额外路径
 
 
 class MCPServerConfig(Base):
-    """MCP 服务器连接配置。
-
-    MCP（Model Context Protocol）是一种协议，允许 AI 连接外部服务。
-    此配置定义了如何连接 MCP 服务器。
+    """MCP 服务器连接配置,此配置定义了如何连接 MCP 服务器。
     """
     type: Literal["stdio", "sse", "streamableHttp"] | None = None    # 连接类型
-    command: str = ""                                                # 启动命令（stdio 模式）
-    args: list[str] = Field(default_factory=list)                    # 命令参数
+    command: str = ""                                                # 启动命令（stdio 模式），如 "python"、"node"、"uvx"
+    args: list[str] = Field(default_factory=list)                    # 命令参数，与 command 配合使用，示例：command="python", args=["-m", "mcp_server"]，实际执行：python -m mcp_server                                                                                                     
     env: dict[str, str] = Field(default_factory=dict)                # 环境变量
     url: str = ""                                                    # 服务器 URL（sse/http 模式）
     headers: dict[str, str] = Field(default_factory=dict)            # HTTP 请求头
     tool_timeout: int = 30                                           # 工具调用超时时间（秒）
-
     enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # 启用的工具列表，* 表示全部
-
+    # 不能直接用 default=["*"]，否则多个模型实例会共用同一个列表，改一个会影响所有实例。
+    # lambda: ["*"]
+    # 一个匿名函数，每次调用都会返回一个新的 ["*"] 列表，保证每个实例的字段都是独立的。
 
 class ToolsConfig(Base):
     """所有工具的全局配置。
-
     汇总了网页工具、命令执行工具、工作区限制和 MCP 服务器的配置。
     """
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)             # 网页工具配置
@@ -133,7 +128,7 @@ class Config(BaseModel):
     max_tokens: int = 4396                      # 模型最大输出 token 数，1 token ≈ 0.5~0.8 个中文字符
     temperature: float = 0.1                    # 采样温度（越低越确定，越高越随机）
     max_tool_iterations: int = 50               # 工具调用最大迭代次数
-    memory_window: int = 100                    # 记忆窗口大小（保留多少条历史消息）
+    memory_window: int = 50                     # 记忆窗口大小（保留多少条历史消息）
     reasoning_effort: str | None = None         # 推理强度参数
 
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)  # 所有 LLM 提供商

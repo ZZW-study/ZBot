@@ -28,7 +28,7 @@ from rich.text import Text                              # 纯文本输出
 from ZBot import __logo__, __version__                                   # 版本号与 Logo
 from ZBot.config.paths import get_workspace_path, get_runtime_subdir     # 路径工具
 from ZBot.config.schema import Config                                    # 配置 schema
-from ZBot.utils.helpers import ensure_workspace_dirs                  # 工作区目录初始化
+from ZBot.utils.helpers import ensure_workspace_dirs                     # 工作区目录初始化
 
 # Windows 平台特殊处理：强制使用 UTF-8 编码
 # Windows 默认使用 GBK 编码，会导致中文输出乱码
@@ -46,9 +46,9 @@ if sys.platform == "win32":
 # 创建 Typer CLI 应用实例
 # name: 程序名称；help: 帮助信息；no_args_is_help=True: 无参数时显示帮助
 app = typer.Typer(name="ZBot", help="ZBot -- 你的个人 AI 助手", no_args_is_help=True)
-console = Console()                                                        # 创建 Rich 控制台输出实例
+console = Console()                                                         # 创建 Rich 控制台输出实例
 EXIT_COMMAND = {"exit", "quit", "/exit", "/quit", ":q", "退出", "再见"}     # 退出指令集合（包含多种常见退出方式）
-_PROMPT_SESSION: PromptSession | None = None                               # 全局变量：交互式输入会话（延迟初始化）
+_PROMPT_SESSION: PromptSession | None = None                                # 全局变量：交互式输入会话（延迟初始化）
 
 
 def _flush_pending_tty_input() -> None:
@@ -99,41 +99,23 @@ def _init_prompt_session() -> None:
 
 
 def _print_agent_response(response: str, render_markdown: bool) -> None:
-    """打印 ZBot 的回复到终端。
-
-    使用 Rich 库进行格式化输出：
-    - 如果 render_markdown 为 True，则将回复按 Markdown 渲染（标题、代码块等）
-    - 否则以纯文本形式输出
-    参数：
-        response: AI 返回的回复文本
-        render_markdown: 是否按 Markdown 格式渲染输出
-    """
+    """打印 ZBot 的回复到终端。"""
     content = response or ""                            # 确保不为 None
     # 根据参数选择渲染方式：Markdown 渲染或纯文本
     body = Markdown(content) if render_markdown else Text(content)
-    console.print()                                     # 输出一个空行，增加视觉间隔
-    console.print(f"[cyan]{__logo__} ZBot[/cyan]")       # 输出带颜色的 ZBot 标识
+    console.print()                                     
+    console.print(f"[cyan]{__logo__} ZBot[/cyan]")      
     console.print(body)                                 # 输出回复内容
-    console.print()                                     # 再输出一个空行
+    console.print()                                    
 
 
 def _is_exit_command(command: str) -> bool:
-    """判断用户输入是否为退出指令。
-    通过检查输入是否匹配预定义的退出命令集合来判断。
-    参数：
-        command: 用户输入的字符串
-    """
+    """判断用户输入是否为退出指令。"""
     return command.lower() in EXIT_COMMAND
 
 
 def version_callback(value: bool) -> None:
-    """处理 --version 参数的回调函数。
-
-    当用户传入 -v 或 --version 时，Typer 会调用此函数。
-
-    参数：
-        value: 如果用户传入了 --version，则为 True
-    """
+    """处理 --version 参数的回调函数。"""
     if value:
         console.print(f"{__logo__} ZBot 版本 [cyan]{__version__}[/cyan]")  # 打印版本信息
         raise typer.Exit()  # 优雅退出程序
@@ -148,6 +130,8 @@ async def _read_interactive_input_async() -> str:
         当遇到 EOF（文件结束，如 Ctrl+D）时，转为 KeyboardInterrupt
     """
     # 使用 prompt_toolkit 的异步输入,必须要异步，不然我创建的实例，会一直阻塞当前线程，AI无法工作。
+    # 这里用 await prompt_async()，是异步非阻塞的
+    # 你的 AI 实例、后台任务、消息处理可以同时运行，不会被输入卡住
     try:
         with patch_stdout():  # 它让输出绕过当前输入行，显示在上方。修复异步输出与终端输入的冲突
             return await _PROMPT_SESSION.prompt_async(HTML("<b fg='ansiblue'>你：</b> "))
@@ -156,16 +140,7 @@ async def _read_interactive_input_async() -> str:
 
 
 def _make_provider(config: Config):
-    """创建 LLM 提供商实例。
-    根据配置文件中选择的模型和提供商，创建对应的 LiteLLMProvider 实例。
-    参数：
-        config: 已加载的配置对象
-    返回：
-        LiteLLMProvider 实例
-    异常：
-        如果无法匹配提供商或未配置 API 密钥，则退出程序
-    """
-    # 延迟导入（避免循环依赖）
+    """创建 LLM 提供商实例。根据配置文件中选择的模型和提供商，创建对应的 LiteLLMProvider 实例。"""
     from ZBot.config.paths import get_path_config
     from ZBot.providers.litellm_provider import LiteLLMProvider
 
@@ -261,8 +236,7 @@ def onboard():
     console.print(f"\n{__logo__} ZBot 已准备就绪！")
     console.print("\n建议下一步：")
     console.print(f"1.在[cyan]{config_path}[/cyan]中配置模型名称")
-    console.print("提醒：请一定要在模型名称前面加上供应商名字/，如siliconflow/")
-    console.print(f"2. 在[cyan]{config_path}[/cyan]中填写 API 密钥")
+    console.print(f"2. 在[cyan]{config_path}[/cyan]中填写 API 密钥和API 地址")
     console.print("3. 如果使用[cyan]siliconflow[/cyan]，可在[cyan]https://cloud.siliconflow.cn/account/ak[/cyan]上获取密钥")
     console.print('4. 开始对话：[cyan]python -m ZBot agent -m "你好！"[/cyan]')
 
@@ -279,12 +253,8 @@ def agent(
     # --logs/--no-logs：控制是否显示调试日志
     logs: bool = typer.Option(False, "--logs/--no-logs", help="是否显示调试日志"),
 ):
-    """启动与 ZBot 的对话。
-    支持两种运行模式：
-    1. 单次模式：传入 -m 参数，发送一条消息后等待回复并退出
-    2. 交互模式：不带 -m 参数，进入持续对话直到用户输入 exit 或 Ctrl+C
-    """
-    # 延迟导入运行时依赖模块
+    """启动与 ZBot 的对话。"""
+
     from loguru import logger  
     from ZBot.agent.loop import AgentLoop        # AI 智能体核心循环
     from ZBot.config.loader import load_config   # 配置加载
@@ -294,7 +264,6 @@ def agent(
     if not logs:
         logger.disable("ZBot")
     
-    # 加载配置文件
     config = load_config()
     # 创建 LLM 提供商实例（用于调用大模型 API）
     provider = _make_provider(config)
@@ -303,7 +272,7 @@ def agent(
     cron_store_path = get_runtime_subdir("cron") / "jobs.json"
     cron = CronService(cron_store_path)
 
-    # 创建 AgentLoop 实例（AI 智能体运行时的核心）
+    # 创建 AgentLoop 实例
     agent_loop = AgentLoop(
         provider=provider,                    # LLM 提供商
         workspace=config.workspace_path,      # 工作区目录
@@ -323,13 +292,12 @@ def agent(
 
     # 思考状态显示上下文
     def _thinking_ctx():
-        # 显示"ZBot 正在思考..."的动态提示
-        return console.status("[dim]ZBot 正在思考...[/dim]", spinner="dots")
+        return console.status("[bold green] 🤖 ZBot 正在思考...[/bold green]", spinner="dots") # 返回上下文对象
 
-    # 进度回调函数：在 CLI 中显示工具调用进度
+    # 进度回调函数：在 CLI 中显示工具调用进度，* 后面的参数必须使用关键字形式传递
     async def _cli_progress(content: str, *, tool_hint: bool = False) -> None:
         prefix = "正在调用工具：" if tool_hint else "进度："
-        console.print(f"[dim]↳ {prefix}{content}[/dim]")
+        console.print(f"[bold green]↳ {prefix}{content}[/bold green]")
 
     # ========== 单次模式：传入 -m 参数 ==========
     if message:
@@ -344,7 +312,7 @@ def agent(
                 )
             # 打印 AI 回复（支持 Markdown 渲染）
             _print_agent_response(response, render_markdown=markdown)
-            # 关闭 MCP 连接（如有）
+            # 关闭 MCP 连接
             await agent_loop.close_mcp()
 
         asyncio.run(run_once())     # 运行异步主函数
