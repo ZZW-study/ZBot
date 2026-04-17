@@ -1,7 +1,6 @@
 """文件系统工具集：读取、写入、编辑、列出目录"""
 
 import difflib
-import re
 from pathlib import Path
 from typing import Any
 
@@ -31,17 +30,6 @@ def _resolve_path(
         if not any(_is_under(resolved, d) for d in all_dirs):
             raise PermissionError(f"路径 {path} 超出了允许访问的目录范围：{allowed_dir}")
     return resolved
-
-
-def _strip_code_fence(content: str) -> str:
-    """去除 Markdown 代码围栏"""
-    # 用正则匹配 ``` 或 ~~~ 包裹的代码块，提取中间内容
-    m = re.match(r'^\s*(```|~~~)[^\n]*\n([\s\S]*?)\n\1\s*$', content, re.DOTALL)
-    # 如果匹配成功，返回去掉围栏的代码内容
-    if m:
-        return m.group(2)
-    # 否则原样返回
-    return content
 
 
 def _is_under(path: Path, directory: Path) -> bool:

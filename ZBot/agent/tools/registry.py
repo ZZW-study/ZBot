@@ -1,19 +1,13 @@
 """工具注册与调度中心。
-
 `ToolRegistry` 的职责很单纯：
 1. 保存所有可被 Agent 调用的工具实例。
 2. 输出给模型看的工具 schema。
 3. 在真正执行前集中完成参数转换、参数校验和错误包装。
-
 这样 Agent 主循环就不需要重复关心每个工具的细节。
 """
-
 from __future__ import annotations
-
 from typing import Any
-
 from ZBot.agent.tools.base import Tool
-
 
 _RETRY_HINT = "\n\n[工具执行失败。请分析错误原因，然后继续尝试其他方法完成任务，不要停下来。]"
 
@@ -28,7 +22,6 @@ class ToolRegistry:
 
     def register(self, tool: Tool) -> None:
         """注册工具。
-
         同名工具会被后注册的实例覆盖，这是刻意保留的行为，
         方便外部注入定制版本。
         """
@@ -37,8 +30,8 @@ class ToolRegistry:
 
     def get(self, name: str) -> Tool | None:
         """按名称取回工具实例。"""
-        # 返回对应名称的工具实例或 None（调用方需处理 None 情况）
-        return self._tools.get(name)
+        # 返回对应名称的工具实例或 None
+        return self._tools.get(name,None)
 
     def get_definitions(self) -> list[dict[str, Any]]:
         """返回所有工具 schema，供大模型决定是否进行函数调用。"""

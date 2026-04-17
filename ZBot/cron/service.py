@@ -4,24 +4,12 @@
 - 任务的增删查（管理接口）
 - 将任务持久化到磁盘上的 JSON 文件
 - 在后台按计划唤醒并执行到期任务
-
-实现细节：调度器本身不负责任务的业务逻辑。业务逻辑通过 `on_job` 回调注入，
-因此 `CronService` 更像是一个纯粹的调度层。
-
-核心类：
-    CronService: 定时任务调度服务，负责任务的生命周期管理
-
-核心函数：
-    _now_ms(): 获取当前毫秒时间戳
-    _compute_next_run(): 计算任务的下一次执行时间
-    _validate_schedule(): 验证调度规则的合法性
 """
 
-from __future__ import annotations  # 启用未来版本的类型注解特性
-
+from __future__ import annotations 
 import asyncio  
-import json  # 用于持久化任务数据到 JSON 文件
-import time  # 用于获取时间戳
+import json  
+import time  
 import uuid  # 用于生成唯一任务 ID
 from datetime import datetime  
 from pathlib import Path  
@@ -39,46 +27,12 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
 
 def _now_ms() -> int:
-    """
-    返回当前时间的毫秒级时间戳（整数）。
-
-    系统内部统一使用毫秒时间戳（而非秒）来比较和存储时间，
-    以获得更高的精度（例如 1672531200000 表示 2023-01-01 00:00:00）。
-    time.time(),返回秒数。
-    Returns:
-        当前 UTC 时间的毫秒时间戳（Unix timestamp in milliseconds）
-    """
+    """返回当前时间的毫秒级时间戳（整数）。"""
     return int(time.time() * 1000)
 
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
-    """
-    根据任务的 `schedule` 规则计算下一次应触发的毫秒时间戳。
-
-    返回值：下一次触发的毫秒时间戳，若规则当前不可执行则返回 `None`。
-
-    支持三种调度类型：
-
-    1. "at" - 在指定的绝对时间点执行一次
-       - 如果 at_ms 小于当前时间（已过期），返回 None（不会重复执行）
-       - 如果 at_ms 大于当前时间，返回 at_ms（等待执行）
-
-    2. "every" - 按固定间隔循环执行
-       - 下一次执行时间 = 当前时间 + 间隔时间
-       - 每次执行后会重新计算下一次时间（实现固定频率）
-
-    3. "cron" - 使用标准 cron 表达式调度
-       - 需要安装 croniter 库来解析 cron 表达式
-       - 计算从当前时间开始的下一个匹配时间点
-       - 支持复杂的调度模式（如"每个工作日 9 点"）
-
-    Args:
-        schedule: 任务的调度规则（CronSchedule）
-        now_ms: 当前时间的毫秒时间戳
-
-    Returns:
-        下一次触发的毫秒时间戳，或 None（如果任务已过期或配置无效）
-    """
+    """根据任务的 `schedule` 规则计算下一次应触发的毫秒时间戳。"""
     # --- at 类型：直接返回 at_ms（如果在未来） ---
     if schedule.kind == "at":
         # 对于一次性任务，如果指定时间已过期，则不再执行（返回 None）
@@ -87,7 +41,6 @@ def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
     # --- every 类型：固定间隔任务 ---
     if schedule.kind == "every":
         # 下一次执行 = 当前时间 + 间隔
-        # 例如：now=1000, every_ms=5000，下一次执行时间=6000
         return now_ms + schedule.every_ms if schedule.every_ms and schedule.every_ms > 0 else None
 
     # --- cron 类型：使用 croniter 计算下一个匹配时间 ---
@@ -178,18 +131,14 @@ class CronService:
     def __init__(
         self,
         store_path: Path,
-        on_job: Callable[[CronJob], Coroutine[Any, Any, str | None]] | None = None,
     ):
         """
         初始化 CronService 实例。
-
         Args:
             store_path: 任务持久化文件路径（JSON 格式）
-            on_job: 任务触发时的回调函数（异步可选，返回字符串结果）
         """
         
         self.store_path = store_path                    # 存储路径（JSON 文件）
-        self.on_job = on_job                            # 触发任务时的回调（业务侧实现），可以是 async 函数
         self._store: CronStore | None = None            # 内存中的 store 缓存（CronStore），懒加载
         self._last_mtime = 0.0                          # 记录上次加载文件的 mtime（modified time，修改时间），用于检测文件变化
         self._timer_task: asyncio.Task | None = None    # 内部计时器的 asyncio.Task（用于定时唤醒）
@@ -304,15 +253,7 @@ class CronService:
         return job
 
     def remove_job(self, job_id: str) -> bool:
-        """
-        按 id 删除任务；若删除成功则持久化并重置计时器。
-
-        Args:
-            job_id: 要删除的任务 ID
-
-        Returns:
-            True 表示删除成功，False 表示任务不存在
-        """
+        """按 id 删除任务；若删除成功则持久化并重置计时器。"""
         store = self._load_store()
         before = len(store.jobs)
         store.jobs = [job for job in store.jobs if job.id != job_id]

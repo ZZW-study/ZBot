@@ -16,9 +16,9 @@
 
 from __future__ import annotations  # 启用未来版本的类型注解特性
 
-import asyncio  # 用于异步执行 shell 命令
+import asyncio                      # 用于异步执行 shell 命令
 import os  
-import re  # 用于正则表达式匹配危险命令模式
+import re                           # 用于正则表达式匹配危险命令模式
 from pathlib import Path  
 from typing import Any  
 
@@ -28,13 +28,11 @@ from ZBot.agent.tools.base import Tool
 class ExecTool(Tool):
     """
     执行 shell 命令，并在执行前做安全拦截。
-
     这是整个系统风险最高的工具，因为 shell 命令可以：
     - 删除文件（rm -rf）
     - 格式化磁盘（format、mkfs）
     - 关闭系统（shutdown、reboot）
     - 执行任意代码
-
     因此在执行任何命令前，必须通过多层安全检查：
     1. 黑名单检查：阻止已知危险命令
     2. 白名单检查：可选，只允许特定命令
@@ -101,7 +99,7 @@ class ExecTool(Tool):
     @property
     def parameters(self) -> dict[str, Any]:
         return {
-            "type": "object",  # 参数必须是一个对象
+            "type": "object",  # 参数必须是一个对象，具体是什么对象，在参数里面定义，parameters 整体是一个对象
             "properties": {
                 "command": {
                     "type": "string",  # command 参数必须是字符串
@@ -114,7 +112,7 @@ class ExecTool(Tool):
                 "timeout": {
                     "type": "integer",  # timeout 参数可选，整数类型
                     "description": "超时时间，单位秒。默认 60 秒，最大 600 秒。",
-                    "minimum": 1,  # 最小值 1 秒
+                    "minimum": 1,    # 最小值 1 秒
                     "maximum": 600,  # 最大值 600 秒（10 分钟）
                 },
             },
