@@ -10,13 +10,11 @@
 """
 
 from __future__ import annotations
-
+import asyncio
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
 from loguru import logger
-
 from ZBot.utils.helpers import ensure_dir
 
 if TYPE_CHECKING:
@@ -68,55 +66,38 @@ class MemoryStore:
 
     def __init__(self, workspace: Path):
         """
-        初始化 MemoryStore 实例。
-
         Args:
             workspace: 工作区根目录路径
         """
-        
         self.memory_dir = ensure_dir(workspace / "memory")   # 确保 memory 目录存在，如果不存在则创建
         self.memory_file = self.memory_dir / "MEMORY.md"     # 长期记忆文件路径
         self.history_file = self.memory_dir / "HISTORY.md"   # 历史归档文件路径
 
-    def read_long_term(self) -> str:
-        """
-        读取长期记忆全文；文件不存在时返回空字符串。
+    async def read_long_term(self) -> str:
+        """读取长期记忆全文；文件不存在时返回空字符串。"""
+        if not self.memory_file.exists():
+            return ""
+        return await asyncio.to_thread(self.memory_file.read_text, encoding="utf-8")
 
-        Returns:
-            MEMORY.md 文件的内容，如果文件不存在则返回空字符串
-        """
-        return self.memory_file.read_text(encoding="utf-8") if self.memory_file.exists() else ""
+    async def write_long_term(self, content: str) -> None:
+        """覆盖写入 `MEMORY.md`。"""
+        await asyncio.to_thread(self.memory_file.write_text, content, encoding="utf-8")
 
-    def write_long_term(self, content: str) -> None:
-        """
-        覆盖写入 `MEMORY.md`。
+    async def append_history(self, entry: str) -> None:
+        """向 `HISTORY.md` 追加一条阶段性摘要。"""
+        def _append():
+            with open(self.history_file, "a", encoding="utf-8") as handle:
+                handle.write(entry.strip() + "\n\n")
+        await asyncio.to_thread(_append)
 
-        Args:
-            content: 要写入的长期记忆内容
-        """
-        self.memory_file.write_text(content, encoding="utf-8")
-
-    def append_history(self, entry: str) -> None:
-        """
-        向 `HISTORY.md` 追加一条阶段性摘要。
-
-        Args:
-            entry: 要追加的历史摘要内容（会自动添加换行符）
-        """
-        with open(self.history_file, "a", encoding="utf-8") as handle:
-            handle.write(entry.strip() + "\n\n")
-
-    def get_memory_context(self) -> str:
+    async def get_memory_context(self) -> str:
         """
         返回适合直接注入 prompt 的长期记忆文本。
 
         如果 MEMORY.md 有内容，则返回格式化的文本块；
         如果为空，则返回空字符串。
-
-        Returns:
-            格式化的长期记忆文本，或空字符串
         """
-        memory = self.read_long_term()
+        memory = await self.read_long_term()
         return f"## MEMORY.md\n{memory}" if memory else ""
 
     async def consolidate(
@@ -126,7 +107,7 @@ class MemoryStore:
         model: str,
         *,
         archive_all: bool = False,
-        memory_window: int = 50,
+        memory_window: int = 25,
     ) -> bool:
         """
         把会话中的旧消息归档进长期记忆。
@@ -154,7 +135,7 @@ class MemoryStore:
             return True  # 没有消息需要归档，直接返回成功
 
         # 读取当前的长期记忆内容
-        current_memory = self.read_long_term()
+        current_memory = await self.read_long_term()
         # 构造归档提示词（包含当前记忆和待归档消息）
         prompt = self._build_prompt(current_memory, messages)
 
@@ -189,12 +170,12 @@ class MemoryStore:
         # 处理历史摘要（追加到 HISTORY.md）
         history_entry = self._coerce_text(args.get("history_entry"))
         if history_entry:
-            self.append_history(history_entry)
+            await self.append_history(history_entry)
 
         # 处理长期记忆更新（覆盖写入 MEMORY.md）
         memory_update = self._coerce_text(args.get("memory_update"))
         if memory_update is not None and memory_update != current_memory:
-            self.write_long_term(memory_update)
+            await self.write_long_term(memory_update)
 
         # 更新会话的归档标记
         # archive_all=True 时归档所有消息，last_consolidated 设为 0
@@ -214,20 +195,9 @@ class MemoryStore:
         memory_window: int,
     ) -> tuple[list[dict[str, Any]], int]:
         """
-        确定本次要归档的消息区间，以及本轮需要保留多少尾部消息。
-
+        确定本次归档的消息区间，以及本轮需要保留多少尾部消息。
         默认策略是"保留最近一半窗口，归档更早的部分"，
         这样下一轮模型还能看到足够新的上下文，而老消息不会无限膨胀。
-
-        Args:
-            session: 当前会话对象
-            archive_all: 是否归档所有消息
-            memory_window: 记忆窗口大小
-
-        Returns:
-            (messages_to_archive, keep_count) 元组：
-            - messages_to_archive: 要归档的消息列表
-            - keep_count: 需要保留的尾部消息数量
         """
         if archive_all:
             # 强制归档所有消息，保留 0 条
@@ -250,20 +220,7 @@ class MemoryStore:
         return session.messages[start:end], keep_count
 
     def _build_prompt(self, current_memory: str, messages: list[dict[str, Any]]) -> str:
-        """
-        把长期记忆和待归档对话整理成提示词。
-
-        构造的提示词包含：
-        1. 当前 MEMORY.md 的内容
-        2. 待归档的对话历史（格式化后的转录文本）
-
-        Args:
-            current_memory: 当前长期记忆内容
-            messages: 待归档的消息列表
-
-        Returns:
-            完整的归档提示词字符串
-        """
+        """把长期记忆和待归档对话整理成提示词。1. 当前 MEMORY.md 的内容。2. 待归档的对话历史（格式化后的转录文本）"""
         # 格式化消息列表为转录文本
         transcript = "\n".join(self._format_messages(messages))
         return (
@@ -277,25 +234,15 @@ class MemoryStore:
 
     @staticmethod
     def _format_messages(messages: list[dict[str, Any]]) -> list[str]:
-        """
-        把消息列表格式化成适合归档模型阅读的转录文本。
-
-        每条消息的格式：[timestamp] ROLE[tools_used]: content
-
-        Args:
-            messages: 消息列表
-
-        Returns:
-            格式化后的消息行列表
-        """
-        lines: list[str] = []
+        """把消息列表格式化成适合归档模型阅读的转录文本。每条消息的格式：[timestamp] ROLE[tools_used]: content"""
+        lines: list[list[str]] = []
         for message in messages:
             content = message.get("content")
             if not content:
                 continue  # 跳过空内容消息
             # 获取使用的工具列表（如果有）
             tools = message.get("tools_used") or []
-            tool_suffix = f" [使用工具: {', '.join(tools)}]" if tools else ""
+            tool_suffix = f" [使用工具: {','.join(tools)}]" if tools else ""
             # 截取时间戳的前 16 个字符（YYYY-MM-DD HH:MM）
             timestamp = str(message.get("timestamp", "?"))[:16]
             # 构造格式化行：[2024-01-15 14:30] USER [使用工具: web_search]: 用户消息内容
@@ -304,20 +251,7 @@ class MemoryStore:
 
     @staticmethod
     def _normalize_tool_args(arguments: Any) -> dict[str, Any] | None:
-        """
-        把模型返回的工具参数统一规整成字典。
-
-        处理多种可能的返回格式：
-        1. 字符串（JSON 格式）-> 解析为字典
-        2. 列表 -> 取第一个字典元素
-        3. 字典 -> 直接返回
-
-        Args:
-            arguments: 模型返回的工具参数（可能是字符串、列表或字典）
-
-        Returns:
-            规范化的参数字典，或 None（如果无法解析）
-        """
+        """把模型返回的工具参数统一规整成字典。"""
         # 如果是字符串，尝试 JSON 解析
         if isinstance(arguments, str):
             try:
@@ -334,20 +268,7 @@ class MemoryStore:
 
     @staticmethod
     def _coerce_text(value: Any) -> str | None:
-        """
-        把工具结果字段规范成字符串，便于直接写文件。
-
-        处理不同类型的值：
-        - None -> None
-        - 字符串 -> 直接返回
-        - 其他类型 -> JSON 序列化
-
-        Args:
-            value: 工具返回的字段值
-
-        Returns:
-            规范化的字符串，或 None
-        """
+        """把工具结果字段规范成字符串，便于直接写文件。"""
         if value is None:
             return None
         if isinstance(value, str):

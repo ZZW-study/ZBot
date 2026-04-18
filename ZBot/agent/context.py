@@ -1,33 +1,21 @@
 """为大模型组装上下文。
 
 这个模块只关心"本轮应该把哪些内容送进模型"，不负责消息调度、工具执行或会话持久化。
-输入来源主要有四类：
+输入来源主要有三类：
 1. 工作区里的引导文件，例如 `AGENTS.md`、`SOUL.md`。
 2. 长期记忆与技能摘要。
-3. 当前会话历史。
-4. 本轮用户消息及其附件。
-
-核心类：
-    ContextBuilder: 负责构建 system prompt 与当前轮消息列表
+3. 当前会话历史与用户消息。
 """
-
-from __future__ import annotations  # 启用未来版本的类型注解特性
-
-import base64                   # 用于 base64 编码（图片转 data URL）
-import mimetypes                # 用于根据文件扩展名猜测 MIME 类型
-import platform                 # 用于获取运行平台信息（系统、架构、Python 版本）
-from datetime import datetime   # 用于获取当前时间
-from pathlib import Path        # 用于路径操作
-from typing import Any          # 用于类型注解
+import platform
+from datetime import datetime
+from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo   # 用于时区处理（北京时间）
 
 from ZBot.agent.memory import MemoryStore         # 长期记忆存储模块
 from ZBot.agent.skills import SkillsLoader        # 技能加载器模块
-from ZBot.utils.helpers import detect_image_mime  # 图片 MIME 类型检测工具
-
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
-
 
 class ContextBuilder:
     """
@@ -39,7 +27,6 @@ class ContextBuilder:
     - 工具执行（由 ToolRegistry 负责）
     - 会话持久化（由 SessionManager 负责）
     """
-
     # 引导文件列表：这些文件会被直接拼进 system prompt，作为工作区的基础规则来源
     # 按顺序读取并拼接，形成项目特定的行为准则
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md", "IDENTITY.md"]
@@ -60,7 +47,7 @@ class ContextBuilder:
         self.memory = MemoryStore(workspace)   # 长期记忆存储，用于构建 memory context
         self.skills = SkillsLoader(workspace)  # 技能加载器，用于读取和管理技能目录
 
-    def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    async def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
         """
         构建完整的 system prompt。
 
@@ -71,16 +58,10 @@ class ContextBuilder:
         4. 最后再给技能正文和技能目录（让模型理解”可用能力”）
 
         这样模型会先理解”我是谁、当前环境是什么”，再理解”项目规则”和”可用能力”。
-
-        Args:
-            skill_names: 可选的技能名称列表，用于加载特定技能
-
-        Returns:
-            完整的 system prompt 字符串
         """
         # parts 列表按优先级拼接 system prompt 的各个部分
         # 身份与运行环境信息放在最前面，便于模型先理解主体与约束
-        parts = [self._identity_prompt()]
+        parts: list = [self._identity_prompt()]
 
         # 从工作区读取引导文件（如 AGENTS.md），将其并入 prompt
         # 这些文件包含项目特定的规则和准则
@@ -90,7 +71,7 @@ class ContextBuilder:
 
         # 插入长期记忆的摘要（若有），给模型”历史侧写”信息
         # 让模型了解之前的对话历史和重要信息
-        memory_context = self.memory.get_memory_context()
+        memory_context = await self.memory.get_memory_context()
         if memory_context:
             parts.append(f"# 长期记忆\n\n{memory_context}")
 
@@ -122,56 +103,26 @@ class ContextBuilder:
         # “---” 是 Markdown 中常用的分隔符，视觉上清晰区分不同内容块
         return "\n\n---\n\n".join(parts)
 
-    def build_messages(
+    async def build_messages(
         self,
         history: list[dict[str, Any]],
         current_message: str,
         skill_names: list[str] | None = None,
-        media: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """
-        构造一轮完整请求消息。
+        """构造一轮完整请求消息。 """
 
-        这是组装消息链的核心方法，返回结果固定包含三部分：
-        1. 第一条 `system` 消息（包含身份、规则、记忆、技能等）
-        2. 若干条历史消息（之前的对话内容）
-        3. 当前轮 `user` 消息（用户输入 + 运行时元信息 + 可选媒体附件）
-
-        当前轮用户消息里会额外注入运行时元信息（如当前时间），
-        这些信息只服务本轮推理，不能长期写进历史（会在保存时被剥离）。
-
-        Args:
-            history: 历史消息列表（每条消息包含 role 和 content）
-            current_message: 当前用户消息文本
-            skill_names: 可选的技能名称列表（用于加载特定技能）
-            media: 可选的媒体文件路径列表（如图片）
-
-        Returns:
-            完整的 messages 列表，可直接传给大模型 API
-        """
         # 构建本轮运行时上下文（包含时间），仅供本轮推理使用
         # 这个上下文会在保存历史时被剥离，避免污染长期记忆
         runtime_context = self._runtime_context()
 
-        # 将用户正文与多媒体附件统一为模型可理解的 content 结构
-        # 无附件时返回字符串，有图片时返回多模态数组
-        user_content = self._user_content(current_message, media)
-
-        # ========== 合并运行时上下文和用户内容 ==========
-        # 若没有多媒体，user_content 是字符串，直接拼接
-        if isinstance(user_content, str):
-            # 合并 runtime 元信息和用户文本为一段字符串
-            merged_content: str | list[dict[str, Any]] = f"{runtime_context}\n\n{user_content}"
-        else:
-            # 多模态场景：先放 runtime 上下文，再把 image/text 数组拼接进去
-            merged_content = [{"type": "text", "text": runtime_context}, *user_content]
+        # 用户消息
+        user_content = f"{runtime_context}\n\n{current_message}"
 
         # 返回完整的 messages 列表：system + history + user
-        # 使用 *history 解构语法将历史消息插入中间
         return [
-            {"role": "system", "content": self.build_system_prompt(skill_names)},  # system 消息
-            *history,  # 历史消息（user/assistant/tool 的对话记录）
-            {"role": "user", "content": merged_content},  # 当前用户消息
+            {"role": "system", "content": await self.build_system_prompt(skill_names)},  # system 消息
+            *history,                                                                    # 历史消息（user/assistant/tool 的对话记录）
+            {"role": "user", "content": user_content},                                   # 当前用户消息
         ]
 
     def add_tool_result(
@@ -180,34 +131,16 @@ class ContextBuilder:
         tool_call_id: str,
         tool_name: str,
         result: str,
-    ) -> list[dict[str, Any]]:
-        """
-        向消息链追加一条 `tool` 消息。
-
-        当工具执行完毕后，需要将结果回填给模型，让模型理解工具执行的结果。
-        这条消息会被追加到消息链中，模型在下一轮请求时可以看到：
-        - 自己之前调用了哪个工具（通过 tool_call_id 关联）
-        - 工具返回了什么结果（通过 content 字段）
-
-        Args:
-            messages: 当前消息链列表
-            tool_call_id: 工具调用的唯一标识符（与 assistant 消息中的 tool_calls.id 对应）
-            tool_name: 工具名称（如 “web_search”、”read_file”）
-            result: 工具执行结果（字符串或 JSON）
-
-        Returns:
-            更新后的消息链（原列表被修改，返回引用便于链式调用）
-        """
-        # 构造 tool 消息对象
+    ) -> None:
+        """向消息链追加一条 `tool` 消息。"""
         messages.append(
             {
-                "role": "tool",                 # 固定为 "tool" 角色
-                "tool_call_id": tool_call_id,   # 关联到 assistant 的 tool_call
-                "name": tool_name,              # 工具名称（用于日志和调试）
-                "content": result,              # 工具执行结果
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": result,
             }
         )
-        return messages
 
     def add_assistant_message(
         self,
@@ -215,40 +148,17 @@ class ContextBuilder:
         content: str | None,
         tool_calls: list[dict[str, Any]] | None = None,
         reasoning_content: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """
-        向消息链追加 assistant 消息，并保留推理相关字段。
-
-        当模型返回响应时（无论是否包含工具调用），都需要将响应写入消息链，
-        以便下一轮请求时模型能看到自己的回复历史。此方法同时保留：
-        - 基础回复内容（content）
-        - 工具调用意图（tool_calls）
-        - 推理内容（reasoning_content，部分模型支持）
-
-        Args:
-            messages: 当前消息链列表
-            content: 模型回复文本（可能为 None，如只调用工具不说话）
-            tool_calls: 可选的工具调用列表（每项包含 id、type、function）
-            reasoning_content: 可选的推理内容（部分模型支持的中间思考）
-
-        Returns:
-            更新后的消息链（原列表被修改，返回引用便于链式调用）
-        """
-        # 构造 assistant 消息对象，保留模型的推理内容
+    ) -> None:
+        """向消息链追加 assistant 消息，并保留推理相关字段。"""
         message: dict[str, Any] = {"role": "assistant", "content": content}
 
-        # 如果有工具调用，记录模型意图调用的工具
         if tool_calls:
-            message["tool_calls"] = tool_calls  # 用于后续执行工具并关联 tool 结果
+            message["tool_calls"] = tool_calls
 
-        # 如果有推理内容，保留以便调试和展示
-        # 推理内容可能包含模型的链式思考或中间分析过程
         if reasoning_content is not None:
             message["reasoning_content"] = reasoning_content
 
-        # 将消息追加到消息链
         messages.append(message)
-        return messages
 
     def _identity_prompt(self) -> str:
         """
@@ -261,10 +171,8 @@ class ContextBuilder:
         4. 行为准则（调用工具前先说明、先读后改、检查结果等）
 
         这部分内容是固定的，不依赖外部文件或配置。
-
-        Returns:
-            身份和运行环境的 system prompt 文本块
         """
+
         # 获取工作区的绝对路径（展开 ~ 用户目录符号，转换为绝对路径）
         workspace_path = str(self.workspace.expanduser().resolve())
 
@@ -297,29 +205,13 @@ class ContextBuilder:
         )
 
     def _bootstrap_prompt(self) -> str:
-        """
-        读取工作区引导文件并拼成统一文本块。
-
-        引导文件（如 AGENTS.md、SOUL.md）包含项目特定的规则和准则，
-        这些文件会被直接拼接进 system prompt，让模型理解项目的特殊要求。
-
-        文件列表由 BOOTSTRAP_FILES 类常量定义：
-        - AGENTS.md: Agent 行为准则
-        - SOUL.md: Agent 人格/风格定义
-        - USER.md: 用户偏好设置
-        - TOOLS.md: 工具使用指南
-        - IDENTITY.md: 身份相关信息
-
-        Returns:
-            拼接后的引导文件内容，如果没有任何文件存在则返回空字符串
-        """
+        """读取工作区引导文件并拼成统一文本块。"""
         sections = []  # 存储每个文件的内容片段
         # 遍历引导文件列表，尝试读取每个文件
         for filename in self.BOOTSTRAP_FILES:
-            path = self.workspace / filename  # 构建文件完整路径
+            path = Path(__file__).parent.parent / "templates" / filename  # 构建文件完整路径
             if path.exists():
                 # 直接把引导文件原文拼接进 prompt，供模型参考
-                # 使用 UTF-8 编码读取，确保中文内容正确解析
                 sections.append(f"## {filename}\n\n{path.read_text(encoding='utf-8')}")
         # 用双换行连接所有片段，形成统一的文本块
         return "\n\n".join(sections)
@@ -327,18 +219,7 @@ class ContextBuilder:
     @classmethod
     def _runtime_context(cls) -> str:
         """
-        生成当前轮专属的运行时上下文。
-
-        运行时上下文包含只在当前轮推理中有意义的信息（如当前时间），
-        这些信息会注入到用户消息中，但在保存历史时会被剥离，
-        防止污染长期记忆。
-
-        目前包含的信息：
-        - 当前时间（北京时间，包含日期、时间、星期）
-
-        Returns:
-            带有运行时标签的上下文文本
-        """
+        生成当前轮专属的运行时上下文。 """
         # 获取当前时间并格式化为易读的格式
         # 格式：2024-01-15 14:30（星期一）
         timestamp = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M（%A）")
@@ -349,63 +230,3 @@ class ContextBuilder:
         # 将运行时上下文用特定标签包裹，便于落盘时剥离
         # 标签格式："[运行时上下文 - 仅供元数据参考，不是用户指令]"
         return cls._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
-
-    def _user_content(self, text: str, media: list[str] | None) -> str | list[dict[str, Any]]:
-        """
-        把用户文本和图片附件整理成模型兼容的 content 结构。
-
-        模型的 content 字段有两种格式：
-        1. 纯文本：字符串类型（最简单，无附件时使用）
-        2. 多模态：列表类型，包含多个 text/image_url 块
-
-        此方法负责将用户输入统一转换为这两种格式之一。
-
-        Args:
-            text: 用户文本消息
-            media: 可选的媒体文件路径列表（如图片路径）
-
-        Returns:
-            如果无附件：返回纯文本字符串
-            如果有图片：返回多模态数组（图片 + 文本块）
-        """
-        # 如果没有附件，直接返回纯文本，保持消息体最轻量
-        if not media:
-            return text
-
-        # 遇到图片附件时，把图片编码为 data URL（base64）并作为 image_url 传给模型
-        images: list[dict[str, Any]] = []
-
-        # 遍历所有媒体文件路径
-        for media_path in media:
-            path = Path(media_path)  # 转换为 Path 对象
-            if not path.is_file():
-                # 跳过不存在的路径（可能是无效输入）
-                continue
-
-            # 读取文件的原始二进制内容
-            raw = path.read_bytes()
-
-            # 尝试检测图片 MIME 类型
-            # 优先使用二进制检测（通过文件头魔数判断），更可靠
-            # 如果二进制检测失败，则尝试通过文件扩展名猜测
-            mime = detect_image_mime(raw) or mimetypes.guess_type(str(path))[0]
-            if not mime or not mime.startswith("image/"):
-                # 非图片文件则跳过（只处理图片类型）
-                continue
-
-            # 把图片转为 data URL 格式
-            # 格式：data:image/png;base64,iVBORw0KGgo...
-            # 模型可以直接通过这个内联 URL 访问图片内容
-            images.append(
-                {
-                    "type": "image_url",  # 固定为 image_url 类型
-                    "image_url": {
-                        "url": f"data:{mime};base64,{base64.b64encode(raw).decode()}"
-                    },
-                }
-            )
-
-        # 返回纯文本或图片 + 文本数组供上层使用
-        # 如果没有成功加载任何图片，返回纯文本
-        # 如果有图片，返回数组（先放图片，再放文本，顺序便于模型先看图再回答）
-        return text if not images else [*images, {"type": "text", "text": text}]

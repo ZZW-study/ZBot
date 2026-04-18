@@ -1,22 +1,15 @@
-"""ZBot 命令行入口。
-
-本模块是 ZBot 的 CLI（命令行界面）入口，
-使用 Typer 框架构建命令行工具，提供以下子命令：
-1. `ZBot agent`: 与 AI 智能体对话（单次或交互模式）
-2. `ZBot onboard`: 初始化配置和工作区
-3. `ZBot status`: 查看配置状态
-"""
+"""ZBot 命令行入口。"""
 
 from __future__ import annotations
 
-import asyncio                                          # 异步编程支持，用于并发执行异步任务
-import os                                               # 操作系统接口，用于环境变量、终端配置等
+import asyncio                                          
+import os                                               
 import select                                           # I/O 多路复用，用于检测终端输入
 import signal                                           # 信号处理，用于优雅退出程序
-import sys                                              # 系统特定参数和函数（标准输入输出等）
+import sys                                              
 from typing import Optional         
 
-import typer                                            # 命令行框架，用于构建 CLI
+import typer                                            
 from prompt_toolkit import PromptSession                # 高级终端输入，支持历史记录、补全等
 from prompt_toolkit.formatted_text import HTML          # 支持 HTML 格式的提示文本
 from prompt_toolkit.history import FileHistory          # 将输入历史保存到文件
@@ -25,10 +18,10 @@ from rich.console import Console                        # 富文本终端输出
 from rich.markdown import Markdown                      # Markdown 渲染
 from rich.text import Text                              # 纯文本输出
 
-from ZBot import __logo__, __version__                                   # 版本号与 Logo
-from ZBot.config.paths import get_workspace_path, get_runtime_subdir     # 路径工具
-from ZBot.config.schema import Config                                    # 配置 schema
-from ZBot.utils.helpers import ensure_workspace_dirs                     # 工作区目录初始化
+from ZBot import __logo__, __version__                                   
+from ZBot.config.paths import get_workspace_path, get_runtime_subdir     
+from ZBot.config.schema import Config                                    
+from ZBot.utils.helpers import ensure_workspace_dirs                    
 
 # Windows 平台特殊处理：强制使用 UTF-8 编码
 # Windows 默认使用 GBK 编码，会导致中文输出乱码
@@ -47,7 +40,7 @@ if sys.platform == "win32":
 # name: 程序名称；help: 帮助信息；no_args_is_help=True: 无参数时显示帮助
 app = typer.Typer(name="ZBot", help="ZBot -- 你的个人 AI 助手", no_args_is_help=True)
 console = Console()                                                         # 创建 Rich 控制台输出实例
-EXIT_COMMAND = {"exit", "quit", "/exit", "/quit", ":q", "退出", "再见"}     # 退出指令集合（包含多种常见退出方式）
+EXIT_COMMAND = {"exit", "quit", "/exit", "/quit", ":q", "退出", "再见"}     # 退出指令集合
 _PROMPT_SESSION: PromptSession | None = None                                # 全局变量：交互式输入会话（延迟初始化）
 
 
@@ -57,7 +50,6 @@ def _flush_pending_tty_input() -> None:
     使用 select + os.read 手动读取并丢弃
     """
     fd = sys.stdin.fileno()             # 获取标准输入的文件描述符，可以连接到终端、文件、管道
-
     # 使用 select 检测是否有待读数据，然后手动读取丢弃
     try:
         while True:
@@ -79,7 +71,7 @@ def _init_prompt_session() -> None:
     2. 彩色提示文本
     3. 更好的行编辑体验
     """
-    global _PROMPT_SESSION              # 修改全局变量
+    global _PROMPT_SESSION              
 
     # 获取历史记录文件路径并确保父目录存在
     from ZBot.config.paths import get_cli_history_path
@@ -91,7 +83,6 @@ def _init_prompt_session() -> None:
     try:
         _PROMPT_SESSION = PromptSession(
             history=FileHistory(str(history_file)),  # 文件持久化的输入历史,输入历史记录，保存到文件中。用户可以用 ↑ ↓ 键浏览之前输入过的内容。
-            enable_open_in_editor=False,             # 禁用外部编辑器（防止复杂化）
             multiline=False,                         # 不支持多行输入（每行是一条完整消息）
         )
     except Exception as exc:
@@ -117,23 +108,18 @@ def _is_exit_command(command: str) -> bool:
 def version_callback(value: bool) -> None:
     """处理 --version 参数的回调函数。"""
     if value:
-        console.print(f"{__logo__} ZBot 版本 [cyan]{__version__}[/cyan]")  # 打印版本信息
-        raise typer.Exit()  # 优雅退出程序
+        console.print(f"{__logo__} ZBot 版本 [cyan]{__version__}[/cyan]")  
+        raise typer.Exit()  
 
 
 async def _read_interactive_input_async() -> str:
     """异步读取用户输入。
-    在交互模式下，此函数负责等待并读取用户输入的一行文本。
     返回：
         用户输入的字符串
-    异常：
-        当遇到 EOF（文件结束，如 Ctrl+D）时，转为 KeyboardInterrupt
     """
     # 使用 prompt_toolkit 的异步输入,必须要异步，不然我创建的实例，会一直阻塞当前线程，AI无法工作。
-    # 这里用 await prompt_async()，是异步非阻塞的
-    # 你的 AI 实例、后台任务、消息处理可以同时运行，不会被输入卡住
     try:
-        with patch_stdout():  # 它让输出绕过当前输入行，显示在上方。修复异步输出与终端输入的冲突
+        with patch_stdout():   # 它让输出绕过当前输入行，显示在上方。修复异步输出与终端输入的冲突
             return await _PROMPT_SESSION.prompt_async(HTML("<b fg='ansiblue'>你：</b> "))
     except EOFError as exc:
         raise KeyboardInterrupt from exc
@@ -175,7 +161,7 @@ def _make_provider(config: Config):
     # 创建并返回 LiteLLMProvider 实例
     return LiteLLMProvider(
         api_key=provider_config.api_key,       # API 密钥
-        api_base=provider_config.api_base,     # API 地址（可为 None）
+        api_base=provider_config.api_base,     # API 地址
         default_model=model.split("/",1)[1] if is_gateway else model,   # 默认模型名称
         provider_name=provider_name,           # 提供商名称
     )
@@ -235,10 +221,14 @@ def onboard():
     # 打印欢迎信息和后续操作建议
     console.print(f"\n{__logo__} ZBot 已准备就绪！")
     console.print("\n建议下一步：")
-    console.print(f"1.在[cyan]{config_path}[/cyan]中配置模型名称")
-    console.print(f"2. 在[cyan]{config_path}[/cyan]中填写 API 密钥和API 地址")
+    console.print(f"1. 在[cyan]{config_path}[/cyan]中配置模型名称")
+    console.print(f"2. 在[cyan]{config_path}[/cyan]中填写 API 密钥和 API 地址")
     console.print("3. 如果使用[cyan]siliconflow[/cyan]，可在[cyan]https://cloud.siliconflow.cn/account/ak[/cyan]上获取密钥")
     console.print('4. 开始对话：[cyan]python -m ZBot agent -m "你好！"[/cyan]')
+    console.print("\n[bold yellow]💡 提示：[/bold yellow]使用 [cyan]-s[/cyan] 参数指定会话 ID，可以为不同话题创建独立对话：")
+    console.print('   [cyan]python -m ZBot agent -s "work"[/cyan]    → 工作相关对话')
+    console.print('   [cyan]python -m ZBot agent -s "study"[/cyan]   → 学习相关对话')
+    console.print("   不同会话的历史记录独立存储，模型回答更精准！")
 
 
 # agent 子命令：启动与 ZBot 的对话
@@ -246,8 +236,8 @@ def onboard():
 def agent(
     # --message 或 -m：发送给 AI 的单次消息（单次模式）
     message: Optional[str] = typer.Option(None, "--message", "-m", help="发送给智能体的单次消息"),
-    # --session 或 -s：会话 ID，用于区分不同对话
-    session_id: str = typer.Option("default", "--session", "-s", help="会话 ID"),
+    # --session 或 -s：会话名称，用于区分不同对话
+    session_name: str = typer.Option("default", "--session", "-s", help="会话名称"),
     # --markdown/--no-markdown：控制是否渲染 Markdown 格式输出
     markdown: bool = typer.Option(True, "--markdown/--no-markdown", help="是否按 Markdown 渲染回复"),
     # --logs/--no-logs：控制是否显示调试日志
@@ -307,7 +297,7 @@ def agent(
                 # 处理用户消息并获取 AI 回复
                 response = await agent_loop.process_direct(
                     message,
-                    session_id,
+                    session_name,
                     on_progress=_cli_progress  # 进度回调
                 )
             # 打印 AI 回复（支持 Markdown 渲染）
@@ -320,7 +310,8 @@ def agent(
 
     # ========== 交互模式：持续对话 ==========
     _init_prompt_session()     # 初始化终端输入会话
-    console.print(f"{__logo__} 已进入交互模式（输入 [bold]exit[/bold] 或按 [bold]Ctrl+C[/bold] 结束）\n")
+    console.print(f"{__logo__} 已进入交互模式（输入 [bold]exit[/bold] 或按 [bold]Ctrl+C[/bold] 结束）")
+    console.print("[dim]可用命令：/new 开始新会话\n")
 
     # 信号处理函数：优雅处理 Ctrl+C
     def _handle_signal(_signum, _frame):
@@ -357,7 +348,7 @@ def agent(
                     with _thinking_ctx():
                         response = await agent_loop.process_direct(
                             command,
-                            session_id,
+                            session_name,
                             on_progress=_cli_progress
                         )
 

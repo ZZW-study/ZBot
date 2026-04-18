@@ -1,0 +1,30 @@
+# ============================================
+# ZBot 依赖列表
+# ============================================
+
+# CLI 框架
+typer>=0.9.0
+prompt_toolkit>=3.0.0
+rich>=13.0.0
+
+# 数据验证
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# LLM 接口
+litellm>=1.0.0
+
+# 日志
+loguru>=0.7.0
+
+# HTTP 客户端
+httpx>=0.25.0
+
+# JSON 处理
+json_repair>=0.7.0
+
+# MCP 支持
+mcp>=1.0.0
+
+# 可选：网页内容提取
+readability-lxml>=0.8.0

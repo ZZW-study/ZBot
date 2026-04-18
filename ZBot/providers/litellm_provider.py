@@ -104,16 +104,10 @@ class LiteLLMProvider(LLMProvider):
         for msg in messages:
             if msg.get("role") == "system":
                 content = msg["content"]
-                if isinstance(content, str):
-                    # 情况1：纯文本 system 消息
-                    # 包装为 Anthropic 要求的 list[type=text] 格式
-                    # cache_control 必须放在最后一个元素上
-                    new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
-                else:
-                    # 情况2：已经是多部分内容（如包含图片、文档等）
-                    # 只在最后一项(先取后解包)注入缓存标记(先看有没有，有则覆盖（刷新缓存），没有则添加)，避免破坏已有结构
-                    new_content = list(content)
-                    new_content[-1] = {**new_content[-1], "cache_control": {"type": "ephemeral"}}
+                # 纯文本 system 消息
+                # 包装为 Anthropic 要求的 list[type=text] 格式
+                # cache_control 必须放在最后一个元素上
+                new_content = [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
                 new_messages.append({**msg, "content": new_content})
             else:
                 # 非系统消息（user/assistant/tool）不处理，直接保留
@@ -220,49 +214,25 @@ class LiteLLMProvider(LLMProvider):
     def _parse_response(self, response: Any) -> LLMResponse:
         """
         解析LiteLLM响应 → 标准化LLMResponse
-        兼容多Choice响应、工具调用合并、Token统计、思考内容
         """
-        # 解析第一个 choice（多数 SDK 保证至少有一个 choice，会有多种回复，选第一个）
-        choice = response.choices[0]  
+        choice = response.choices[0]
         message = choice.message
         content = message.content
         finish_reason = choice.finish_reason
 
-        # 合并多Choice的工具调用（Copilot等厂商）
-        # 合并所有 choice 里的 tool_calls（一些厂商可能把工具调用分散在多个候选里）
-        raw_tool_calls = []
-        for ch in response.choices:
-            msg = ch.message
-            if hasattr(msg, "tool_calls") and msg.tool_calls:
-                raw_tool_calls.extend(msg.tool_calls)
-                if ch.finish_reason in ("tool_calls", "stop"):
-                    finish_reason = ch.finish_reason
-            # 如果主 choice 没有 content，回退到其他候选的 content
-            if not content and msg.content:
-                content = msg.content
-
-        # 日志：多Choice合并
-        if len(response.choices) > 1:
-            logger.debug(
-                "LiteLLM 返回了 {} 个候选结果，已合并 {} 个工具调用",
-                len(response.choices),
-                len(raw_tool_calls),
-            )
-
         # 构造工具调用列表
-        # 把 raw_tool_calls 转为内部的 ToolCallRequest 结构，统一 id/name/arguments 字段
         tool_calls = []
-        for tc in raw_tool_calls:
-            args = tc.function.arguments
-            # 有些厂商会返回不合规的字符串 JSON，需要恢复为 dict
-            if isinstance(args, str):
-                args = json_repair.loads(args)
-
-            tool_calls.append(ToolCallRequest(
-                id=_short_tool_id(),
-                name=tc.function.name,
-                arguments=args,
-            ))
+        if hasattr(message, "tool_calls") and message.tool_calls:
+            for tc in message.tool_calls:
+                args = tc.function.arguments
+                # 有些厂商会返回不合规的字符串 JSON，需要恢复为 dict
+                if isinstance(args, str):
+                    args = json_repair.loads(args)
+                tool_calls.append(ToolCallRequest(
+                    id=_short_tool_id(),
+                    name=tc.function.name,
+                    arguments=args,
+                ))
 
         # Token统计
         # 收集 Token 使用统计（如果厂商返回了 usage 字段）

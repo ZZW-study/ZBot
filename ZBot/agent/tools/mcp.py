@@ -106,16 +106,15 @@ class MCPToolWrapper(Tool):
             return f"（MCP 工具调用失败:{type(exc).__name__}）"
 
         # ==================== 解析 MCP 工具返回结果 ====================
-        # MCP 的设计允许工具返回多种类型的内容（文本、图片、文件等）
         # result.content 是一个列表，每元素是一块内容 (ContentBlock)
         parts = []
         for block in result.content:
             # 情况 1: 普通文本内容
             if isinstance(block, types.TextContent):
                 parts.append(block.text)
-            # 情况 2: 其他类型（如图片、文件引用等）
+            # 情况 2: 其他类型
             else:
-                # 转为字符串表示（如 "<Image>" 或 "<File:/path>"）
+                # 转为字符串表示
                 parts.append(str(block))
         return "\n".join(parts) or "（工具没有返回内容）"
 
@@ -223,36 +222,10 @@ async def connect_mcp_servers(
             # list_tools() 返回 ToolList 对象，包含 tools 属性（ToolDefinition 列表）
             tools = await session.list_tools()
 
-            # 解析配置中的工具白名单
-            enabled_tools = set(cfg.enabled_tools)   # 用户指定的工具列表
-            allow_all_tools = "*" in enabled_tools   # 是否启用通配符（全部启用）
-
-            registered_count = 0                     # 本次成功注册的工具计数
-            matched_enabled_tools: set[str] = set()  # 用于校验：记录匹配到的启用工具
-
-            # 收集服务器提供的所有工具名称（用于日志和错误提示）
-            available_raw_names = [tool_def.name for tool_def in tools.tools]
-            # 包装后的名称（加上前缀）
-            available_wrapped_names = [f"mcp_{name}_{tool_def.name}" for tool_def in tools.tools]
+            registered_count = 0  # 本次成功注册的工具计数
 
             # ==================== 步骤 5: 逐个包装并注册工具 ====================
             for tool_def in tools.tools:
-                wrapped_name = f"mcp_{name}_{tool_def.name}"
-
-                # 工具过滤逻辑:
-                # 如果不是"全部启用"模式，且该工具不在白名单中 → 跳过
-                if (
-                    not allow_all_tools
-                    and tool_def.name not in enabled_tools
-                    and wrapped_name not in enabled_tools
-                ):
-                    logger.debug(
-                        "MCP：跳过服务器 '{}' 的工具 '{}'（未出现在 enabledTools 中）",
-                        name,
-                        wrapped_name,
-                    )
-                    continue
-
                 # 创建包装器实例：负责后续的工具调用适配
                 wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
 
@@ -261,27 +234,6 @@ async def connect_mcp_servers(
                 registry.register(wrapper)
                 logger.debug("MCP：已注册服务器 '{}' 提供的工具 '{}'", name, wrapper.name)
                 registered_count += 1
-
-                # 记录匹配到的启用工具（用于后续校验）
-                if enabled_tools:
-                    if tool_def.name in enabled_tools:
-                        matched_enabled_tools.add(tool_def.name)
-                    if wrapped_name in enabled_tools:
-                        matched_enabled_tools.add(wrapped_name)
-
-            # ==================== 步骤 6: 校验配置的工具是否存在 ====================
-            # 如果用户指定了 enabled_tools(非*模式),检查是否有工具未被找到
-            if enabled_tools and not allow_all_tools:
-                # 找出配置中存在但未匹配到的工具
-                unmatched_enabled_tools = sorted(enabled_tools - matched_enabled_tools)
-                if unmatched_enabled_tools:
-                    logger.warning(
-                        "MCP 服务器 '{}' 中，enabledTools 指定的这些工具未找到:{}。原始工具名:{}。包装后工具名:{}" ,
-                        name,
-                        ", ".join(unmatched_enabled_tools),
-                        ", ".join(available_raw_names) or "（无）",
-                        ", ".join(available_wrapped_names) or "（无）",
-                    )
 
             # 连接成功的日志输出
             logger.info("MCP 服务器 '{}' 已连接，注册工具 {} 个", name, registered_count)

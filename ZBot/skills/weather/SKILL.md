@@ -36,7 +36,6 @@ curl -s "wttr.in/London?T"
 - 支持机场代码：`wttr.in/JFK`
 - 单位切换：`?m`（公制）`?u`（美制）
 - 仅看今日：`?1` · 仅看当前：`?0`
-- 导出图片：`curl -s "wttr.in/Berlin.png" -o /tmp/weather.png`
 
 ## Open-Meteo（备用方案，JSON 格式）
 

@@ -1,52 +1,17 @@
 """通用辅助函数。
 
 本模块提供一些零散但各处都会用到的工具函数，
-例如图片类型检测、目录创建、文件名清理、工作区初始化等。
+例如目录创建、文件名清理、工作区初始化等。
 """
 
 from __future__ import annotations
 
-import re  # 正则表达式模块，用于模式匹配
-from pathlib import Path  # 面向对象的文件路径处理
+import re
+from pathlib import Path
 
 
-# 图片文件的二进制签名（Magic Number）对照表。
-# 每种图片格式的文件开头都有固定的字节序列，用于识别类型。
-# 元组格式：(前缀字节, 需要额外检查的位置, 期望的字节值, MIME 类型)
-_IMAGE_SIGNATURES: tuple[tuple[bytes, slice | None, bytes | None, str], ...] = (
-    (b"\x89PNG\r\n\x1a\n", None, None, "image/png"),        # PNG 图片
-    (b"\xff\xd8\xff", None, None, "image/jpeg"),            # JPEG 图片
-    (b"GIF87a", None, None, "image/gif"),                   # GIF 图片（87a 版本）
-    (b"GIF89a", None, None, "image/gif"),                   # GIF 图片（89a 版本）
-    (b"RIFF", slice(8, 12), b"WEBP", "image/webp"),         # WebP 图片（RIFF 容器 + WEBP 标记）
-)
 # 文件名中不允许出现的不安全字符（Windows/Unix 系统保留字符）
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')
-
-
-def detect_image_mime(data: bytes) -> str | None:
-    """根据二进制文件头识别图片 MIME 类型。
-
-    每种图片格式在文件开头都有固定的"魔数"（Magic Number），
-    通过比对文件开头的字节就能判断图片类型。
-
-    参数：
-        data: 图片文件的二进制数据
-
-    返回：
-        MIME 类型字符串（如 "image/png"），无法识别则返回 None
-    """
-    # 遍历所有已知的图片签名
-    for prefix, check_slice, expected, mime in _IMAGE_SIGNATURES:
-        # 先检查文件开头是否匹配前缀
-        if not data.startswith(prefix):
-            continue
-        # 某些格式（如 WebP）还需要在特定偏移位置检查额外标记
-        if check_slice is not None and data[check_slice] != expected:
-            continue
-        # 匹配成功，返回 MIME 类型
-        return mime
-    return None  # 所有签名都不匹配
 
 
 def ensure_dir(path: Path) -> Path:

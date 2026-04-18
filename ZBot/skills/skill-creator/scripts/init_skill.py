@@ -106,7 +106,7 @@ description: [待完善：详细说明该技能的功能、使用场景，明确
 - 前端构建：HTML/React项目模板
 - 字体：字体文件(.ttf, .woff2)
 
-**适用场景：** 模板、脚手架、文档模板、图片、图标、字体或最终输出需要的文件。
+**适用场景：** 模板、脚手架、文档模板、图标、字体或最终输出需要的文件。
 
 ---
 
@@ -123,7 +123,7 @@ EXAMPLE_SCRIPT = '''#!/usr/bin/env python3
 
 其他技能的真实示例：
 - pdf/scripts/fill_fillable_fields.py - 填充PDF表单字段
-- pdf/scripts/convert_pdf_to_images.py - PDF页面转图片
+- pdf/scripts/merge_pdf.py - 合并多个PDF文件
 """
 
 def main():
@@ -176,12 +176,12 @@ EXAMPLE_REFERENCE = """# {skill_title} 参考文档
 EXAMPLE_ASSET = """# 示例资源文件
 
 此文件为资源文件的占位说明，
-请替换为实际资源文件（模板、图片、字体等），无需使用可删除。
+请替换为实际资源文件（模板、字体等），无需使用可删除。
 
 资源文件**不会**加载到上下文，仅用于Codex生成输出结果。
 
 其他技能的资源文件示例：
-- 品牌规范：logo.png、幻灯片模板.pptx
+- 品牌规范：幻灯片模板.pptx
 - 前端构建：hello-world/ HTML/React脚手架
 - 字体：custom-font.ttf、font-family.woff2
 - 数据：sample_data.csv、test_dataset.json
@@ -189,7 +189,6 @@ EXAMPLE_ASSET = """# 示例资源文件
 ## 常用资源类型
 
 - 模板：.pptx、.docx、项目脚手架
-- 图片：.png、.jpg、.svg、.gif
 - 字体：.ttf、.otf、.woff、.woff2
 - 脚手架代码：项目目录、初始文件
 - 图标：.ico、.svg

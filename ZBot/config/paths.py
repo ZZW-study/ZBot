@@ -1,12 +1,9 @@
 """路径工具模块。
-
 本模块封装了 ZBot 中常用的路径计算逻辑，
 统一管理工作区、配置和数据子目录的位置，
 避免各模块重复硬编码路径。
 """
-
 from pathlib import Path 
-
 
 def get_path_config() -> Path:
     """
