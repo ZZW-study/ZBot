@@ -1,0 +1,56 @@
+# ============================================
+# Docker Compose 配置文件 - ZBot 项目
+# ============================================
+# ZBot 是一个 CLI 工具，不是 Web 服务
+# 这个配置文件主要用于简化 ZBot 的运行
+
+version: '3.8'
+
+services:
+  zbot:
+    # 构建配置
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # 容器名称
+    container_name: zbot
+
+    # 交互模式配置
+    # stdin_open: 相当于 docker run -i，保持标准输入打开
+    # tty: 相当于 docker run -t，分配一个伪终端
+    # 这两个选项让你可以与容器交互
+    stdin_open: true
+    tty: true
+
+    # 数据卷挂载
+    volumes:
+      # 配置文件目录
+      # 将主机的 ~/.ZBot 目录挂载到容器内
+      # 这样配置可以在容器间共享
+      - ${USERPROFILE}/.ZBot:/root/.ZBot
+
+      # 工作目录
+      # 将父目录挂载为工作空间
+      # 这样 ZBot 可以访问你的项目文件
+      - ..:/workspace
+
+    # 环境变量
+    # 从 .env 文件或系统环境变量读取 API Keys
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY:-}
+      - DASHSCOPE_API_KEY=${DASHSCOPE_API_KEY:-}
+      - SILICONFLOW_API_KEY=${SILICONFLOW_API_KEY:-}
+
+    # 工作目录
+    working_dir: /workspace
+
+    # 默认命令：保持容器运行
+    # 使用 tail -f /dev/null 让容器保持运行状态
+    # 然后可以通过 docker exec 进入容器执行命令
+    command: ["tail", "-f", "/dev/null"]
+
+    # 重启策略
+    # no: 不自动重启（CLI 工具不需要常驻）
+    restart: "no"

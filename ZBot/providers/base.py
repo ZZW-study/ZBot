@@ -48,10 +48,10 @@ class LLMProvider(ABC):
     @staticmethod
     def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """清洗空内容消息，避免部分厂商因空字符串直接报错。
-        处理策略如下：
+
+        处理策略：
         1. 空字符串内容：替换成占位文本或空字符串。
-        2. 多模态列表：过滤掉空文本块。
-        3. 字典格式内容：标准化为列表，方便后续统一处理。
+        2. content 为 None：标准化处理。
         """
         result: list[dict[str, Any]] = []
         for msg in messages:
@@ -59,37 +59,10 @@ class LLMProvider(ABC):
 
             if isinstance(content, str) and not content:
                 clean = dict(msg)
-                if clean.get("role") == "assistant" and msg.get("tool_calls"): # 大模型返回的空内容，但是调用了工具
+                if clean.get("role") == "assistant" and msg.get("tool_calls"):
                     clean["content"] = ""  # 部分厂商不接受 null，改用空字符串
                 else:
                     clean["content"] = "(空内容)"
-                result.append(clean)
-                continue
-
-            if isinstance(content, list):
-                filtered = [
-                    item
-                    for item in content
-                    if not (
-                        isinstance(item, dict)
-                        and item.get("type") in ("text", "input_text", "output_text")
-                        and not item.get("text")
-                    )
-                ]
-                if len(filtered) != len(content):
-                    clean = dict(msg)
-                    if filtered:
-                        clean["content"] = filtered
-                    elif msg.get("role") == "assistant" and msg.get("tool_calls"):
-                        clean["content"] = ""  # 部分厂商不接受 null，改用空字符串
-                    else:
-                        clean["content"] = "(空内容)"
-                    result.append(clean)
-                    continue
-
-            if isinstance(content, dict):
-                clean = dict(msg)
-                clean["content"] = list(content)
                 result.append(clean)
                 continue
 

@@ -1,19 +1,9 @@
 """Agent 主循环与单轮消息处理。
-
-本模块是 ZBot 的核心运行时模块，负责：
-1. 接收用户消息
-2. 为大模型构建上下文（包含历史记录、技能、记忆等）
-3. 循环调用大模型并执行工具，直到得到最终回复
-4. 将对话历史写回会话存储
-5. 定期将旧消息归档到长期记忆
-
 核心流程：
 用户消息 → 构建上下文 → 大模型推理 → [需要工具？] → 执行工具 → 写回结果 → [循环直到完成]
                               ↓
                          不需要工具 → 返回最终回复
 """
-# 从 __future__ 导入 annotations 用于类型注解的延迟求值
-# 这样可以避免循环导入问题（如在类定义中使用尚未定义的类名）
 from __future__ import annotations
 
 import asyncio
@@ -25,17 +15,17 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from loguru import logger
 
-from ZBot.agent.context import ContextBuilder                    # 导入上下文构造器：负责为对话构建消息列表
-from ZBot.agent.tools.cron import CronTool                       # 导入定时任务工具：允许 AI 创建和管理定时提醒
-from ZBot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool# 导入文件操作工具集：读、写、编辑、列出目录
-from ZBot.agent.tools.registry import ToolRegistry               # 导入工具注册中心：统一管理所有可用工具
-from ZBot.agent.tools.shell import ExecTool                      # 导入 Shell 执行工具：允许 AI 执行终端命令
-from ZBot.agent.tools.web import WebFetchTool, WebSearchTool     # 导入网页工具：搜索和抓取
-from ZBot.providers.base import LLMProvider                      # 导入大模型提供者基类接口
-from ZBot.session.manager import Session, SessionManager         # 导入会话管理：负责会话的持久化和读取
-from ZBot.config.schema import ExecToolConfig, WebSearchConfig   # 执行工具和网页搜索配置
-from ZBot.cron.service import CronService                        # 定时任务服务
-from ZBot.providers.base import ToolCallRequest                  # 工具调用请求
+from ZBot.agent.context import ContextBuilder                    
+from ZBot.agent.tools.cron import CronTool                       
+from ZBot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from ZBot.agent.tools.registry import ToolRegistry              
+from ZBot.agent.tools.shell import ExecTool                     
+from ZBot.agent.tools.web import WebFetchTool, WebSearchTool     
+from ZBot.providers.base import LLMProvider                      
+from ZBot.session.manager import Session, SessionManager        
+from ZBot.config.schema import ExecToolConfig, WebSearchConfig   
+from ZBot.cron.service import CronService                       
+from ZBot.providers.base import ToolCallRequest                 
 
 
 # ==================== 模块级常量 ====================
@@ -61,9 +51,6 @@ class AgentLoop:
     3. 执行模型-工具循环
     4. 处理长期记忆归档
     5. 连接 MCP 服务器（如有）
-    典型使用流程：
-    agent = AgentLoop(provider=llm_provider, workspace=Path("./workspace"))
-    response = await agent.process_direct("帮我写一个 Hello World 程序")
     """
 
     # 工具返回结果的最大字符数限制
@@ -80,7 +67,7 @@ class AgentLoop:
         max_iterations: int = 50,       # 最大工具调用迭代次数（防止无限循环）
         temperature: float = 0.1,       # 采样温度（越低越确定，越高越随机）
         max_tokens: int = 4096,         # 模型最大输出 token 数
-        memory_window: int = 50,       # 记忆窗口大小（保留最近多少条历史消息）
+        memory_window: int = 25,       # 记忆窗口大小（保留最近多少条历史消息）
         reasoning_effort: str | None = None,               # 推理强度参数（某些模型支持）
         web_search_config: WebSearchConfig | None = None,  # 网页搜索配置
         web_proxy: str | None = None,                      # HTTP 代理地址
@@ -163,7 +150,7 @@ class AgentLoop:
             )
         )
 
-        # 注册网页搜索工具：使用 Brave 或 Tavily API 搜索网页
+        # 注册网页搜索工具：使用bocha搜索网页
         self.tools.register(WebSearchTool(config=self.web_search_config, proxy=self.web_proxy))
 
         # 注册网页抓取工具：抓取网页内容并提取正文
@@ -273,7 +260,7 @@ class AgentLoop:
             - messages: 完整的消息链（包含所有中间工具调用和结果）
         """
 
-        messages = list(initial_messages)    # 深拷贝初始消息列表，避免修改传入的参数（保护调用者的数据）
+        messages = list(initial_messages)    # 浅拷贝，保护原列表不被追加操作影响
         tools_used: list[str] = []           # 记录本轮对话中实际调用过的工具名称（用于后续存档和统计）
         final_content: str | None = None     # 最终返回给用户的文本内容（初始为 None，表示尚未产生回复）
 
@@ -285,7 +272,7 @@ class AgentLoop:
 
             # 调用大模型（核心 API 调用）
             response = await self.provider.chat(
-                messages=messages,                      # 消息历史（包含用户消息、assistant 回复、工具结果）
+                messages=messages,                      # 消息历史列表（包含用户消息、assistant 回复、工具结果）
                 tools=self.tools.get_definitions(),     # 当前可用的工具定义列表（JSON Schema 格式）
                 model=self.model,                       # 使用的模型名称（如 "claude-sonnet-4-6-20250929"）
                 temperature=self.temperature,           # 温度参数（控制随机性，越高越有创造力）
@@ -302,7 +289,7 @@ class AgentLoop:
             )
 
             if response.has_tool_calls:
-                # 模型决定调用工具（可能一边思考一边调用）
+                # 模型决定调用工具（可能一边思考一边调用），打印完就直接下一步
 
                 # 如果有进度回调函数，向 CLI/前端推送当前状态
                 if on_progress:
@@ -314,8 +301,7 @@ class AgentLoop:
                     await on_progress(self._tool_hint(response.tool_calls), tool_hint=True)
 
                 # 将模型返回的 tool_calls 转换为标准格式，以便写入消息链
-                # 这样在执行工具前，消息链中就记录了 assistant 的调用意图
-                # 下一轮模型请求时能看到"我之前调用了哪些工具"
+                # 执行工具前先记录 assistant 的调用意图，工具执行完成后模型能看到完整对话
                 tool_call_dicts = [
                     {
                         "id": tool_call.id,                    # 工具调用的唯一标识符
@@ -347,11 +333,9 @@ class AgentLoop:
                     logger.info("调用工具：{}({})", tool_call.name, args_str[:200])
 
                     # 执行工具（核心：调用工具注册表中的对应方法）
-                    # 工具可能涉及网络请求/文件 IO/子进程等异步操作，故需 await
                     result = await self.tools.execute(tool_call.name, tool_call.arguments)
 
                     # 将工具执行结果作为一条新消息追加到消息链
-                    # role="tool" 的消息会被模型在下一轮请求中消费，用于理解工具执行结果
                     self.context.add_tool_result(messages, tool_call.id, tool_call.name, result)
 
                 # 继续下一轮迭代（工具执行完毕后，需要再次请求模型以获取下一步指示）
@@ -368,7 +352,7 @@ class AgentLoop:
                 logger.error("大模型返回错误：{}", (clean or "")[:200])
                 # 设置最终回复（错误提示或默认消息）
                 final_content = clean or "抱歉，调用大模型时发生了错误。 "
-                break  # 跳出循环
+                break  
 
             # 将最终回复写入消息链（不包含工具调用，纯文本回复）
             self.context.add_assistant_message(
@@ -389,17 +373,11 @@ class AgentLoop:
                 f"我已达到最大工具调用轮数（{self.max_iterations} 次），仍未完成任务。"
                 "你可以把任务拆成更小的步骤后再试。"
             )
-
-        # 返回结果三元组
+            
         return final_content, tools_used, messages
 
     async def close_mcp(self) -> None:
-        """
-        关闭 MCP 连接栈并清理资源。
-
-        此方法在 Agent 实例销毁时被调用，确保所有 MCP 连接被正确关闭。
-        使用 try-finally 确保即使关闭过程中发生异常，状态也能被正确清理。
-        """
+        """关闭 MCP 连接栈并清理资源。"""
         # 如果没有 MCP 连接栈，直接返回（无需关闭）
         if not self._mcp_stack:
             return
@@ -419,7 +397,7 @@ class AgentLoop:
     async def _process_message(
         self,
         content: str,
-        session_key: str,
+        session_name: str,
         on_progress: Callable[[str], Awaitable[None]] | None = None, # 调用后返回一个可等待的异步对象
     ) -> str:
         """
@@ -432,15 +410,15 @@ class AgentLoop:
         5. 执行实际对话逻辑
         Args:
             content: 用户消息内容
-            session_key: 会话标识符（如"cli:default"）
+            session_name: 会话名称（如"default"、"work"）
             on_progress: 可选的进度回调函数
         Returns:
             最终回复文本
         """
-        
+
         preview = content[:80] + "..." if len(content) > 80 else content   # 生成消息预览（超过 80 字符则截断）
         logger.info("正在处理消息：{}", preview)                            # 记录日志：正在处理什么消息
-        session = self.sessions.get_or_create(session_key)                 # 获取或创建会话对象（Session 存储对话历史） 
+        session = await self.sessions.get_or_create(session_name) 
         command = content.strip().lower()                                  # 将消息转为小写并去除首尾空白（用于命令匹配）
 
         # ========== 处理内置命令 ==========
@@ -451,9 +429,6 @@ class AgentLoop:
                 return "长期记忆归档失败，会话未清空，请稍后重试。"
             return "已开始新的会话。"
 
-        if command == "/help":
-            # 返回可用命令列表
-            return "ZBot 可用命令：\n/new - 开始新会话\n/help - 查看帮助"
 
         # 只有会话累计到一定长度时，才在后台触发长期记忆归档
         # 这样可以避免频繁归档，同时确保长对话不会丢失重要信息
@@ -477,36 +452,16 @@ class AgentLoop:
         session: Session,
         *,
         content: str,
-        media: list[str] | None = None,
         on_progress: Callable[..., Awaitable[None]] | None = None,
     ) -> str:
-        """
-        执行一轮标准对话：构造上下文、运行 agent_loop、写回会话。
-
-        这是单次对话的核心流程：
-        1. 从会话中获取历史消息（最多 memory_window 条）
-        2. 使用 ContextBuilder 构造完整的消息链（system + history + current）
-        3. 调用 _run_agent_loop 与模型交互
-        4. 将结果写回会话并保存
-
-        Args:
-            session: 会话对象（包含对话历史）
-            content: 当前用户消息内容
-            media: 可选的媒体文件路径列表（如图片）
-            on_progress: 可选的进度回调函数
-
-        Returns:
-            最终回复文本
-        """
-        # 从会话中获取历史消息（最多 memory_window 条，防止上下文过长）
+        """执行一轮标准对话：构造上下文、运行 agent_loop、写回会话。"""
+        # 从会话中获取历史消息列表（最多 memory_window 条，防止上下文过长）
         history = session.get_history(max_messages=self.memory_window)
 
         # 构造完整的消息链（包含 system prompt、历史消息、当前消息）
-        # ContextBuilder 负责将所有元素组合成模型可接受的格式
-        initial_messages = self.context.build_messages(
+        initial_messages = await self.context.build_messages(
             history=history,          # 历史消息列表
             current_message=content,  # 当前用户消息
-            media=media,              # 可选的媒体文件（如图片）
         )
 
         # 执行 Agent 交互循环（核心：与模型对话、调用工具）
@@ -520,71 +475,50 @@ class AgentLoop:
         # 将本轮新增的消息写回会话（skip 参数跳过历史部分，只写新增的）
         self._save_turn(session, all_messages, 1 + len(history), tools_used)
         # 保存会话到持久化存储（JSONL 文件）
-        self.sessions.save(session)
+        await self.sessions.save(session)
         return final_content
 
     async def _archive_and_reset_session(self, session: Session) -> bool:
         """
         归档当前会话未归档消息并清空会话。
-
         此方法用于 /new 命令的实现，确保在清空会话之前先将未归档的消息
         保存到长期记忆中，防止对话历史丢失。
-
-        Args:
-            session: 要归档并重置的会话对象
-
         Returns:
             True 表示归档成功，False 表示失败
         """
         # 获取此会话的归档锁（防止并发归档同一会话）
-        lock = self._get_consolidation_lock(session.key)
-        # 将会话标记为"正在归档中"（避免重复触发归档）
-        self._consolidating.add(session.key)
+        lock = self._get_consolidation_lock(session.session_name)
         try:
-            # 使用异步锁保护归档过程（确保同一会话不会被同时归档）
             async with lock:
                 # 获取未归档的消息片段（从 last_consolidated 到最新）
                 snapshot = session.messages[session.last_consolidated :]
                 if snapshot:
                     # 创建临时会话对象（只包含未归档的消息）
-                    temp = Session(key=session.key, messages=list(snapshot))
+                    temp = Session(session_name=session.session_name, messages=list(snapshot))
                     # 执行归档（archive_all=True 表示强制归档所有消息）
                     if not await self._consolidate_memory(temp, archive_all=True):
                         return False  # 归档失败
         except Exception:
-            # 记录异常日志（使用 exception 级别，包含完整堆栈）
-            logger.exception("会话 {} 在执行 /new 归档时失败", session.key)
+            logger.exception("会话 {} 在执行 /new 归档时失败", session.session_name)
             return False
-        finally:
-            # 无论成功与否，都要从"正在归档"集合中移除
-            self._consolidating.discard(session.key)
 
         # 清空会话消息（重置为新会话状态）
         session.clear()
         # 保存到持久化存储
-        self.sessions.save(session)
-        # 使缓存失效（确保下次获取会话时从磁盘重新加载）
-        self.sessions.invalidate(session.key)
+        await self.sessions.save(session)
         return True
 
     def _schedule_consolidation(self, session: Session) -> None:
-        """
-        当未归档消息达到阈值时，安排后台归档任务。
+        """当未归档消息达到阈值时，安排后台归档任务。"""
 
-        此方法使用异步任务在后台执行记忆归档，不阻塞主对话流程。
-        通过 _consolidating 集合避免重复触发同一会话的归档。
-
-        Args:
-            session: 要检查并可能触发归档的会话对象
-        """
         # 计算未归档的消息数量（总消息数 - 最后已归档位置）
         unconsolidated = len(session.messages) - session.last_consolidated
         # 如果未归档消息不足阈值，或会话已在归档中，则直接返回
-        if unconsolidated < self.memory_window or session.key in self._consolidating:
+        if unconsolidated < self.memory_window or session.session_name in self._consolidating:
             return
 
         # 将会话标记为"正在归档中"（避免重复触发）
-        self._consolidating.add(session.key)
+        self._consolidating.add(session.session_name)
         # 创建异步任务执行归档（后台运行，不阻塞）
         task = asyncio.create_task(self._run_consolidation(session))
         # 将任务加入跟踪集合（防止被垃圾回收）
@@ -593,46 +527,33 @@ class AgentLoop:
         task.add_done_callback(self._consolidation_tasks.discard)
 
     async def _run_consolidation(self, session: Session) -> None:
-        """
-        执行后台归档任务并确保状态回收。
+        """执行后台归档任务并确保状态回收。"""
 
-        此方法在后台异步运行，负责：
-        1. 获取会话的归档锁（防止并发归档）
-        2. 调用 _consolidate_memory 执行实际归档
-        3. 确保无论成功与否都会清理 _consolidating 状态
-
-        Args:
-            session: 要归档的会话对象
-        """
         try:
-            # 使用异步锁保护归档过程（确保同一会话不会被并发归档）
-            async with self._get_consolidation_lock(session.key):
+            async with self._get_consolidation_lock(session.session_name):
                 # 执行实际归档（调用 MemoryStore 进行摘要和持久化）
                 await self._consolidate_memory(session)
         finally:
             # 无论归档成功与否，都要从"正在归档"集合中移除
             # 确保状态不会永远卡住
-            self._consolidating.discard(session.key)
+            self._consolidating.discard(session.session_name)
 
-    def _get_consolidation_lock(self, session_key: str) -> asyncio.Lock:
+    def _get_consolidation_lock(self, session_name: str) -> asyncio.Lock:
         """
         返回指定 session 的归档锁，若不存在则创建并返回。
-
         每个会话都有独立的锁，允许多个会话并发归档，
         但同一会话不会被同时归档多次（防止数据竞争）。
-
         Args:
-            session_key: 会话标识符
-
+            session_name: 会话名称
         Returns:
             该会话对应的异步锁对象
         """
         # 尝试从锁字典中获取现有锁
-        lock = self._consolidation_locks.get(session_key)
+        lock = self._consolidation_locks.get(session_name,None)
         if lock is None:
             # 不存在则创建新锁并存入字典
             lock = asyncio.Lock()
-            self._consolidation_locks[session_key] = lock
+            self._consolidation_locks[session_name] = lock
         return lock
 
     def _save_turn(
@@ -683,12 +604,7 @@ class AgentLoop:
             if role == "tool" and isinstance(content, str) and len(content) > self._TOOL_RESULT_MAX_CHARS:
                 entry["content"] = content[: self._TOOL_RESULT_MAX_CHARS] + "\n……（内容已截断）"
             elif role == "user":
-                # user 消息里会混入当前轮的运行时元信息，写回历史前必须去掉
-                # 运行时信息只对当前轮推理有意义，长期保留会污染历史
-                stripped = self._strip_runtime_context(content)
-                if stripped is None:
-                    continue  # 如果清理后为空，则不保存此消息
-                entry["content"] = stripped
+                entry["content"] = content
 
             # 添加时间戳（如果消息中还没有）
             entry.setdefault("timestamp", datetime.now().isoformat())
@@ -700,23 +616,13 @@ class AgentLoop:
 
     @staticmethod
     def _annotate_tools_used(messages: list[dict[str, Any]], tools_used: list[str]) -> None:
-        """
-        把本轮使用过的工具集合挂到最后一条 assistant 消息上。
+        """把本轮使用过的工具集合挂到最后一条 assistant 消息上。"""
 
-        此方法用于记录本轮对话中实际使用了哪些工具，
-        便于后续查询、统计和调试。工具信息会附加到最后一条
-        assistant 消息的 metadata 中。
-
-        Args:
-            messages: 消息列表
-            tools_used: 本轮使用的工具名称列表（可能包含重复）
-        """
-        # 如果没有使用任何工具，直接返回（无需标注）
         if not tools_used:
             return
 
         # 去重但保持顺序（先使用的工具排在前面）
-        # 使用 dict.fromkeys() 是 Python 中去重保序的标准写法
+        # 使用 dict.fromkeys() 是 Python 中去重保序的标准写法 *
         unique_tools = list(dict.fromkeys(tools_used))
         # 从后向前查找第一条 assistant 消息（最后一条助手回复）
         for message in reversed(messages):
@@ -725,75 +631,9 @@ class AgentLoop:
                 message["tools_used"] = unique_tools
                 return  # 找到并标注后立即返回
 
-    @staticmethod
-    def _strip_runtime_context(content: Any) -> str | list[dict[str, Any]] | None:
-        """
-        从 user 消息里移除运行时元信息。
-
-        运行时信息（如当前时间、工作目录等）只对当前轮推理有意义，
-        长期保留在 session 里会污染历史、浪费存储，
-        所以这里在落盘前主动清理。
-
-        Args:
-            content: 消息内容（可能是字符串或混合内容列表）
-
-        Returns:
-            清理后的内容，如果清理后为空则返回 None
-        """
-        # ========== 情况 1: 字符串类型 ==========
-        if isinstance(content, str):
-            # 检查是否以运行时上下文标签开头
-            if content.startswith(ContextBuilder._RUNTIME_CONTEXT_TAG) or content.startswith(ContextBuilder._LEGACY_RUNTIME_CONTEXT_TAG):
-                # 按双换行分割，取第二部分（实际用户消息）
-                parts = content.split("\n\n", 1)
-                # 如果有第二部分且非空则返回，否则返回 None
-                return parts[1] if len(parts) > 1 and parts[1].strip() else None
-            # 没有运行时标签，原样返回
-            return content
-
-        if not isinstance(content, list):
-            return content
-
-        # 对于 list 形式的混合内容（例如图片+文本），逐项过滤运行时上下文并把图片替换为占位
-        filtered: list[dict[str, Any]] = []
-        for item in content:
-            if (
-                item.get("type") == "text"
-                and isinstance(item.get("text"), str)
-                and (
-                    item["text"].startswith(ContextBuilder._RUNTIME_CONTEXT_TAG)
-                    or item["text"].startswith(ContextBuilder._LEGACY_RUNTIME_CONTEXT_TAG)
-                )
-            ):
-                continue
-            if (
-                item.get("type") == "image_url"
-                and item.get("image_url", {}).get("url", "").startswith("data:image/")
-            ):
-                filtered.append({"type": "text", "text": "[image]"})
-            else:
-                filtered.append(item)
-        return filtered or None
 
     async def _consolidate_memory(self, session: Session, archive_all: bool = False) -> bool:
-        """
-        把会话交给 `MemoryStore` 做长期记忆归档。
-
-        此方法将 session 的未归档段落交给 MemoryStore 处理，
-        MemoryStore 负责生成摘要、向持久化/向量库落盘并决定是否归档到长期记忆。
-
-        Args:
-            session: 要归档的会话对象
-            archive_all: 是否强制归档所有消息（忽略智能摘要逻辑）
-
-        Returns:
-            True 表示归档成功，False 表示失败
-        """
-        # 调用 MemoryStore 的 consolidate 方法执行实际归档
-        # MemoryStore 会：
-        # 1. 生成会话摘要（用于快速回顾）
-        # 2. 决定是否归档到长期记忆（基于内容重要性）
-        # 3. 向量化并存储到向量库（用于语义检索）
+        """ 把会话交给 `MemoryStore` 做长期记忆归档。"""
         return await self.context.memory.consolidate(
             session,
             self.provider,
@@ -805,13 +645,11 @@ class AgentLoop:
     async def process_direct(
         self,
         content: str,
-        session_key: str = "cli:direct",
+        session_name: str = "default",
         on_progress: Callable[[str], Awaitable[None]] | None = None,
     ) -> str:
         """
         供 CLI 调用的入口。
         """
-        # 确保 MCP 已连接（如果配置了 MCP 服务器）
         await self._connect_mcp()
-        # 调用 _process_message 处理消息并返回回复
-        return await self._process_message(content, session_key=session_key, on_progress=on_progress)
+        return await self._process_message(content, session_name=session_name, on_progress=on_progress)

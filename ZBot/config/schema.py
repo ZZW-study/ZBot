@@ -1,19 +1,13 @@
-"""配置模式（Pydantic schema）定义。
-
+"""
 本模块使用 Pydantic 定义 ZBot 的配置结构与默认值，
 并通过 `Config` 提供统一的配置加载/校验接口。
-
-Pydantic 是一个数据校验库，它能：
-1. 定义数据结构（字段名、类型、默认值）
-2. 自动校验传入的数据是否符合规范
-3. 支持环境变量覆盖默认值
-4. 支持驼峰和下划线两种键名风格
 """
 
 from typing import Literal                          # Literal 用于限定变量只能是几个固定值之一
 from pathlib import Path                    
 
-from pydantic import BaseModel, ConfigDict, Field   # Pydantic 的核心类
+from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel      # 将下划线命名转为驼峰命名的工具函数
 # 继承它，定义结构化数据
 # 你写的自定义类继承 BaseModel 后，就变成了严格的结构化数据模型。
 # 自动做数据校验
@@ -36,8 +30,6 @@ from pydantic import BaseModel, ConfigDict, Field   # Pydantic 的核心类
 
 # # 错误使用（age 传了字符串）→ 自动报错
 # # user = User(name="张三", age="20")
-from pydantic.alias_generators import to_camel      # 将下划线命名转为驼峰命名的工具函数
-
 
 class Base(BaseModel):
     """配置基类：支持驼峰/下划线两种键名风格。
@@ -101,11 +93,7 @@ class MCPServerConfig(Base):
     env: dict[str, str] = Field(default_factory=dict)                # 环境变量
     url: str = ""                                                    # 服务器 URL（sse/http 模式）
     headers: dict[str, str] = Field(default_factory=dict)            # HTTP 请求头
-    tool_timeout: int = 30                                           # 工具调用超时时间（秒）
-    enabled_tools: list[str] = Field(default_factory=lambda: ["*"])  # 启用的工具列表，* 表示全部
-    # 不能直接用 default=["*"]，否则多个模型实例会共用同一个列表，改一个会影响所有实例。
-    # lambda: ["*"]
-    # 一个匿名函数，每次调用都会返回一个新的 ["*"] 列表，保证每个实例的字段都是独立的。
+    tool_timeout: int = 30  # 工具调用超时时间（秒）
 
 class ToolsConfig(Base):
     """所有工具的全局配置。
@@ -113,8 +101,8 @@ class ToolsConfig(Base):
     """
     web: WebToolsConfig = Field(default_factory=WebToolsConfig)             # 网页工具配置
     exec: ExecToolConfig = Field(default_factory=ExecToolConfig)            # 命令执行配置
-    restrict_to_workspace: bool = False                                     # 是否限制工具只访问工作区内的文件
     mcp_servers: dict[str, MCPServerConfig] = Field(default_factory=dict)   # MCP 服务器字典
+    restrict_to_workspace: bool = False                                     # 是否限制工具只访问工作区内的文件
 
 
 class Config(BaseModel):
@@ -128,7 +116,7 @@ class Config(BaseModel):
     max_tokens: int = 4396                      # 模型最大输出 token 数，1 token ≈ 0.5~0.8 个中文字符
     temperature: float = 0.1                    # 采样温度（越低越确定，越高越随机）
     max_tool_iterations: int = 50               # 工具调用最大迭代次数
-    memory_window: int = 50                     # 记忆窗口大小（保留多少条历史消息）
+    memory_window: int = 25                     # 记忆窗口大小（保留多少条历史消息）
     reasoning_effort: str | None = None         # 推理强度参数
 
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)  # 所有 LLM 提供商
