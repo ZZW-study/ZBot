@@ -43,11 +43,11 @@ class ContextBuilder:
         Args:
             workspace: 工作区根目录路径（Path 对象）
         """
-        self.workspace = workspace             # 工作区根目录
-        self.memory = MemoryStore(workspace)   # 长期记忆存储，用于构建 memory context
-        self.skills = SkillsLoader(workspace)  # 技能加载器，用于读取和管理技能目录
+        self.workspace = workspace
+        self.memory = MemoryStore(workspace)
+        self.skills = SkillsLoader()
 
-    async def build_system_prompt(self, skill_names: list[str] | None = None) -> str:
+    async def build_system_prompt(self) -> str:
         """
         构建完整的 system prompt。
 
@@ -75,29 +75,11 @@ class ContextBuilder:
         if memory_context:
             parts.append(f"# 长期记忆\n\n{memory_context}")
 
-        # 加载始终启用的技能（如用于自动摘要、检索等的技能）
-        # 这些技能无条件生效，提供基础能力扩展
-        always_skills = self.skills.get_always_skills()
-        if always_skills:
-            active_skills = self.skills.load_skills_for_context(always_skills)
-            if active_skills:
-                parts.append(f"# 始终启用的技能\n\n{active_skills}")
-
-        # 加载调用时指定的技能（优先级低于始终启用的技能）
-        # 过滤掉已经在 always_skills 中的技能，避免重复加载
-        requested_names = [name for name in (skill_names or []) if name not in set(always_skills)]
-        requested_skills = self.skills.load_skills_for_context(requested_names)
-        if requested_skills:
-            parts.append(f"# 当前请求关联的技能\n\n{requested_skills}")
-
-        # 构建技能目录摘要
-        summary = self.skills.build_skills_summary()
-        if summary:
-            parts.append(
-                "# 技能目录\n\n"
-                "以下技能可以扩展你的能力。需要使用某个技能时，请先阅读对应技能目录中的 `SKILL.md`。\n\n"
-                f"{summary}"
-            )
+        # 加载所有可用技能
+        all_skills = [s["name"] for s in self.skills.list_skills()]
+        skills_content = self.skills.load_skills_for_context(all_skills)
+        if skills_content:
+            parts.append(f"# 技能\n\n{skills_content}")
 
         # 用 “---” 分隔符连接所有部分，形成完整的 system prompt
         # “---” 是 Markdown 中常用的分隔符，视觉上清晰区分不同内容块
@@ -107,7 +89,6 @@ class ContextBuilder:
         self,
         history: list[dict[str, Any]],
         current_message: str,
-        skill_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
         """构造一轮完整请求消息。 """
 
@@ -120,7 +101,7 @@ class ContextBuilder:
 
         # 返回完整的 messages 列表：system + history + user
         return [
-            {"role": "system", "content": await self.build_system_prompt(skill_names)},  # system 消息
+            {"role": "system", "content": await self.build_system_prompt()},  # system 消息
             *history,                                                                    # 历史消息（user/assistant/tool 的对话记录）
             {"role": "user", "content": user_content},                                   # 当前用户消息
         ]
@@ -193,8 +174,7 @@ class ContextBuilder:
             "## 工作区\n"
             f"你的工作区位于：{workspace_path}\n"
             f"- 长期记忆文件：{workspace_path}/memory/MEMORY.md\n"  # 长期记忆存储位置
-            f"- 历史归档文件：{workspace_path}/memory/HISTORY.md\n"  # 历史归档存储位置
-            f"- 自定义技能目录：{workspace_path}/skills/{{skill-name}}/SKILL.md\n\n"  # 技能目录位置模板
+            f"- 历史归档文件：{workspace_path}/memory/HISTORY.md\n\n"
             "## 行为准则\n"
             "- 在调用工具前先说明你准备做什么，但不要在拿到结果前声称已经完成。\n"   # 先声明再执行
             "- 编辑文件前先读取文件内容。\n"                                       # 先读后改，避免盲目修改

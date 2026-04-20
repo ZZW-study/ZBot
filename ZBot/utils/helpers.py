@@ -37,17 +37,11 @@ def safe_filename(name: str) -> str:
 
 
 def ensure_workspace_dirs(workspace: Path) ->None:
-    """创建工作区所需的必要目录。
-    在首次使用 ZBot 或新建工作区时，
-    需要创建 memory（记忆）、skills（技能）、sessions（会话）等目录。
-    """
-    # 创建工作区必须存在的目录列表
+    """创建工作区所需的必要目录。"""
     dirs = [
-        workspace / "memory",    # 长期记忆和归档目录
-        workspace / "skills",    # 自定义技能目录
-        workspace / "sessions",  # 会话历史记录目录
+        workspace / "memory",
+        workspace / "sessions",
     ]
     for d in dirs:
-        # 目录不存在时创建
         if not d.exists():
             d.mkdir(parents=True, exist_ok=True)
