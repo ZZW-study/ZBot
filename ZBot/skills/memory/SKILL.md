@@ -1,7 +1,6 @@
 ---
 name: memory
 description: 基于 grep 检索的双层记忆系统
-always: true
 ---
 
 # 记忆系统
