@@ -80,7 +80,7 @@ class MemoryStore:
         return await asyncio.to_thread(self.memory_file.read_text, encoding="utf-8")
 
     async def write_long_term(self, content: str) -> None:
-        """覆盖写入 `MEMORY.md`。"""
+        """覆盖写入 `MEMORY.md`。Path.write_text() 方法在文件不存在时会自动创建文件"""
         await asyncio.to_thread(self.memory_file.write_text, content, encoding="utf-8")
 
     async def append_history(self, entry: str) -> None:
@@ -196,24 +196,91 @@ class MemoryStore:
     ) -> tuple[list[dict[str, Any]], int]:
         """
         确定本次归档的消息区间，以及本轮需要保留多少尾部消息。
-        默认策略是"保留最近一半窗口，归档更早的部分"，
-        这样下一轮模型还能看到足够新的上下文，而老消息不会无限膨胀。
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        【归档策略：保留 memory_window 条最新消息】
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        归档的目的是：
+        1. 防止会话消息无限膨胀
+        2. 把旧消息压缩成长期记忆（MEMORY.md）
+        3. 保留足够多的最新消息供下一轮模型使用
+
+        策略：保留最近 memory_window 条消息，归档更早的部分。
+        这样下一轮模型调用 get_history(max_messages=memory_window) 时，
+        能看到完整的 memory_window 条历史。
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        【为什么保留 memory_window 条，而不是 memory_window // 2 条？】
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        假设 memory_window = 25，第一轮对话调用了 50 次工具：
+
+        消息构成：
+        ┌─────────────────────────────────────────────────────────────────────────────┐
+        │  user 消息                        1 条                                     │
+        │  assistant 消息（含 tool_calls）  50 条                                     │
+        │  tool 消息（工具返回）            50 条                                     │
+        │  ───────────────────────────────────────────────────────────────────────    │
+        │  总计                             101 条                                    │
+        └─────────────────────────────────────────────────────────────────────────────┘
+        
+        实际上一次工具调用 = 2 条消息（assistant + tool），
+        50 次工具调用就会产生 100+ 条消息。
+
+        新策略 keep_count = memory_window = 25：
+
+        ┌─────────────────────────────────────────────────────────────────────────────┐
+        │  项目                          值                                          │
+        │  ───────────────────────────────────────────────────────────────────────    │
+        │  归档了                        76 条（messages[0:76]）                      │
+        │  未归档                        25 条（messages[76:]）                       │
+        │  下一轮 get_history 能看到     完整的 25 条                                 │
+        │  ───────────────────────────────────────────────────────────────────────    │
+        │  正确：下一轮模型能看到完整的 memory_window 条历史                           │
+        └─────────────────────────────────────────────────────────────────────────────┘
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        【数据流向图】
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        session.messages（101 条）
+        │
+        ├── [0:76]  → 归档 → 压缩后写入 MEMORY.md 和 HISTORY.md
+        │
+        └── [76:]   → 保留 → 下一轮 get_history() 返回这 25 条
+
+        下一轮对话：
+        │
+        ├── get_history(max_messages=25) 返回 25 条历史
+        │
+        └── 模型能看到完整的 memory_window 条上下文
+
+        Args:
+            session: 当前会话对象
+            archive_all: 是否强制归档所有消息（用于 /new 命令）
+            memory_window: 记忆窗口大小（决定保留多少最新消息）
+
+        Returns:
+            (要归档的消息列表, 保留的消息数量)
         """
         if archive_all:
             # 强制归档所有消息，保留 0 条
+            # 用于 /new 命令：清空会话前先把所有消息归档
             return list(session.messages), 0
 
-        # 默认保留最近一半窗口的消息（至少保留 1 条）
-        keep_count = max(1, memory_window // 2)
+        # 保留最近 memory_window 条消息
+        # 这样下一轮 get_history(max_messages=memory_window) 能返回完整的历史
+        keep_count = memory_window
         if len(session.messages) <= keep_count:
             # 消息总数不超过保留数量，无需归档
             return [], keep_count
 
         # 计算归档范围：从上次归档位置到倒数 keep_count 条消息
-        start = session.last_consolidated
-        end = len(session.messages) - keep_count
+        start = session.last_consolidated  # 上次归档结束的位置
+        end = len(session.messages) - keep_count  # 保留尾部 keep_count 条
         if end <= start:
-            # 归档范围无效，无需归档
+            # 归档范围无效（已经归档过了），无需归档
             return [], keep_count
 
         # 返回要归档的消息片段和保留数量

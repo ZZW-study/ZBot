@@ -25,10 +25,7 @@ import httpx
 from loguru import logger
 from ZBot.agent.tools.base import Tool
 from ZBot.agent.tools.registry import ToolRegistry
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from mcp import ClientSession
+from mcp import ClientSession
 
 class MCPToolWrapper(Tool):
     """

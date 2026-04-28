@@ -2,6 +2,43 @@
 基于LiteLLM的LLM提供商实现
 核心作用：通过LiteLLM统一调用所有大模型API，100%兼容注册表配置
 无需为每个厂商写独立代码，所有逻辑由注册表驱动
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+【为什么大模型会返回工具参数而不是普通文本？】
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+这是 OpenAI 兼容 API 的 Function Calling（工具调用）机制决定的：
+
+1. API 层面的约定
+   - 当请求中包含 `tools` 参数时，模型知道它可以调用工具
+   - `tool_choice: "auto"` 让模型自己决定何时调用工具
+   - 这是 API 协议层面的约定，不是提示词决定的
+
+2. 模型训练层面
+   - 模型在训练时学习了"当有 tools 参数时，用特定格式返回工具调用"
+   - 返回格式是：{"tool_calls": [{"function": {"name": "xxx", "arguments": "..."}}]}
+   - 这个格式是 OpenAI 定义的，所有兼容厂商都遵循
+
+3. 工具 Schema 的作用
+   - tools 参数包含每个工具的 JSON Schema（名称、描述、参数类型）
+   - 模型根据 Schema 知道"有哪些工具可用"、"参数是什么类型"
+   - 模型根据 Schema 生成符合格式的参数 JSON
+
+4. 提示词的作用
+   - 提示词只影响"何时调用工具"的策略决策
+   - 提示词不定义"如何返回工具调用"的格式
+   - 格式是 API 协议 + 模型训练决定的
+
+【完整流程】
+用户消息 → 构建消息 + 工具 Schema → 发给 API
+                                        ↓
+                    API 返回 tool_calls ← 模型决定调用工具
+                                        ↓
+                    执行工具 → 结果写回消息 → 再次调用模型
+                                        ↓
+                    最终返回普通文本 ← 模型完成任务
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 import json
 import secrets                                  # 安全随机，random伪随机
@@ -170,6 +207,8 @@ class LiteLLMProvider(LLMProvider):
         # 确保 max_tokens 至少为1，避免传入0导致SDK报错
         max_tokens = max(1, max_tokens)
 
+        # 提示词这是最终拼接 
+
         # 构造请求参数
         # 构造传入 litellm 的参数字典
         kwargs: dict[str, Any] = {
@@ -188,17 +227,74 @@ class LiteLLMProvider(LLMProvider):
             kwargs["reasoning_effort"] = reasoning_effort
             kwargs["drop_params"] = True
         
-        # 工具调用配置
-        # 如果传入 tools 配置，启用自动工具选择（由模型决定何时调用工具）
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 【工具调用配置 - 核心机制】
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 当传入 tools 参数时，API 会告诉模型"你可以调用这些工具"。
+        # 模型不是通过提示词学会返回工具参数的，而是：
+        #
+        # 1. API 协议约定：
+        #    - OpenAI 定义了 tool_calls 的返回格式
+        #    - 所有兼容厂商（Anthropic、DeepSeek、阿里等）都遵循这个格式
+        #
+        # 2. 模型训练：
+        #    - 模型在训练数据中见过大量工具调用的例子
+        #    - 学会了"当有 tools 参数时，用特定 JSON 格式返回调用请求"
+        #
+        # 3. tool_choice: "auto"：
+        #    - 让模型自己决定何时需要调用工具
+        #    - 也可以设为 "required" 强制必须调用，或 "none" 禁止调用
+        #
+        # tools 的内容是每个工具的 JSON Schema，例如：
+        # {
+        #   "type": "function",
+        #   "function": {
+        #     "name": "read_file",
+        #     "description": "读取文件内容",
+        #     "parameters": {
+        #       "type": "object",
+        #       "properties": {"path": {"type": "string"}},
+        #       "required": ["path"]
+        #     }
+        #   }
+        # }
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         if tools:
-            kwargs["tools"] = tools
+            kwargs["tools"] = tools   # 工具列表（JSON Schema 格式）
             kwargs["tool_choice"] = "auto"
 
         try:
-            # 异步调用 LiteLLM SDK 的 acompletion 接口
-            # acompletion 内部会完成 JSON 的序列化与反序列化：
-            # 请求阶段：它把 kwargs 中的参数（如 messages、model 等）自动序列化为 JSON 格式的 HTTP 请求体，发送给 LLM 供应商的 API。
-            # 响应阶段：收到 API 返回的 JSON 响应后，自动反序列化为 Python 对象（通常是 LiteLLM 封装好的 ModelResponse 实例，模仿 OpenAI 的响应结构）。
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # 【核心 API 调用】
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+            # acompletion 是 LiteLLM 的异步调用接口，统一封装了所有厂商的 API。
+            #
+            # 当请求中包含 tools 参数时，模型可能返回两种格式：
+            #
+            # 1. 普通文本回复（不需要调用工具）：
+            #    {
+            #      "role": "assistant",
+            #      "content": "你好！有什么我可以帮助你的？"
+            #    }
+            #
+            # 2. 工具调用请求（需要执行工具）：
+            #    {
+            #      "role": "assistant",
+            #      "content": "让我读取这个文件...",  // 可能有思考内容
+            #      "tool_calls": [
+            #        {
+            #          "id": "call_abc123",
+            #          "type": "function",
+            #          "function": {
+            #            "name": "read_file",
+            #            "arguments": "{\"path\": \"src/main.py\"}"  // JSON 字符串
+            #          }
+            #        }
+            #      ]
+            #    }
+            #
+            # 关键点：模型返回 tool_calls 是 API 协议决定的，不是提示词！
+            # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
             logger.debug("发送给模型的消息：{}", json.dumps(kwargs.get("messages", []), ensure_ascii=False, indent=2))
             response = await acompletion(**kwargs)
             return self._parse_response(response)
@@ -214,13 +310,49 @@ class LiteLLMProvider(LLMProvider):
     def _parse_response(self, response: Any) -> LLMResponse:
         """
         解析LiteLLM响应 → 标准化LLMResponse
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        【模型返回的两种格式】
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+        1. 普通回复（不需要工具）：
+           response.choices[0].message = {
+             "content": "你好！",
+             "tool_calls": None
+           }
+
+        2. 工具调用请求：
+           response.choices[0].message = {
+             "content": "让我搜索一下...",
+             "tool_calls": [
+               {
+                 "id": "call_xxx",
+                 "type": "function",
+                 "function": {
+                   "name": "web_search",
+                   "arguments": "{\"query\": \"Python教程\"}"  // JSON 字符串
+                 }
+               }
+             ]
+           }
+
+        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         """
         choice = response.choices[0]
         message = choice.message
         content = message.content
         finish_reason = choice.finish_reason
 
-        # 构造工具调用列表
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 【解析工具调用】
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # 如果模型返回了 tool_calls，说明模型决定调用工具。
+        # 我们需要提取：
+        #   - name: 工具名称（如 "read_file"）
+        #   - arguments: 工具参数（JSON 字符串 → 解析为 dict）
+        #
+        # 这些参数是由模型根据 tools Schema 生成的，格式符合我们定义的参数类型。
+        # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         tool_calls = []
         if hasattr(message, "tool_calls") and message.tool_calls:
             for tc in message.tool_calls:
