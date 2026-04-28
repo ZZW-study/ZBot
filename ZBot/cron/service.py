@@ -131,14 +131,16 @@ class CronService:
     def __init__(
         self,
         store_path: Path,
+        on_job: Callable[[CronJob], Coroutine[Any, Any, Any]] | None = None,
     ):
         """
         初始化 CronService 实例。
         Args:
             store_path: 任务持久化文件路径（JSON 格式）
+            on_job: 任务触发时的回调函数，接收 CronJob 对象
         """
-        
         self.store_path = store_path                    # 存储路径（JSON 文件）
+        self.on_job = on_job                            # 任务执行回调
         self._store: CronStore | None = None            # 内存中的 store 缓存（CronStore），懒加载
         self._last_mtime = 0.0                          # 记录上次加载文件的 mtime（modified time，修改时间），用于检测文件变化
         self._timer_task: asyncio.Task | None = None    # 内部计时器的 asyncio.Task（用于定时唤醒）

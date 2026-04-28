@@ -260,7 +260,25 @@ def agent(
 
     # 初始化定时任务服务，存储路径为 ~/.ZBot/cron/jobs.json
     cron_store_path = get_runtime_subdir("cron") / "jobs.json"
-    cron = CronService(cron_store_path)
+
+    # 定时任务执行回调（需要 agent_loop，所以先声明，后面赋值）
+    async def _on_cron_job(job):
+        """定时任务触发时的回调函数"""
+        if job.payload.deliver:
+            # deliver=True 时，把消息发给 AI 处理
+            console.print(f"\n[yellow]⏰ 定时任务触发：{job.name}[/yellow]")
+            with _thinking_ctx():
+                response = await agent_loop.process_direct(
+                    job.payload.message,
+                    session_name,
+                    on_progress=_cli_progress
+                )
+            _print_agent_response(response, render_markdown=markdown)
+        else:
+            # deliver=False 时，直接打印提醒
+            console.print(f"\n[yellow]⏰ 提醒：{job.payload.message}[/yellow]")
+
+    cron = CronService(cron_store_path, on_job=_on_cron_job)
 
     # 创建 AgentLoop 实例
     agent_loop = AgentLoop(
@@ -293,6 +311,8 @@ def agent(
     if message:
         async def run_once() -> None:
             """执行单次对话：发送消息 → 等待回复 → 打印 → 退出"""
+            # 启动定时任务调度器（恢复之前保存的任务）
+            await cron.start()
             with _thinking_ctx():  # 显示思考状态
                 # 处理用户消息并获取 AI 回复
                 response = await agent_loop.process_direct(
@@ -302,7 +322,8 @@ def agent(
                 )
             # 打印 AI 回复（支持 Markdown 渲染）
             _print_agent_response(response, render_markdown=markdown)
-            # 关闭 MCP 连接
+            # 停止调度器并关闭 MCP 连接
+            cron.stop()
             await agent_loop.close_mcp()
 
         asyncio.run(run_once())     # 运行异步主函数
@@ -324,6 +345,8 @@ def agent(
     # 交互模式主循环
     async def run_interactive() -> None:
         """持续读取用户输入 → 发送给 AI → 打印回复，直到用户退出"""
+        # 启动定时任务调度器
+        await cron.start()
         try:
             while True:  # 无限循环，直到用户输入 exit 或中断
                 try:
@@ -364,6 +387,8 @@ def agent(
                     console.print("\n再见！")
                     break
         finally:
+            # 停止定时任务调度器
+            cron.stop()
             # 无论是否正常退出，都关闭 MCP 连接
             await agent_loop.close_mcp()
 

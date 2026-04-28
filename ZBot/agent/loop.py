@@ -58,6 +58,12 @@ class AgentLoop:
     # 目的是防止会话历史无限膨胀
     _TOOL_RESULT_MAX_CHARS = 2000
 
+    # ==================== 循环检测配置 ====================
+    # 同一工具连续调用相同参数的最大次数
+    _MAX_SAME_CALL = 3
+    # 循环模式检测窗口大小（检测 A→B→A→B 这种模式）
+    _LOOP_PATTERN_WINDOW = 4
+
     # ==================== 初始化方法 ====================
     def __init__(
         self,
@@ -235,6 +241,54 @@ class AgentLoop:
         # 用逗号连接所有提示
         return ",".join(hints)
 
+    def _detect_tool_loop(
+        self,
+        tool_call_history: list[tuple[str, dict[str, Any]]],
+        tool_name: str,
+        tool_args: dict[str, Any],
+    ) -> str | None:
+        """检测工具循环调用，返回检测到的循环类型描述，无循环则返回 None。
+
+        检测两种循环模式：
+        1. 连续重复调用：同一工具用相同参数连续调用多次
+        2. 交替循环模式：A→B→A→B 这种交替调用模式
+
+        Args:
+            tool_call_history: 历史工具调用记录，每个元素是 (工具名, 参数字典)
+            tool_name: 当前要调用的工具名
+            tool_args: 当前要调用的工具参数
+
+        Returns:
+            循环描述字符串，如 "连续重复调用 web_search 3 次" 或 "检测到循环模式: read_file → write_file"
+        """
+        # 将当前调用加入历史（用于检测）
+        current_call = (tool_name, tool_args)
+        history = tool_call_history + [current_call]
+
+        # ========== 检测连续重复调用 ==========
+        # 统计最近连续相同调用的次数
+        same_count = 1
+        for i in range(len(history) - 2, -1, -1):
+            if history[i] == current_call:
+                same_count += 1
+            else:
+                break  # 遇到不同的调用，停止统计
+
+        if same_count >= self._MAX_SAME_CALL:
+            return f"连续重复调用 {tool_name} {same_count} 次（相同参数）"
+
+        # ========== 检测交替循环模式 ==========
+        # 检查最近 _LOOP_PATTERN_WINDOW 次调用是否存在 A→B→A→B 模式
+        if len(history) >= self._LOOP_PATTERN_WINDOW:
+            recent = history[-self._LOOP_PATTERN_WINDOW:]
+            # 提取工具名序列
+            names = [call[0] for call in recent]
+            # 检测 A→B→A→B 模式（第1个等于第3个，第2个等于第4个，且第1个不等于第2个）
+            if names[0] == names[2] and names[1] == names[3] and names[0] != names[1]:
+                return f"检测到循环模式: {names[0]} → {names[1]} → {names[0]} → {names[1]}"
+
+        return None
+
     async def _run_agent_loop(
         self,
         initial_messages: list[dict[str, Any]],
@@ -263,6 +317,8 @@ class AgentLoop:
         messages = list(initial_messages)    # 浅拷贝，保护原列表不被追加操作影响
         tools_used: list[str] = []           # 记录本轮对话中实际调用过的工具名称（用于后续存档和统计）
         final_content: str | None = None     # 最终返回给用户的文本内容（初始为 None，表示尚未产生回复）
+        # 工具调用历史：用于检测循环调用，每个元素是 (工具名, 参数字典)
+        tool_call_history: list[tuple[str, dict[str, Any]]] = []
 
         # ========== 主交互循环 ==========
         # 最多执行 max_iterations 次迭代，防止工具调用进入死循环
@@ -270,9 +326,9 @@ class AgentLoop:
             # 记录调试日志：当前是第几次迭代，消息链长度
             logger.debug("Agent循环迭代: {}, 消息长度: {}", _ + 1, len(messages))
 
-            # 调用大模型（核心 API 调用）
+            # 调用大模型（核心 API 调用），这个提示词还不是最终拼接
             response = await self.provider.chat(
-                messages=messages,                      # 消息历史列表（包含用户消息、assistant 回复、工具结果）
+                messages=messages,                      # 包含所有消息的列表，每一个原始都是一个字典，系统消息字典、历史消息字典（有很多，就是之前的会话消息列表解包）、这轮用户消息字典
                 tools=self.tools.get_definitions(),     # 当前可用的工具定义列表（JSON Schema 格式）
                 model=self.model,                       # 使用的模型名称（如 "claude-sonnet-4-6-20250929"）
                 temperature=self.temperature,           # 温度参数（控制随机性，越高越有创造力）
@@ -325,8 +381,29 @@ class AgentLoop:
 
                 # 逐个执行工具调用
                 for tool_call in response.tool_calls:
+                    # ========== 循环检测 ==========
+                    # 检测是否出现工具循环调用
+                    loop_detected = self._detect_tool_loop(
+                        tool_call_history, tool_call.name, tool_call.arguments
+                    )
+                    if loop_detected:
+                        # 记录警告日志
+                        logger.warning("检测到工具循环调用：{}", loop_detected)
+                        # 构造错误结果，告知模型停止循环
+                        result = (
+                            f"错误：检测到工具循环调用（{loop_detected}）。\n"
+                            "请换一种方式完成任务，或者直接告诉用户当前无法完成。"
+                        )
+                        # 将错误结果写入消息链
+                        self.context.add_tool_result(messages, tool_call.id, tool_call.name, result)
+                        # 仍然记录工具使用（用于统计）
+                        tools_used.append(tool_call.name)
+                        continue  # 跳过实际执行，处理下一个工具调用
+
                     # 记录已使用的工具名称（用于后续统计和存档）
                     tools_used.append(tool_call.name)
+                    # 记录到调用历史（用于循环检测）
+                    tool_call_history.append((tool_call.name, tool_call.arguments))
                     # 将工具参数转换为 JSON 字符串（用于日志记录）
                     args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                     # 记录日志：调用哪个工具、参数是什么（前 200 字符）
