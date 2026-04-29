@@ -4,18 +4,13 @@
 转换与校验逻辑也封装在此基类中，方便各工具统一处理输入。
 """
 from abc import ABC, abstractmethod
-from typing import Any
-
-
+from typing import Any, ClassVar
 class Tool(ABC):
-    """工具抽象基类。
-
-    说明：具体的工具应继承此类并实现 `name`、`description`、`parameters`
-    以及 `execute` 方法。基础类提供了参数类型转换与校验的通用实现。
-    """
+    """工具抽象基类。"""
 
     # JSON Schema 的基础类型到 Python 类型的映射，用于快速判断与 isinstance
-    _TYPE_MAP = {
+  
+    _TYPE_MAP: ClassVar[dict[str, type[Any] | tuple[type[Any], ...]]] = {
         "string": str,
         "integer": int,
         "number": (int, float),
@@ -24,11 +19,13 @@ class Tool(ABC):
         "object": dict,
     }
 
+
     @property
     @abstractmethod
     def name(self) -> str:
         """工具名称（唯一标识）。"""
         pass
+
 
     @property
     @abstractmethod
@@ -36,16 +33,19 @@ class Tool(ABC):
         """工具的简短描述，用于在调用方生成帮助或提示。"""
         pass
 
+
     @property
     @abstractmethod
     def parameters(self) -> dict[str, Any]:
         """工具参数的 JSON Schema 定义（根类型通常为 object）。"""
         pass
 
+
     @abstractmethod
     async def execute(self, **kwargs: Any) -> str:
         """执行工具的主入口，子类实现具体业务逻辑并返回字符串结果。"""
         pass
+
 
     def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """根据工具的 `parameters` schema 对传入的参数进行类型转换。
@@ -58,6 +58,7 @@ class Tool(ABC):
         if schema.get("type", "object") != "object":
             return params
         return self._cast_object(params, schema)
+
 
     def _cast_object(self, obj: Any, schema: dict[str, Any]) -> dict[str, Any]:
         # 如果传入不是字典结构，无法按 properties 转换，原样返回
@@ -75,6 +76,7 @@ class Tool(ABC):
                 result[key] = value
 
         return result
+
 
     def _cast_value(self, val: Any, schema: dict[str, Any]) -> Any:
         """根据子 schema 的 type 字段把单个值转换为目标类型。
@@ -136,6 +138,7 @@ class Tool(ABC):
         # 其它情况保持原值
         return val
 
+
     def validate_params(self, params: dict[str, Any]) -> list[str]:
         """验证参数是否符合 `parameters` schema，返回错误消息列表（空表示通过）。
 
@@ -148,6 +151,7 @@ class Tool(ABC):
         if schema.get("type", "object") != "object":
             raise ValueError(f"工具参数的 Schema 根类型必须是 object")
         return self._validate(params, {**schema, "type": "object"}, "")
+
 
     def _validate(self, val: Any, schema: dict[str, Any], path: str) -> list[str]:
         """递归校验单个值或对象是否满足 schema，返回错误列表。
@@ -181,7 +185,7 @@ class Tool(ABC):
                 errors.append(f"{label} 必须小于等于 {schema['maximum']}")
 
         # 字符串长度约束
-        if t == "string":
+        if t == "string" and isinstance(val, str):
             if "minLength" in schema and len(val) < schema["minLength"]:
                 errors.append(f"{label} 长度不能少于 {schema['minLength']} 个字符")
             if "maxLength" in schema and len(val) > schema["maxLength"]:
@@ -189,6 +193,8 @@ class Tool(ABC):
 
         # 对象的属性与必填项检查
         if t == "object":
+            if not isinstance(val, dict):
+                return errors
             props = schema.get("properties", {})
             for k in schema.get("required", []):
                 if k not in val:
@@ -198,11 +204,12 @@ class Tool(ABC):
                     errors.extend(self._validate(v, props[k], path + "." + k if path else k))
 
         # 数组项的逐一校验
-        if t == "array" and "items" in schema:
+        if t == "array" and "items" in schema and isinstance(val, list):
             for i, item in enumerate(val):
                 errors.extend(self._validate(item, schema["items"], f"{path}[{i}]" if path else f"[{i}]"))
 
         return errors
+
 
     def to_schema(self) -> dict[str, Any]:
         """把工具元信息转换为类似 OpenAI 函数调用所需的描述字典。"""

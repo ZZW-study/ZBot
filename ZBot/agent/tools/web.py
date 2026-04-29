@@ -92,17 +92,25 @@ class WebSearchTool(Tool):
     """网页搜索工具，支持 Bocha 和 Tavily"""
 
     # 直接用 类属性 实现了抽象属性，可以。
-
-    name = "web_search"
-    description = "搜索网页并返回标题、链接和摘要。"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "搜索查询词。"},
-            "count": {"type": "integer", "description": "返回结果数量（1-10）。", "minimum": 1, "maximum": 10}
-        },
-        "required": ["query"]
-    }
+    
+    @property
+    def name(self) -> str:
+        return "web_search"
+    
+    @property
+    def description(self) -> str:
+        return " 使用 Bocha Search API 进行网页搜索，返回标题、URL 和摘要。"
+    
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "搜索查询语句。"},
+                "count": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回的结果数量，默认为配置中的 max_results。"},
+            },
+            "required": ["query"],
+        }
 
 
     def __init__(self, config: WebSearchConfig | None = None, proxy: str | None = None):
@@ -111,11 +119,16 @@ class WebSearchTool(Tool):
         self.config = config if config is not None else WebSearchConfig()  # 使用传入配置或默认配置
         self.proxy = proxy                                                 # HTTP 代理地址
 
-    async def execute(self, query: str, count: int | None = None, **kwargs: Any) -> str:
-        # 限制结果数量在 1-10 之间
-        n = min(max(count or self.config.max_results, 1), 10)
 
+    async def execute(self, **kwargs: Any) -> str:
+
+        query = kwargs.get("query","")
+        query = str(query).strip()
+        # 限制结果数量在 1-10 之间
+        n = min(max(kwargs.get("count") or self.config.max_results, 1), 10)
+  
         return await self._search_bocha(query, n)
+
 
     async def _search_bocha(self, query: str, n: int) -> str:
         """使用bocha Search API"""
@@ -146,41 +159,49 @@ class WebSearchTool(Tool):
             ]
             return _format_results(query, items, n)
         except Exception as e:
-            return f"Error: bocha 搜索失败: {e}"
+            return f"错误：bocha 搜索失败: {e}"
 
     
 
 class WebFetchTool(Tool):
     """网页抓取工具"""
 
-    name = "web_fetch"
-    description = "获取网页并提取其主要内容。"
-    parameters = {
-        "type": "object",
-        "properties": {
-            "url": {"type": "string", "description": "要获取的URL。"},
-            "extractMode": {"type": "string", "enum": ["markdown", "text"], "default": "markdown"},
-            "maxChars": {"type": "integer", "minimum": 100, "description": "返回的最大字符数。"},
-        },
-        "required": ["url"],
-    }
-
+    @property
+    def name(self) -> str:
+        return "web_fetch"
+    
+    @property
+    def description(self) -> str:
+        return "抓取指定 URL 的内容，支持 HTML 正文提取和 JSON 格式化。"
+    
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {"type": "string", "description": "要抓取的网页 URL。"},
+                "extractMode": {"type": "string", "enum": ["markdown", "text"], "default": "markdown", "description": "内容提取模式，markdown 提取正文并转换为 Markdown 格式，text 则提取纯文本。默认为 markdown。"},
+                "maxChars": {"type": "integer", "minimum": 1000, "maximum": 100000, "default": self.max_chars, "description": f"返回内容的最大字符数，超过部分将被截断。默认为 {self.max_chars}。"},
+            },
+            "required": ["url"],
+        }
+        
     def __init__(self, max_chars: int = 50000, proxy: str | None = None):
         # 最大返回字符数
         self.max_chars = max_chars
         # HTTP 代理地址
         self.proxy = proxy
 
-    async def execute(self, url: str, extractMode: str = "markdown", maxChars: int | None = None, **kwargs: Any) -> str:
+    async def execute(self,  **kwargs: Any) -> str:
         # 使用参数或默认值
-        max_chars = maxChars or self.max_chars
+        max_chars = kwargs.get("maxChars") or self.max_chars
         # 验证 URL 合法性
-        is_valid, error_msg = _validate_url(url)
+        is_valid, error_msg = _validate_url(kwargs.get("url") or "")
         if not is_valid:
             return f"错误：url不合法 ({error_msg})."
 
         # 执行抓取
-        return await self._fetch(url, extractMode, max_chars)
+        return await self._fetch(kwargs.get("url") or "", kwargs.get("extractMode") or "markdown", max_chars)
 
     async def _fetch(self, url: str, extract_mode: str, max_chars: int) -> str:
         """抓取网页内容"""
@@ -216,9 +237,9 @@ class WebFetchTool(Tool):
 
             return f"Content from {str(r.url)}:\n\n{text}"
         except httpx.HTTPStatusError as e:
-            return f"Error: HTTP {e.response.status_code}."
+            return f"错误：HTTP 状态码 {e.response.status_code}。"
         except Exception as e:
-            return f"Error: Failed to fetch page ({e})."
+            return f"错误：抓取网页失败 ({e})。"
 
     def _extract_html_content(self, html_text: str, extract_mode: str) -> str:
         """从 HTML 中提取正文"""

@@ -234,10 +234,7 @@ def validate_skill(skill_path):
         (是否合法, 提示信息)
     """
     skill_path = Path(skill_path).resolve()
-    
-    requires_error = _validate_requires(frontmatter.get("requires"))
-    if requires_error:
-        return False, requires_error
+
     # 校验文件夹是否存在
     if not skill_path.exists():
         return False, f"技能文件夹不存在：{skill_path}"
@@ -264,6 +261,11 @@ def validate_skill(skill_path):
     frontmatter, error = _load_frontmatter(frontmatter_text)
     if error:
         return False, error
+
+    # 校验 requires 字段
+    requires_error = _validate_requires(frontmatter.get("requires"))
+    if requires_error:
+        return False, requires_error
 
     # 校验不允许的配置项
     unexpected_keys = sorted(set(frontmatter.keys()) - ALLOWED_FRONTMATTER_KEYS)
