@@ -51,7 +51,6 @@ class ExecTool(Tool):
         working_dir: str | None = None,
         deny_patterns: list[str] | None = None,
         restrict_to_workspace: bool = False,
-        path_append: str = "",
     ):
         """
         初始化 ExecTool 工具实例。
@@ -64,7 +63,6 @@ class ExecTool(Tool):
         """
         self.timeout = timeout          # 默认超时时间
         self.working_dir = working_dir  # 默认工作目录
-        self.path_append = path_append
         # 默认危险命令模式覆盖删除磁盘、关机、fork bomb 等高风险操作
         # 这些正则表达式会匹配命令字符串，阻止执行
         self.deny_patterns = deny_patterns or [
@@ -114,9 +112,6 @@ class ExecTool(Tool):
 
     async def execute(
         self,
-        command: str,
-        working_dir: str | None = None,
-        timeout: int | None = None,
         **kwargs: Any,
     ) -> str:
         """
@@ -143,6 +138,14 @@ class ExecTool(Tool):
             - 或错误信息（如果被拦截或执行失败）
         """
         # 工作目录优先级：调用参数 > 工具初始化参数 > 当前进程目录
+        command = kwargs.get("command", "")
+        working_dir = kwargs.get("working_dir", None)
+        timeout = kwargs.get("timeout", None)
+
+        # 空命令检查
+        if not command.strip():
+            return "错误：命令不能为空"
+
         cwd = working_dir or self.working_dir or os.getcwd()
 
         # 执行安全检查（黑名单、路径限制）
@@ -250,7 +253,7 @@ class ExecTool(Tool):
             for raw in self._extract_absolute_paths(cmd):
                 try:
                     # 展开环境变量（如 $HOME）和用户目录符号（如 ~）
-                    expanded = Path.expanduser(raw.strip())
+                    expanded = Path.expanduser(Path(raw.strip()))
                     path = Path(expanded).expanduser().resolve()
                 except Exception:
                     continue  # 路径解析失败，跳过检查
@@ -266,7 +269,7 @@ class ExecTool(Tool):
 
     @staticmethod
     def _extract_absolute_paths(command: str) -> list[str]:
-        """
+        r"""
         从命令字符串中提取绝对路径，供路径越界检查使用。
 
         支持三种路径格式：

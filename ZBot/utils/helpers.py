@@ -1,11 +1,4 @@
-"""通用辅助函数。
-
-本模块提供一些零散但各处都会用到的工具函数，
-例如目录创建、文件名清理、工作区初始化等。
-"""
-
-from __future__ import annotations
-
+"""通用辅助函数模块。"""
 import re
 from pathlib import Path
 
@@ -23,15 +16,7 @@ def ensure_dir(path: Path) -> Path:
 
 
 def safe_filename(name: str) -> str:
-    """将文件名中的不安全字符替换为下划线。
-    某些字符（如 / \ ? * 等）在文件系统中是非法的，
-    此函数将这些字符替换为下划线，保证文件名可用。
-    参数：
-        name: 原始文件名
-
-    返回：
-        清理后的安全文件名
-    """
+    """将文件名中的不安全字符替换为下划线。"""
     # 用正则将所有不安全字符替换为下划线，并去除首尾空白
     return _UNSAFE_CHARS.sub("_", name).strip()
 
@@ -41,7 +26,8 @@ def ensure_workspace_dirs(workspace: Path) ->None:
     dirs = [
         workspace / "memory",
         workspace / "sessions",
+        workspace / "skills",
     ]
     for d in dirs:
         if not d.exists():
-            d.mkdir(parents=True, exist_ok=True)
+            ensure_dir(d)
