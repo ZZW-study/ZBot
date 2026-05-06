@@ -3,7 +3,7 @@
 并通过 `Config` 提供统一的配置加载/校验接口。
 """
 
-from typing import Literal                          # Literal 用于限定变量只能是几个固定值之一
+from typing import Literal,Optional                          # Literal 用于限定变量只能是几个固定值之一
 from pathlib import Path                    
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -101,6 +101,9 @@ class Config(BaseModel):
     """ZBot 根配置。
     这是整个系统的核心配置类，汇总了所有配置项。
     """
+    _instance : Optional["Config"] = None
+
+
     # Agent 默认配置
     workspace: str = "~/.ZBot/workspace"        # 工作区路径
     model: str = ""                             # 使用的模型名称
@@ -111,8 +114,21 @@ class Config(BaseModel):
     memory_window: int = 25                     # 记忆窗口大小（保留多少条历史消息）
     reasoning_effort: str | None = None         # 推理强度参数
 
+    # 记忆相关配置
+    score_threshold: float = 0.75                # 记忆召回分数阈值
+    obsolete_score_threshold : float = 0.5       # 记忆过时分数阈值
+    decay_rate: float = 0.12                      # 记忆衰减率
+    evolve_score_threshold: float = 1.3          # 记忆进化分数阈值
+
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)  # 所有 LLM 提供商
     tools: ToolsConfig = Field(default_factory=ToolsConfig)              # 所有工具配置
+
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
 
     @field_validator("temperature")
     @classmethod
