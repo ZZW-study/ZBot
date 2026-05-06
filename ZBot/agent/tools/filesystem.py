@@ -74,9 +74,12 @@ class ReadFileTool(Tool):
             "required": ["path"],
         }
 
-    async def execute(self, path: str, offset: int = 1, limit: int | None = None, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
         try:
             # 解析路径并检查是否在允许范围内
+            path = kwargs.get("path", "")
+            offset = kwargs.get("offset", 1)
+            limit = kwargs.get("limit", None)
             fp = _resolve_path(path, self._workspace, self._allowed_dir)
             # 检查文件是否存在
             if not fp.exists():
@@ -165,7 +168,9 @@ class WriteFileTool(Tool):
             "required": ["path", "content"],
         }
 
-    async def execute(self, path: str, content: str, **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
+        path = kwargs.get("path", "")
+        content = kwargs.get("content", "")
         try:
             # 解析路径(包含了文件)并检查是否在允许范围内
             fp = _resolve_path(path, self._workspace, self._allowed_dir)
@@ -240,9 +245,13 @@ class EditFileTool(Tool):
         }
 
     async def execute(
-        self, path: str, old_text: str, new_text: str,
-        replace_all: bool = False, **kwargs: Any,
+        self, **kwargs: Any
     ) -> str:
+        path = kwargs.get("path", "")
+        old_text = kwargs.get("old_text", "")
+        new_text = kwargs.get("new_text", "")
+        replace_all = kwargs.get("replace_all", False)
+
         try:
             # 解析路径并检查是否在允许范围内
             fp = _resolve_path(path, self._workspace, self._allowed_dir)
@@ -348,9 +357,12 @@ class ListDirTool(Tool):
         }
 
     async def execute(
-        self, path: str, recursive: bool = False,
-        max_entries: int | None = None, **kwargs: Any,
+        self, **kwargs: Any
     ) -> str:
+        path = kwargs.get("path", "")
+        recursive = kwargs.get("recursive", False)
+        max_entries = kwargs.get("max_entries", None)
+
         try:
             # 解析路径并检查是否在允许范围内
             dp = _resolve_path(path, self._workspace, self._allowed_dir)

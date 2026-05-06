@@ -5,10 +5,9 @@
 
 安全策略包括：
 1. 危险命令黑名单（阻止 rm -rf、format、shutdown 等高危操作）
-2. 命令白名单（可选，只允许特定命令执行）
-3. 工作区路径限制（可选，阻止命令访问工作区外的路径）
-4. 执行超时限制（防止命令无限运行）
-5. 输出长度限制（防止超大输出占用内存）
+2. 工作区路径限制（可选，阻止命令访问工作区外的路径）
+3. 执行超时限制（防止命令无限运行）
+4. 输出长度限制（防止超大输出占用内存）
 
 核心类：
     ExecTool: 执行 shell 命令的工具类，继承自 Tool 基类
@@ -35,10 +34,9 @@ class ExecTool(Tool):
     - 执行任意代码
     因此在执行任何命令前，必须通过多层安全检查：
     1. 黑名单检查：阻止已知危险命令
-    2. 白名单检查：可选，只允许特定命令
-    3. 路径限制：可选，阻止访问工作区外的路径
-    4. 超时限制：防止命令无限运行
-    5. 输出截断：防止超大输出占用内存
+    2. 路径限制：可选，阻止访问工作区外的路径
+    3. 超时限制：防止命令无限运行
+    4. 输出截断：防止超大输出占用内存
     """
 
     # 最大超时时间（秒）：防止命令运行过久
@@ -52,9 +50,7 @@ class ExecTool(Tool):
         timeout: int = 60,
         working_dir: str | None = None,
         deny_patterns: list[str] | None = None,
-        allow_patterns: list[str] | None = None,
         restrict_to_workspace: bool = False,
-        path_append: str = "",
     ):
         """
         初始化 ExecTool 工具实例。
@@ -63,13 +59,10 @@ class ExecTool(Tool):
             timeout: 默认命令执行超时时间（秒），默认 60 秒
             working_dir: 默认工作目录，None 表示使用当前进程目录
             deny_patterns: 危险命令黑名单正则表达式列表，None 使用默认黑名单
-            allow_patterns: 命令白名单正则表达式列表，None 表示不启用白名单
             restrict_to_workspace: 是否限制只能访问工作区内的路径
-            path_append: 可选附加的 PATH 字符串，用于把自定义可执行文件目录加入环境变量
         """
         self.timeout = timeout          # 默认超时时间
         self.working_dir = working_dir  # 默认工作目录
-
         # 默认危险命令模式覆盖删除磁盘、关机、fork bomb 等高风险操作
         # 这些正则表达式会匹配命令字符串，阻止执行
         self.deny_patterns = deny_patterns or [
@@ -84,9 +77,7 @@ class ExecTool(Tool):
             r":\(\)\s*\{.*\};\s*:",  # :(){ :|:& };:：Fork bomb（进程爆炸攻击）
         ]
 
-        self.allow_patterns = allow_patterns or []          # 命令白名单（可选）
         self.restrict_to_workspace = restrict_to_workspace  # 是否限制工作区路径
-        self.path_append = path_append                      # 附加 PATH 环境变量
 
     @property
     def name(self) -> str:
@@ -121,9 +112,6 @@ class ExecTool(Tool):
 
     async def execute(
         self,
-        command: str,
-        working_dir: str | None = None,
-        timeout: int | None = None,
         **kwargs: Any,
     ) -> str:
         """
@@ -131,11 +119,10 @@ class ExecTool(Tool):
 
         这是工具的核心方法，执行流程：
         1. 确定工作目录（参数优先级：调用参数 > 工具初始化参数 > 当前进程目录）
-        2. 执行安全检查（黑名单、白名单、路径限制）
-        3. 构造执行环境（PATH 环境变量）
-        4. 异步执行命令（使用 asyncio.create_subprocess_shell）
-        5. 等待命令完成或超时
-        6. 处理输出（截断过长内容）
+        2. 执行安全检查（黑名单、路径限制）
+        3. 异步执行命令（使用 asyncio.create_subprocess_shell）
+        4. 等待命令完成或超时
+        5. 处理输出（截断过长内容）
 
         Args:
             command: 要执行的 shell 命令字符串
@@ -151,21 +138,23 @@ class ExecTool(Tool):
             - 或错误信息（如果被拦截或执行失败）
         """
         # 工作目录优先级：调用参数 > 工具初始化参数 > 当前进程目录
+        command = kwargs.get("command", "")
+        working_dir = kwargs.get("working_dir", None)
+        timeout = kwargs.get("timeout", None)
+
+        # 空命令检查
+        if not command.strip():
+            return "错误：命令不能为空"
+
         cwd = working_dir or self.working_dir or os.getcwd()
 
-        # 执行安全检查（黑名单、白名单、路径限制）
+        # 执行安全检查（黑名单、路径限制）
         guard_error = self._guard_command(command, cwd)
         if guard_error:
             return guard_error  # 如果被拦截，直接返回错误信息
 
         # 计算实际超时时间（不超过最大上限）
         effective_timeout = min(timeout or self.timeout, self._MAX_TIMEOUT)
-
-        # 复制当前环境变量，准备添加自定义 PATH
-        env = os.environ.copy()
-        if self.path_append:
-            # 将附加路径加入 PATH 环境变量
-            env["PATH"] = env.get("PATH", "") + os.pathsep + self.path_append
 
         try:
             # 使用 asyncio 异步创建子进程执行 shell 命令
@@ -174,7 +163,6 @@ class ExecTool(Tool):
                 stdout=asyncio.subprocess.PIPE,  # 捕获标准输出
                 stderr=asyncio.subprocess.PIPE,  # 捕获标准错误
                 cwd=cwd,                         # 工作目录
-                env=env,                         # 环境变量
             )
 
             try:
@@ -229,10 +217,9 @@ class ExecTool(Tool):
         """
         执行前的安全检查。
 
-        拦截策略包括三层：
+        拦截策略包括两层：
         1. 匹配危险命令黑名单（阻止 rm -rf、shutdown 等）
-        2. 如果设置了白名单，则只允许白名单命令
-        3. 如果启用了工作区限制，则阻止路径越界
+        2. 如果启用了工作区限制，则阻止路径越界
 
         Args:
             command: 要检查的命令字符串
@@ -251,14 +238,7 @@ class ExecTool(Tool):
                 # 如果匹配到危险命令模式，拦截并返回错误
                 return "错误：命令被安全策略拦截，检测到高风险模式。"
 
-        # ========== 第二层：白名单检查 ==========
-        if self.allow_patterns and not any(
-            re.search(pattern, lower) for pattern in self.allow_patterns
-        ):
-            # 如果设置了白名单，但命令不在白名单中，拦截
-            return "错误：命令被安全策略拦截，不在允许执行的白名单中。"
-
-        # ========== 第三层：路径限制检查 ==========
+        # ========== 第二层：路径限制检查 ==========
         if self.restrict_to_workspace:
             # 检查路径穿越攻击（如 ../../）
             # ../：Linux/macOS 系统的上级目录写法
@@ -273,7 +253,7 @@ class ExecTool(Tool):
             for raw in self._extract_absolute_paths(cmd):
                 try:
                     # 展开环境变量（如 $HOME）和用户目录符号（如 ~）
-                    expanded = Path.expanduser(raw.strip())
+                    expanded = Path.expanduser(Path(raw.strip()))
                     path = Path(expanded).expanduser().resolve()
                 except Exception:
                     continue  # 路径解析失败，跳过检查
@@ -289,7 +269,7 @@ class ExecTool(Tool):
 
     @staticmethod
     def _extract_absolute_paths(command: str) -> list[str]:
-        """
+        r"""
         从命令字符串中提取绝对路径，供路径越界检查使用。
 
         支持三种路径格式：

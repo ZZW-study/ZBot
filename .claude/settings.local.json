@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m py_compile ZBot/agent/context.py)",
+      "Bash(python)",
+      "Bash(python -m py_compile ZBot/agent/skills.py)",
+      "Bash(python -W error -c \"import ZBot.agent.tools.shell\")",
+      "Bash(python -c \"import warnings; warnings.filterwarnings\\('error'\\); import ZBot.agent.tools.shell; print\\('No warnings'\\)\")",
+      "Bash(python -c \"from ZBot.config.schema import Config; c = Config\\(temperature=0.5, max_tokens=4096, memory_window=25\\); print\\('schema OK'\\)\")",
+      "Bash(python -c \"from ZBot.agent.loop import AgentLoop; print\\('loop OK'\\)\")"
+    ]
+  }
+}
