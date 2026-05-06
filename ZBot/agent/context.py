@@ -13,6 +13,8 @@ from typing import Any
 from zoneinfo import ZoneInfo   # 用于时区处理（北京时间）
 
 from ZBot.memory.session_memory import SessionMemoryStore
+from ZBot.memory.daily_memory import daily_memory_store
+from ZBot.memory.long_term_memory import long_term_memory_store
 from ZBot.agent.skills import SkillsLoader      
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
@@ -20,12 +22,6 @@ BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 class ContextBuilder:
     """
     负责构建 system prompt 与当前轮消息列表。
-
-    这个类的职责很单一：把各种输入源（引导文件、会话记忆、技能、历史对话、当前消息）
-    组装成大模型可以理解的 messages 格式。它不负责：
-    - 消息调度（由 AgentLoop 负责）
-    - 工具执行（由 ToolRegistry 负责）
-    - 会话持久化（由 SessionManager 负责）
     """
     # 模板文件列表：这些文件从包内 templates 目录读取，拼进 system prompt
     BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
@@ -42,10 +38,72 @@ class ContextBuilder:
             workspace: 工作区根目录路径（Path 对象）
         """
         self.workspace = workspace
-        self.memory = SessionMemoryStore(workspace)
+        self.session_memory = SessionMemoryStore(workspace)
+        self.daily_memory = daily_memory_store
+        self.long_term_memory = long_term_memory_store
         self.skills = SkillsLoader(workspace=workspace)
 
-    async def build_system_prompt(self) -> str:
+
+    def add_assistant_message(
+        self,
+        messages: list[dict[str, Any]],
+        content: str | None,
+        tool_calls: list[dict[str, Any]] | None = None,
+        reasoning_content: str | None = None,
+    ) -> None:
+        """向消息链追加 assistant 消息，并保留推理相关字段。"""
+        message: dict[str, Any] = {"role": "assistant", "content": content}
+
+        if tool_calls:
+            message["tool_calls"] = tool_calls
+
+        if reasoning_content is not None:
+            message["reasoning_content"] = reasoning_content
+
+        messages.append(message)
+
+
+    async def build_messages(
+        self,
+        history: list[dict[str, Any]],
+        user_message: str,
+        score_threshold: float = 0.75,
+    ) -> list[dict[str, Any]]:
+        """构造一轮完整请求消息。 """
+
+        # 构建本轮运行时上下文（包含时间），仅供本轮推理使用
+        # 这个上下文会在保存历史时被剥离，避免污染会话记忆
+        runtime_context = self._runtime_context()
+
+        # 用户消息+运行时间
+        user_complete_content = f"{runtime_context}\n\n{user_message}"
+
+        # 返回完整的 messages 列表：system + history + user
+        return [
+            {"role": "system", "content": await self._build_system_prompt(user_complete_content,score_threshold)},  # system 消息
+            *history,                                                                                               # 历史消息（user/assistant/tool 的对话记录）
+            {"role": "user", "content": user_complete_content},                                                     # 当前用户消息
+        ]
+
+    def add_tool_result(
+        self,
+        messages: list[dict[str, Any]],
+        tool_call_id: str,
+        tool_name: str,
+        result: str,
+    ) -> None:
+        """向消息链追加一条 `tool` 消息。"""
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "name": tool_name,
+                "content": result,
+            }
+        )
+
+
+    async def _build_system_prompt(self,user_content: str,score_threshold: float = 0.75) -> str:
         """构建完整的 system prompt。"""
 
         parts: list = [self._identity_prompt()]
@@ -53,11 +111,20 @@ class ContextBuilder:
         if bootstrap:
             parts.append(bootstrap)
 
-        # 插入会话记忆的摘要（若有），给模型"历史侧写"信息
-        # 让模型了解之前的对话历史和重要信息
-        memory_context = await self.memory.get_memory_context()
-        if memory_context:
-            parts.append(f"# 会话记忆\n\n{memory_context}")
+        # 插入长期记忆
+        long_term_memory_context = await self.long_term_memory.get_long_term_memory_context()
+        if long_term_memory_context:
+            parts.append(f"# 长期记忆\n\n{long_term_memory_context}")
+
+        # 插入日常记忆
+        daily_memory_context = await self.daily_memory.get_daily_memory_text(user_content, score_threshold)
+        if daily_memory_context:
+            parts.append(f"# 日常记忆\n\n{daily_memory_context}")
+
+        # 插入会话记忆的摘要
+        session_memory_context = await self.session_memory.get_session_memory_context()
+        if session_memory_context:
+            parts.append(f"# 会话记忆\n\n{session_memory_context}")
 
         # 注入技能目录（catalog），告诉模型"当前有哪些技能可用"。
         # 模型会根据摘要自行决定是否需要读取某个技能的详细内容。
@@ -197,70 +264,12 @@ class ContextBuilder:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         return "\n\n---\n\n".join(parts)
 
-    async def build_messages(
-        self,
-        history: list[dict[str, Any]],
-        current_message: str,
-    ) -> list[dict[str, Any]]:
-        """构造一轮完整请求消息。 """
-
-        # 构建本轮运行时上下文（包含时间），仅供本轮推理使用
-        # 这个上下文会在保存历史时被剥离，避免污染会话记忆
-        runtime_context = self._runtime_context()
-
-        # 用户消息
-        user_content = f"{runtime_context}\n\n{current_message}"
-
-        # 返回完整的 messages 列表：system + history + user
-        return [
-            {"role": "system", "content": await self.build_system_prompt()},  # system 消息
-            *history,                                                                    # 历史消息（user/assistant/tool 的对话记录）
-            {"role": "user", "content": user_content},                                   # 当前用户消息
-        ]
-
-    def add_tool_result(
-        self,
-        messages: list[dict[str, Any]],
-        tool_call_id: str,
-        tool_name: str,
-        result: str,
-    ) -> None:
-        """向消息链追加一条 `tool` 消息。"""
-        messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "name": tool_name,
-                "content": result,
-            }
-        )
-
-    def add_assistant_message(
-        self,
-        messages: list[dict[str, Any]],
-        content: str | None,
-        tool_calls: list[dict[str, Any]] | None = None,
-        reasoning_content: str | None = None,
-    ) -> None:
-        """向消息链追加 assistant 消息，并保留推理相关字段。"""
-        message: dict[str, Any] = {"role": "assistant", "content": content}
-
-        if tool_calls:
-            message["tool_calls"] = tool_calls
-
-        if reasoning_content is not None:
-            message["reasoning_content"] = reasoning_content
-
-        messages.append(message)
+    
 
     def _identity_prompt(self) -> str:
         """
         生成与运行环境相关的固定 system prompt 前缀。
         """
-
-        # 获取工作区的绝对路径（展开 ~ 用户目录符号，转换为绝对路径）
-        workspace_path = str(self.workspace.expanduser().resolve())
-
         # 获取操作系统名称
         system = platform.system()
 
@@ -274,9 +283,10 @@ class ContextBuilder:
             "## 运行环境\n"
             f"{runtime}\n\n"  # 插入运行环境信息
             "## 工作区\n"
-            f"你的工作区位于：{workspace_path}\n"
-            f"- 会话记忆文件：{workspace_path}/memory/MEMORY.md\n" 
-            f"- 历史归档文件：{workspace_path}/memory/HISTORY.md\n\n"
+            f"你的工作区位于：{self.workspace}\n"
+            f"- 会话记忆文件：{self.workspace}/memory/SESSION_MEMORY.md\n"
+            f"- 日常记忆数据库：{self.workspace}/memory/DAILY_MEMORY.db\n"
+            f"- 长期记忆文件：{self.workspace}/memory/LONG_TERM_MEMORY.md\n"
             "## 行为准则\n"
             "- 在调用工具前先说明你准备做什么，但不要在拿到结果前声称已经完成。\n"   
             "- 编辑文件前先读取文件内容。\n"                                     

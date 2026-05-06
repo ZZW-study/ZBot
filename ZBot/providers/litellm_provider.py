@@ -43,13 +43,14 @@
 import json
 import secrets                                  # 安全随机，random伪随机
 import string
-from typing import Any
+from typing import Any,Optional
 import litellm
 from litellm import acompletion                 # async，调用大模型，返回回答
 from loguru import logger 
 
 from ZBot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 from ZBot.providers.registry import find_by_model, find_gateway
+from ZBot.providers.registry import ProviderSpec
 
 _ALLOWED_MSG_KEYS = frozenset({"role","content","tool_calls","tool_call_id", "name", "reasoning_content"}) # 允许的消息标准字段（所有厂商通用）
 _ALNUM = string.ascii_letters + string.digits  # 字母数字字符集（生成工具ID）
@@ -63,26 +64,37 @@ def _short_tool_id() ->str:
 
 
 class LiteLLMProvider(LLMProvider):
-    """LiteLLM统一调用实现类"""
-    def __init__(
-        self,
-        api_key: str | None = None,
-        api_base: str | None = None,
-        default_model: str = "GLM-5.0-Pro",  # 默认模型名称
-        provider_name: str | None = None,
+    """LiteLLM统一调用实现类,为什么_instance这样写，这就是cls._instance就是一个实例"""
+
+    _instance: Optional["LiteLLMProvider"] = None
+    default_model: str
+    _std_provider: Optional["ProviderSpec"] = None
+    _gateway: Optional["ProviderSpec"] = None
+
+    def __new__(
+            cls,
+            api_key: str | None = None,
+            api_base: str | None = None,
+            default_model: str = "GLM-5.0-Pro",  # 默认模型名称
+            provider_name: str | None = None,        
     ):
-        # 初始化父类（API密钥/地址）
-        super().__init__(api_key, api_base)
-        self.default_model = default_model
-        # 检测网关,返回ProviderSpec类
-        self._gateway = find_gateway(provider_name)
-        # 监测标准提供商，返回ProviderSpec类
-        self._std_provider = find_by_model(default_model)
-        litellm.api_key = api_key
-        litellm.api_base = api_base    
-        # LiteLLM基础配置
-        litellm.suppress_debug_info = True  # 关闭调试日志
-        litellm.drop_params = True          # 自动删除不支持的参数
+        if cls._instance is None:
+            cls._instance = super().__new__(cls) # 创建了实例，并赋值给了cls的_instance属性，如果再次cls._instance.某某 = 某某，就是在给实例写属性
+            # 初始化父类（API密钥/地址）
+            cls._instance.api_key = api_key
+            cls._instance.api_base = api_base
+            cls._instance.default_model = default_model
+            # 检测网关,返回ProviderSpec类
+            cls._instance._gateway = find_gateway(provider_name)
+            # 监测标准提供商，返回ProviderSpec类
+            cls._instance._std_provider = find_by_model(default_model)
+            litellm.api_key = api_key
+            litellm.api_base = api_base    
+            # LiteLLM基础配置
+            litellm.suppress_debug_info = True  # 关闭调试日志
+            litellm.drop_params = True          # 自动删除不支持的参数
+        return cls._instance   # 返回实例对象
+
 
     def _resolve_model(self, model: str) -> str:
         """
@@ -169,34 +181,7 @@ class LiteLLMProvider(LLMProvider):
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """
-        解析LiteLLM响应 → 标准化LLMResponse
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        【模型返回的两种格式】
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-        1. 普通回复（不需要工具）：
-           response.choices[0].message = {
-             "content": "你好！",
-             "tool_calls": None
-           }
-
-        2. 工具调用请求：
-           response.choices[0].message = {
-             "content": "让我搜索一下...",
-             "tool_calls": [
-               {
-                 "id": "call_xxx",
-                 "type": "function",
-                 "function": {
-                   "name": "web_search",
-                   "arguments": "{\"query\": \"Python教程\"}"  // JSON 字符串
-                 }
-               }
-             ]
-           }
-
-        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        解析LiteLLM响应 → 标准化LLMResponse,本质就是一个提取返回对象的最底层的属性值的过程。
         """
         choice = response.choices[0]
         message = choice.message
@@ -239,5 +224,3 @@ class LiteLLMProvider(LLMProvider):
             usage=usage,
             reasoning_content=reasoning_content,
         )
-
-

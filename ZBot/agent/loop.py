@@ -72,6 +72,7 @@ class AgentLoop:
         cron_service: CronService | None = None,
         restrict_to_workspace: bool = False,
         mcp_servers: dict[str, Any] | None = None,
+        score_threshold: float = 0.75,
     ):
 
 
@@ -91,6 +92,7 @@ class AgentLoop:
         self.exec_config = exec_config or ExecToolConfig()
         self.cron_service = cron_service
         self.restrict_to_workspace = restrict_to_workspace
+        self.score_threshold = score_threshold
 
         # ==================== 核心组件 ====================
         # 上下文构造器：负责构建发送给模型的 messages 列表
@@ -392,109 +394,28 @@ class AgentLoop:
             )
             
         return final_content, tools_used, messages
-
-    async def close_mcp(self) -> None:
-        """关闭 MCP 连接栈并清理资源。"""
-        if not self._mcp_stack:
-            return
-        try:
-            await self._mcp_stack.aclose()
-        except BaseException as exc:
-            if not (isinstance(exc, RuntimeError) or exc.__class__.__name__ == "BaseExceptionGroup"):
-                raise
-        finally:
-            self._mcp_stack = None
-            self._mcp_connected = False
-
-    async def consolidate_all(self,session_name: str) -> None:
-        """对所有会话执行记忆归档，适用于定期维护或系统关闭前的清理。"""
-        session,is_load = await self.sessions.get_or_create(session_name)
-        await self.context.memory.consolidate(
-            session,
-            self.provider,
-            self.model,
-            memory_window=self.memory_window,
-            consolidate_all=True,
-        )
-        await self.sessions.save(session)
-
-    async def _process_message(
-        self,
-        content: str,
-        session_name: str,
-        on_progress: Callable[..., Awaitable[None]] | None = None,
-    ) -> str:
-        """处理单条消息，并返回最终回复"""
-        logger.info("正在处理消息：{}", content[:80] + "..." if len(content) > 80 else content)
-        session,is_load = await self.sessions.get_or_create(session_name)
-        if is_load:
-            logger.info("会话 '{}' 已加载，包含 {} 条历史消息", session_name, len(session.messages))
-            await self.context.memory.write_session_memory(session.memory_snapshot or "无记忆快照")
-
-        # 只有会话累计到一定长度时，才在后台触发会话记忆归档
-        self._schedule_consolidation(session)
-
-        # 执行实际的对话逻辑
-        final_content = await self._run_turn(
-            session,
-            content=content,
-            on_progress=on_progress,
-        )
-        preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
-        logger.info("回复：{}", preview)
-
-        return final_content
-
-    async def _run_turn(
-        self,
-        session: Session,
-        *,
-        content: str,
-        on_progress: Callable[..., Awaitable[None]] | None = None,
-    ) -> str:
-        """执行一轮标准对话：构造上下文、运行 agent_loop、写回会话。"""
-        # 从会话中获取历史消息列表
-        history = session.get_history(max_messages=self.memory_window)
-
-        # 构造完整的消息链
-        initial_messages = await self.context.build_messages(
-            history=history,
-            current_message=content,
-        )
-
-        # 执行 Agent 交互循环
-        final_content, tools_used, all_messages = await self._run_agent_loop(
-            initial_messages,
-            on_progress=on_progress,
-        )
-        final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
-
-        # 将本轮新增的消息写回会话
-        self._save_turn(session, all_messages, 1 + len(history), tools_used)
-        await self.sessions.save(session)
-        return final_content
-
+    
     def _schedule_consolidation(self, session: Session) -> None:
-        """当未归档消息达到阈值时，安排后台归档任务。"""
-        unconsolidated = len(session.messages) - session.last_consolidated
-        if unconsolidated < self.memory_window or self._is_consolidating:
-            return
+            """当未归档消息达到阈值时，安排后台归档任务。"""
+            unconsolidated = len(session.messages) - session.last_consolidated
+            if unconsolidated < self.memory_window or self._is_consolidating:
+                return
 
-        async def _run_consolidation() -> None:
-            """执行后台归档任务并确保状态回收。"""
-            try:
-                await self.context.memory.consolidate(
-                    session,
-                    self.provider,
-                    self.model,
-                    memory_window=self.memory_window,
-                )
-            finally:
-                self._is_consolidating = False
-        # 标记为正在归档
-        self._is_consolidating = True
-        # 创建异步任务执行归档
-        asyncio.create_task(_run_consolidation())
+            async def _run_consolidation() -> None:
+                """执行后台归档任务并确保状态回收。"""
+                try:
+                    await self.context.session_memory.consolidate(
+                        session,
+                        self.provider,
+                        self.model,
+                        memory_window=self.memory_window,
+                    )
+                finally:
+                    self._is_consolidating = False
+            # 标记为正在归档
+            self._is_consolidating = True
+            # 创建异步任务执行归档
+            asyncio.create_task(_run_consolidation())
 
 
     def _save_turn(
@@ -564,6 +485,101 @@ class AgentLoop:
             if message.get("role") == "assistant":
                 message["tools_used"] = unique_tools
                 return
+
+    async def close_mcp(self) -> None:
+        """关闭 MCP 连接栈并清理资源。"""
+        if not self._mcp_stack:
+            return
+        try:
+            await self._mcp_stack.aclose()
+        except BaseException as exc:
+            if not (isinstance(exc, RuntimeError) or exc.__class__.__name__ == "BaseExceptionGroup"):
+                raise
+        finally:
+            self._mcp_stack = None
+            self._mcp_connected = False
+
+    async def consolidate_all_session_memory(self,session_name: str) -> None:
+        """对所有会话执行记忆归档，适用于定期维护或系统关闭前的清理。"""
+        session,is_load = await self.sessions.get_or_create(session_name)
+        await self.context.session_memory.consolidate(
+            session,
+            self.provider,
+            self.model,
+            memory_window=self.memory_window,
+            consolidate_all=True,
+        )
+        await self.sessions.save(session)
+
+
+    async def consolidate_daily_memory(self,session_name: str) -> None:
+            """每次用户退出后，就进行一次日常记忆归档，把当前会话的记忆归档到日常记忆数据库"""
+            session,_ = await self.sessions.get_or_create(session_name)
+            consolidate_daily_memory_result = await self.context.daily_memory.add_daily_memory(self.provider, self.model, session)
+            if not consolidate_daily_memory_result:
+                logger.error("日常记忆归档失败")
+            else:
+                logger.info("日常记忆归档成功")
+
+
+
+
+    async def _process_message(
+        self,
+        content: str,
+        session_name: str,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+    ) -> str:
+        """处理单条消息，并返回最终回复"""
+        logger.info("正在处理消息：{}", content[:80] + "..." if len(content) > 80 else content)
+        session,is_load = await self.sessions.get_or_create(session_name)
+        if is_load:
+            logger.info("会话 '{}' 已加载，包含 {} 条历史消息", session_name, len(session.messages))
+            await self.context.session_memory.write_session_memory(session.memory_snapshot or "无记忆快照")
+
+        # 只有会话累计到一定长度时，才在后台触发会话记忆归档
+        self._schedule_consolidation(session)
+
+        # 执行实际的对话逻辑
+        final_content = await self._run_turn(
+            session,
+            content=content,
+            on_progress=on_progress,
+        )
+        preview = final_content[:120] + "..." if len(final_content) > 120 else final_content
+        logger.info("回复：{}", preview)
+
+        return final_content
+
+    async def _run_turn(
+        self,
+        session: Session,
+        *,
+        content: str,
+        on_progress: Callable[..., Awaitable[None]] | None = None,
+    ) -> str:
+        """执行一轮标准对话：构造上下文、运行 agent_loop、写回会话。"""
+        # 从会话中获取历史消息列表
+        history = session.get_history(max_messages=self.memory_window)
+
+        # 构造完整的消息链
+        initial_messages = await self.context.build_messages(
+            history=history,
+            user_message=content,
+            score_threshold=self.score_threshold,
+        )
+
+        # 执行 Agent 交互循环
+        final_content, tools_used, all_messages = await self._run_agent_loop(
+            initial_messages,
+            on_progress=on_progress,
+        )
+        final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
+
+        # 将本轮新增的消息写回会话
+        self._save_turn(session, all_messages, 1 + len(history), tools_used)
+        await self.sessions.save(session)
+        return final_content
 
 
 

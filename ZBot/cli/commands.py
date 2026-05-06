@@ -17,7 +17,7 @@ from rich.markdown import Markdown                      # Markdown 渲染
 
 from ZBot import __logo__, __version__                                   
 from ZBot.config.paths import  get_runtime_subdir     
-from ZBot.config.schema import Config                                    
+from ZBot.config.schema import Config                                   
 from ZBot.utils.helpers import ensure_workspace_dirs                    
 
 
@@ -87,14 +87,15 @@ async def _read_interactive_input_async() -> str:
         raise KeyboardInterrupt from exc
 
 
-def _make_provider(config: Config):
+def make_provider(config: Config):
     """创建 LLM 提供商实例。根据配置文件中选择的模型和提供商，创建对应的 LiteLLMProvider 实例。"""
     from ZBot.config.paths import get_config_path
     from ZBot.providers.litellm_provider import LiteLLMProvider
+    from pathlib import Path
 
-    config_path = get_config_path()                              
+    config_path: Path = get_config_path()                              
 
-    model = config.model                                         # 获取配置的模型名称
+    model: str = config.model                                         # 获取配置的模型名称
     if not model:
         console.print(f"[red]未填写模型名称，请到配置{config_path}中填写模型名称[/red]")
         raise typer.Exit(1)
@@ -124,8 +125,8 @@ def _make_provider(config: Config):
     return LiteLLMProvider(
         api_key=provider_config.api_key,      
         api_base=provider_config.api_base,     
-        default_model=model.split("/",1)[1] if is_gateway else model,   # 默认模型名称
-        provider_name=provider_name,                                    # 提供商名称
+        default_model=model.split("/",1)[1] if is_gateway else model,   # 默认模型名称 # type: ignore
+        provider_name=provider_name,                                    # 提供商名称 # type: ignore
     )
 
 
@@ -222,7 +223,7 @@ def agent(
         console.print("[red]错误：无法加载配置文件，请先运行 'python -m ZBot onboard' 来初始化配置。[/red]")
         raise typer.Exit(1)
     # 创建 LLM 提供商实例
-    provider = _make_provider(config)
+    provider = make_provider(config)
 
     # 定时任务执行回调
     from ZBot.agent.tools.cron import set_cron_context, reset_cron_context
@@ -250,6 +251,7 @@ def agent(
         reasoning_effort=config.reasoning_effort,   # 推理强度参数
         web_search_config=config.tools.web.search,  # 网页搜索配置
         web_proxy=config.tools.web.proxy or None,   # 网页代理
+        score_threshold=config.score_threshold,     # 记忆召回分数阈值
         exec_config=config.tools.exec,        # Shell 执行配置
         cron_service=cron,                    # 定时任务服务
         restrict_to_workspace=config.tools.restrict_to_workspace,  # 是否限制工作区
@@ -284,7 +286,8 @@ def agent(
             # 停止调度器并关闭 MCP 连接
             cron.stop()
             await agent_loop.close_mcp()
-            await agent_loop.consolidate_all(session_name=session_name) 
+            await agent_loop.consolidate_all_session_memory(session_name=session_name)
+            await agent_loop.consolidate_daily_memory(session_name=session_name) 
 
         asyncio.run(run_once())     
         return                      # 单次模式执行完毕直接返回
@@ -345,7 +348,8 @@ def agent(
         finally:
             cron.stop()
             await agent_loop.close_mcp()
-            await agent_loop.consolidate_all(session_name=session_name)  # 退出前进行最终的会话归档
+            await agent_loop.consolidate_all_session_memory(session_name=session_name)  # 退出前进行最终的会话归档
+            await agent_loop.consolidate_daily_memory(session_name=session_name) 
 
     asyncio.run(run_interactive())  # 启动交互循环
 
