@@ -40,26 +40,9 @@ class Session:
     messages: list[dict[str, Any]] = field(default_factory=list)    # 消息列表
     created_at: datetime = field(default_factory=datetime.now)      # 创建时间，打印才是年-月-日-时-分-秒，不然就是datatime对象，如果要保存不能用这个，必须在后面加isoformat（），变成字符串对象，保存
     updated_at: datetime = field(default_factory=datetime.now)      # 更新时间
-    last_consolidated: int = 0                                      # 已归档的消息索引（用于长期记忆）
+    last_consolidated: int = 0                                      # 已归档的消息索引（用于会话记忆）
+    memory_snapshot: str | None = None                              # 记忆快照（归档时保存的摘要信息）
 
-    def add_message(self, role: str, content: str, **kwargs: Any) -> None:
-        """
-        向会话追加消息。
-        Args:
-            role: 消息角色（"user"、"assistant"、"tool"）
-            content: 消息内容
-            **kwargs: 其他可选字段（如 tool_calls、tool_call_id 等）
-        """
-        self.messages.append(
-            {
-                "role": role,                              
-                "content": content,                         
-                "timestamp": datetime.now().isoformat(),    # 时间戳
-                **kwargs,                                  
-            }
-        )
-        # 更新最后修改时间
-        self.updated_at = datetime.now()
 
     def get_history(self, max_messages: int = 25) -> list[dict[str, Any]]:
         """返回历史消息列表（用于构造模型上下文）。"""
@@ -88,6 +71,7 @@ class Session:
         self.messages = []
         self.last_consolidated = 0
         self.updated_at = datetime.now()
+        self.memory_snapshot = None
 
 
 class SessionManager:
@@ -102,17 +86,20 @@ class SessionManager:
         self._cache: dict[str, Session] = {}
 
 
-    async def get_or_create(self, session_name: str) -> Session:
+    async def get_or_create(self, session_name: str) -> tuple[Session, bool]:
         """获取或创建会话。先从缓存查找，如果没有则从磁盘加载；如果磁盘上也没有，则创建一个新的空会话。"""
         session = self._cache.get(session_name)
         if session is None:
-            session = await self._load(session_name) or Session(session_name=session_name)
+            session = await self._load(session_name)
+            if session:
+                return session,True  #加载成功，返回会话和标记
+            session = Session(session_name=session_name)  # 创建新会话
             self._cache[session_name] = session
-        return session
+        return session,False  #返回会话和标记，标记为False表示新创建的会话
 
 
     async def save(self, session: Session) -> None:
-        """保存会话到磁盘。"""
+        """保存会话到磁盘,同一会话名字，都是追加写入。"""
         path: Path = self._session_path(session.session_name)
         lines: list[str] = [json.dumps(self._metadata_line(session), ensure_ascii=False)]
         lines.extend(json.dumps(message, ensure_ascii=False) for message in session.messages)
@@ -122,7 +109,10 @@ class SessionManager:
         #   2. to_thread 会从线程池取一个线程，在其中执行同步函数
         #   3. 主协程 await 等待线程完成，期间事件循环可处理其他协程
         #   4. 线程完成后返回结果，主协程继续执行
-        await asyncio.to_thread(path.write_text, "\n".join(lines) + "\n", encoding="utf-8")
+        def write_file():
+            with open(path, mode="a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        await asyncio.to_thread(write_file)
         self._cache[session.session_name] = session
 
 
@@ -138,7 +128,8 @@ class SessionManager:
             messages: list[dict[str, Any]] = []
             created_at: datetime | None = None
             updated_at: datetime | None = None
-            last_consolidated = 0
+            last_consolidated: int = 0
+            memory_snapshot: str | None = None
 
             # 逐行解析 JSONL 文件
             for line in content.splitlines():
@@ -151,6 +142,7 @@ class SessionManager:
                     created_at = self._parse_datetime(data.get("created_at"))
                     updated_at = self._parse_datetime(data.get("updated_at"))
                     last_consolidated = data.get("last_consolidated", 0)
+                    memory_snapshot = data.get("memory_snapshot")
                     continue
 
                 # 其他行是消息记录
@@ -164,6 +156,7 @@ class SessionManager:
                 created_at=created_at or now,
                 updated_at=updated_at or created_at or now,
                 last_consolidated=last_consolidated,
+                memory_snapshot=memory_snapshot,
             )
         except Exception as exc:
             logger.warning("加载会话失败 {}: {}", session_name, exc)
@@ -185,6 +178,7 @@ class SessionManager:
             "created_at": session.created_at.isoformat(),  # 创建时间
             "updated_at": session.updated_at.isoformat(),  # 更新时间
             "last_consolidated": session.last_consolidated,  # 归档索引
+            "memory_snapshot": session.memory_snapshot,  # 记忆快照
         }
 
     @staticmethod

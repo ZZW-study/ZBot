@@ -13,13 +13,9 @@ ZBot 技能文件夹极简校验工具。
 3. CI/CD 流程中自动化检查技能质量
 """
 
-# 导入正则表达式模块（用于技能名称格式校验）
 import re
-# 导入 sys 模块（用于命令行参数和程序退出）
 import sys
-# 导入 Path 类（用于跨平台的文件路径处理）
 from pathlib import Path
-# 导入 Optional 类型注解（表示值可以为 None）
 from typing import Optional
 
 # ========== PyYAML 依赖尝试导入 ==========
@@ -207,6 +203,26 @@ def _validate_description(description: str) -> Optional[str]:
         return f"描述过长（{len(trimmed)}个字符）。最大长度限制：1024个字符。"
     return None
 
+def _validate_requires(requires) -> Optional[str]:
+    """
+    校验 requires 字段。
+    要求它必须是字典，并且 bins/env 如果存在，必须是列表。
+    """
+    if requires is None:
+        return None
+
+    if not isinstance(requires, dict):
+        return "requires 必须是对象，例如 requires: { bins: [gh], env: [API_KEY] }"
+
+    bins = requires.get("bins")
+    if bins is not None and not isinstance(bins, list):
+        return "requires.bins 必须是列表"
+
+    env = requires.get("env")
+    if env is not None and not isinstance(env, list):
+        return "requires.env 必须是列表"
+
+    return None
 
 def validate_skill(skill_path):
     """
@@ -245,6 +261,11 @@ def validate_skill(skill_path):
     frontmatter, error = _load_frontmatter(frontmatter_text)
     if error:
         return False, error
+
+    # 校验 requires 字段
+    requires_error = _validate_requires(frontmatter.get("requires"))
+    if requires_error:
+        return False, requires_error
 
     # 校验不允许的配置项
     unexpected_keys = sorted(set(frontmatter.keys()) - ALLOWED_FRONTMATTER_KEYS)

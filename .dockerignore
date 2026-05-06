@@ -1,46 +1,13 @@
-# ============================================
-# Docker 忽略文件 - ZBot
-# ============================================
-
-# Python 缓存
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-
-# 虚拟环境
-venv/
-.venv/
-env/
-
-# IDE 配置
-.idea/
-.vscode/
-*.swp
-*.swo
-
-# Git
-.git/
+.git
 .gitignore
-
-# Docker
-Dockerfile
-docker-compose.yml
-.dockerignore
-
-# 测试
-tests/
-.pytest_cache/
-
-# 文档
-*.md
-docs/
-
-# 日志
-*.log
-logs/
-
-# 临时文件
-*.tmp
-.cache/
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+.mypy_cache
+.ruff_cache
+node_modules
+test-skills
+logo_for_ZBot.png

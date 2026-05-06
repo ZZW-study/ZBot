@@ -104,8 +104,3 @@ class LLMProvider(ABC):
     ) -> LLMResponse:
         """发送聊天请求并返回标准化响应。"""
         raise NotImplementedError
-
-    @abstractmethod
-    def get_default_model(self) -> str:
-        """返回当前提供商默认模型名。"""
-        raise NotImplementedError

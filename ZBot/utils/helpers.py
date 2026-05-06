@@ -1,15 +1,8 @@
-"""通用辅助函数。
-
-本模块提供一些零散但各处都会用到的工具函数，
-例如目录创建、文件名清理、工作区初始化等。
-"""
-
-from __future__ import annotations
-
+"""通用辅助函数模块。"""
 import re
 from pathlib import Path
-
-
+from typing import Any
+import json
 # 文件名中不允许出现的不安全字符（Windows/Unix 系统保留字符）
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')
 
@@ -23,31 +16,51 @@ def ensure_dir(path: Path) -> Path:
 
 
 def safe_filename(name: str) -> str:
-    """将文件名中的不安全字符替换为下划线。
-    某些字符（如 / \ ? * 等）在文件系统中是非法的，
-    此函数将这些字符替换为下划线，保证文件名可用。
-    参数：
-        name: 原始文件名
-
-    返回：
-        清理后的安全文件名
-    """
+    """将文件名中的不安全字符替换为下划线。"""
     # 用正则将所有不安全字符替换为下划线，并去除首尾空白
     return _UNSAFE_CHARS.sub("_", name).strip()
 
 
 def ensure_workspace_dirs(workspace: Path) ->None:
-    """创建工作区所需的必要目录。
-    在首次使用 ZBot 或新建工作区时，
-    需要创建 memory（记忆）、skills（技能）、sessions（会话）等目录。
-    """
-    # 创建工作区必须存在的目录列表
+    """创建工作区所需的必要目录。"""
     dirs = [
-        workspace / "memory",    # 长期记忆和归档目录
-        workspace / "skills",    # 自定义技能目录
-        workspace / "sessions",  # 会话历史记录目录
+        workspace / "memory",
+        workspace / "sessions",
+        workspace / "skills",
     ]
     for d in dirs:
-        # 目录不存在时创建
         if not d.exists():
-            d.mkdir(parents=True, exist_ok=True)
+            ensure_dir(d)
+
+def format_messages(messages: list[dict[str, Any]]) -> list[str]:
+    """把消息列表格式化成适合归档模型阅读的转录文本。每条消息的格式：[timestamp] ROLE[tools_used]: content"""
+    lines: list[str] = []
+    for message in messages:
+        content = message.get("content")
+        if not content:
+            continue  # 跳过空内容消息
+        # 获取使用的工具列表（如果有）
+        tools = message.get("tools_used") or []
+        tool_suffix = f" [使用工具: {','.join(tools)}]" if tools else ""
+        # 截取时间戳的前 16 个字符（YYYY-MM-DD HH:MM）
+        timestamp = str(message.get("timestamp", "?"))[:16]
+        # 构造格式化行：[2024-01-15 14:30] USER [使用工具: web_search]: 用户消息内容
+        lines.append(f"[{timestamp}] {message.get('role', 'unknown').upper()}{tool_suffix}: {content}")
+    return lines
+
+
+def normalize_tool_args(arguments: Any) -> dict[str, Any] | None:
+    """把模型返回的工具参数统一规整成字典。"""
+    # 如果是字符串，尝试 JSON 解析
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except json.JSONDecodeError:
+            return None
+
+    # 如果是列表，取第一个字典元素
+    if isinstance(arguments, list):
+        arguments = arguments[0] if arguments and isinstance(arguments[0], dict) else None
+
+    # 确保返回字典类型
+    return arguments if isinstance(arguments, dict) else None
