@@ -54,7 +54,6 @@ class ExecTool(Tool):
     ):
         """
         初始化 ExecTool 工具实例。
-
         Args:
             timeout: 默认命令执行超时时间（秒），默认 60 秒
             working_dir: 默认工作目录，None 表示使用当前进程目录
@@ -87,7 +86,11 @@ class ExecTool(Tool):
     @property
     def description(self) -> str:
         """返回 shell 执行工具说明。"""
-        return "执行 shell 命令并返回结果。使用前请确认命令安全且必要。"
+        return (
+            "执行 shell 命令并返回 stdout/stderr/退出码。"
+            "优先用于观察、搜索、测试、构建和状态检查；文件写入优先使用受控文件工具。"
+            "不要重复执行同一个失败命令，先根据错误调整参数或换更小的观察命令。"
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -97,11 +100,11 @@ class ExecTool(Tool):
             "properties": {
                 "command": {
                     "type": "string",  # command 参数必须是字符串
-                    "description": "要执行的 shell 命令。",
+                    "description": "要执行的 shell 命令。优先使用只读观察命令、测试命令或构建命令；高风险命令会被安全策略拦截。",
                 },
                 "working_dir": {
                     "type": "string",  # working_dir 参数可选，字符串类型
-                    "description": "可选。覆盖默认工作目录。",
+                    "description": "可选。覆盖默认工作目录；通常应保持在工作区内。",
                 },
                 "timeout": {
                     "type": "integer",  # timeout 参数可选，整数类型
@@ -164,6 +167,7 @@ class ExecTool(Tool):
         # 计算实际超时时间（不超过最大上限）
         effective_timeout = min(timeout or self.timeout, self._MAX_TIMEOUT)
 
+        process: asyncio.subprocess.Process | None = None
         try:
             # 使用 asyncio 异步创建子进程执行 shell 命令
             process = await asyncio.create_subprocess_shell(
@@ -181,12 +185,7 @@ class ExecTool(Tool):
                 )
             except asyncio.TimeoutError:
                 # 命令执行超时，强制终止进程
-                process.kill()
-                try:
-                    # 等待进程真正结束（最多等 5 秒）
-                    await asyncio.wait_for(process.wait(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    pass  # 进程可能已经结束，忽略超时
+                await self._terminate_process(process)
                 return format_tool_error(
                     f"命令执行超时（{effective_timeout} 秒）",
                     attempted=f"在 {cwd} 执行：{command}",
@@ -222,6 +221,11 @@ class ExecTool(Tool):
                 )
 
             return result
+        except asyncio.CancelledError:
+            # 用户中断或上层超时时，必须清理已启动的子进程，再把取消继续向上传播。
+            if process is not None:
+                await self._terminate_process(process)
+            raise
 
         except Exception as exc:
             # 捕获其他异常（如命令不存在、权限不足等）
@@ -231,6 +235,42 @@ class ExecTool(Tool):
                 do_not_repeat="不要用相同命令重复执行",
                 next_action="检查命令是否存在、工作目录是否正确，或改用更小的观察命令定位问题",
             )
+
+    @staticmethod
+    async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+        """终止 shell 子进程，避免取消/超时后留下孤儿命令。"""
+        if process.returncode is not None:
+            return
+        if os.name == "nt":
+            await ExecTool._terminate_windows_process_tree(process)
+            return
+        process.kill()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            pass
+
+    @staticmethod
+    async def _terminate_windows_process_tree(process: asyncio.subprocess.Process) -> None:
+        """在 Windows 上终止整棵进程树，避免 shell 再启动的子命令继续运行。"""
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill",
+            "/PID",
+            str(process.pid),
+            "/T",
+            "/F",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        try:
+            await asyncio.wait_for(killer.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            killer.kill()
+            await killer.wait()
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            process.kill()
 
     def _guard_command(self, command: str, cwd: str) -> str | None:
         """

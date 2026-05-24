@@ -3,85 +3,36 @@
 import difflib
 from pathlib import Path
 from typing import Any
-
+import aiofiles
 from ZBot.agent.tools.base import Tool, format_tool_error
-
-
-def _resolve_path(
-    path: str,
-    workspace: Path | None = None,
-    allowed_dir: Path | None = None,
-    extra_allowed_dirs: list[Path] | None = None,
-) -> Path:
-    """解析文件路径，确保在允许的目录范围内"""
-    # 将字符串路径转为 Path 对象，并展开 ~ 为家目录
-    p = Path(path).expanduser()
-    # 如果是相对路径且提供了工作区，则拼接工作区目录
-    if not p.is_absolute() and workspace:
-        p = workspace / p
-    # 解析为绝对路径（消除 .. 等相对符号）
-    resolved = p.resolve()
-
-    # 如果设置了允许访问的目录，则检查路径是否在其范围内
-    if allowed_dir:
-        # 合并主允许目录和额外允许目录
-        all_dirs = [allowed_dir] + (extra_allowed_dirs or [])
-        # 只要路径不在任何一个允许目录下，就拒绝访问
-        if not any(_is_under(resolved, d) for d in all_dirs):
-            raise PermissionError(f"路径 {path} 超出了允许访问的目录范围：{allowed_dir}")
-    return resolved
-
-
-def _is_under(path: Path, directory: Path) -> bool:
-    """判断 path 是否位于 directory 目录之下"""
-    try:
-        # 尝试计算 path 相对于 directory 的相对路径,path 必须是 directory 的子路径
-        path.relative_to(directory.resolve())
-        # 如果没抛异常，说明 path 在 directory 下面
-        return True
-    except ValueError:
-        # 抛出 ValueError 说明 path 不在 directory 的子树中
-        return False
-
-
-def _preview_dir(path: Path, limit: int = 8) -> str:
-    """返回目录下少量条目，给失败结果提供可行动线索。"""
-    if not path.exists() or not path.is_dir():
-        return ""
-    try:
-        names = sorted(item.name + ("/" if item.is_dir() else "") for item in path.iterdir())
-    except OSError:
-        return ""
-    if not names:
-        return "目录为空"
-    preview = ", ".join(names[:limit])
-    if len(names) > limit:
-        preview += f", ...（共 {len(names)} 项）"
-    return preview
-
-
-def _path_failure_hint(path: str, resolved: Path, *, expected: str, workspace: Path | None) -> str:
-    """为路径类失败生成观察信息。"""
-    parent = resolved.parent
-    parts = [
-        f"请求路径：{path}",
-        f"解析后路径：{resolved}",
-    ]
-    if workspace is not None:
-        parts.append(f"工作区：{workspace}")
-    parts.append(f"期望类型：{expected}")
-    if parent.exists():
-        parts.append(f"父目录存在：{parent}")
-        preview = _preview_dir(parent)
-        if preview:
-            parts.append(f"父目录条目预览：{preview}")
-    else:
-        parts.append(f"父目录不存在：{parent}")
-    return "；".join(parts)
+from ZBot.utils.helpers import resolve_path, path_failure_hint
 
 
 class ReadFileTool(Tool):
-    """读取文件内容"""
+    """读取指定路径的文件内容，返回带行号的文本。
+
+    核心用途：
+        已知文件路径时，读取文件的具体内容来理解上下文。
+        比如 grep_search 找到了某个函数在第 10 行，但你需要知道完整函数有多长、
+        前后逻辑是什么，就要用 read_file 把周围代码读出来。
+
+    典型使用场景：
+        - 读取某个已知路径的源代码文件，查看函数实现
+        - 配合 offset/limit 分页读取大文件（如日志、数据文件）
+        - 在 edit_file 之前，先 read_file 获取真实的 old_text，避免凭猜测编辑导致匹配失败
+        - 验证 edit_file 的修改结果：编辑后再 read_file 确认改动是否正确
+
+    分页机制：
+        - 默认读取前 2000 行（可通过 limit 参数调整）
+        - offset 指定从第几行开始读（1 索引）
+        - 返回内容超过 128,000 字符时自动截断
+        - 文件末尾会提示剩余行数和下次读取的 offset 值
+
+    与其他工具的协作关系：
+        - glob_search / grep_search 负责"找到文件在哪"，read_file 负责"读出文件内容"
+        - edit_file 需要 read_file 提供准确的 old_text，不能凭记忆或猜测构造
+        - list_dir 负责"看目录里有什么"，read_file 负责"看文件里写了什么"
+    """
 
     _MAX_CHARS = 128_000  # 返回内容的最大字符数，超出则截断.数字下划线写法,下划线只用来分隔数字、方便阅读，不影响数值大小
     _DEFAULT_LIMIT = 2000  # 默认读取行数
@@ -99,7 +50,10 @@ class ReadFileTool(Tool):
     @property
     def description(self) -> str:
         """返回读取文件工具说明。"""
-        return "读取文件内容。可使用 offset 和 limit 分页读取大文件。"
+        return (
+            "读取已知文件路径的内容，并返回带行号文本。"
+            "大文件用 offset/limit 分页；edit_file 前必须先 read_file 获取真实 old_text。"
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -107,9 +61,9 @@ class ReadFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "要读取的文件路径"},
-                "offset": {"type": "integer", "description": "起始行号（1 索引）", "minimum": 1},
-                "limit": {"type": "integer", "description": "最多读取的行数（默认 2000）", "minimum": 1},
+                "path": {"type": "string", "description": "要读取的文件路径。已知路径时直接读取；未知路径先用 list_dir 或搜索工具定位。"},
+                "offset": {"type": "integer", "description": "起始行号（1 索引）。继续读取大文件时使用工具返回提示里的下一个 offset。", "minimum": 1},
+                "limit": {"type": "integer", "description": "最多读取的行数（默认 2000）。读取局部上下文时设置较小值。", "minimum": 1},
             },
             "required": ["path"],
         }
@@ -121,13 +75,13 @@ class ReadFileTool(Tool):
             path: str = kwargs.get("path", "")
             offset: int = kwargs.get("offset", 1)
             limit = kwargs.get("limit", None)
-            fp = _resolve_path(path, self._workspace, self._allowed_dir)
+            fp = resolve_path(path, self._workspace, self._allowed_dir)
             # 检查文件是否存在
             if not fp.exists():
                 return format_tool_error(
                     "文件不存在",
                     attempted=f"读取文件 {path}",
-                    observed=_path_failure_hint(path, fp, expected="文件", workspace=self._workspace),
+                    observed=path_failure_hint(path, fp, expected="文件", workspace=self._workspace),
                     do_not_repeat=f"不要继续用相同路径调用 read_file：{path}",
                     next_action=f"先调用 list_dir 查看父目录：{fp.parent}",
                 )
@@ -137,13 +91,15 @@ class ReadFileTool(Tool):
                 return format_tool_error(
                     "目标不是文件",
                     attempted=f"读取文件 {path}",
-                    observed=_path_failure_hint(path, fp, expected="文件", workspace=self._workspace),
+                    observed=path_failure_hint(path, fp, expected="文件", workspace=self._workspace),
                     do_not_repeat=f"不要继续用 read_file 读取该路径：{path}",
                     next_action=next_action,
                 )
 
             # 读取文件全部行
-            all_lines = fp.read_text(encoding="utf-8").splitlines()   
+            async with aiofiles.open(fp, mode="r", encoding="utf-8") as f:
+                content = await f.read()
+            all_lines = content.splitlines()
             # fp.read_text(encoding="utf-8")
             # 打开文件 fp
             # 以 UTF-8 编码读取全部内容
@@ -213,7 +169,23 @@ class ReadFileTool(Tool):
 
 
 class WriteFileTool(Tool):
-    """写入文件"""
+    """将指定内容写入文件，如果文件不存在则自动创建，包括所有缺失的父目录。
+
+    核心用途：
+        创建新文件或覆盖已有文件的全部内容。
+        适合从零生成代码、配置文件、文档等场景。
+
+    典型使用场景：
+        - 从零创建一个新的源代码文件
+        - 生成配置文件（如 .json、.yaml、.env）
+        - 将分析结果或生成的内容写入文件
+        - 覆盖已有文件的全部内容（注意：是全量覆盖，不是追加）
+
+    与其他工具的协作关系：
+        - 如果只想修改文件中的某段代码，应该用 edit_file 而不是 write_file
+        - 写入后可以用 read_file 验证内容是否正确
+        - 如果不确定文件是否存在，可以先 list_dir 查看目录，或直接 write_file（会自动创建）
+    """
 
     def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
         """初始化写入工具的工作区和访问边界。"""
@@ -228,7 +200,10 @@ class WriteFileTool(Tool):
     @property
     def description(self) -> str:
         """返回写入文件工具说明。"""
-        return "将内容写入文件，自动创建父目录。"
+        return (
+            "创建新文件或覆盖写入整个小文件，会自动创建父目录。"
+            "局部修改已有文件优先用 edit_file；覆盖前要确认这是预期行为。"
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -236,8 +211,8 @@ class WriteFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "要写入的文件路径"},
-                "content": {"type": "string", "description": "要写入的内容"},
+                "path": {"type": "string", "description": "要写入的文件路径。文件已存在时会整体覆盖。"},
+                "content": {"type": "string", "description": "要写入的完整文件内容，不是局部补丁。"},
             },
             "required": ["path", "content"],
         }
@@ -248,11 +223,14 @@ class WriteFileTool(Tool):
         content = kwargs.get("content", "")
         try:
             # 解析路径(包含了文件)并检查是否在允许范围内
-            fp = _resolve_path(path, self._workspace, self._allowed_dir)
+            fp = resolve_path(path, self._workspace, self._allowed_dir)
             # 自动创建所有缺失的父目录
             fp.parent.mkdir(parents=True, exist_ok=True)
             # 写入文件内容, write_text() 会自动创建不存在的文件。只会创建文件本身，不会自动创建父级文件夹
-            fp.write_text(content, encoding="utf-8")
+            async with aiofiles.open(fp, mode="w", encoding="utf-8") as f:
+                await f.write(content)
+
+
             return f"已成功写入文件：{fp}（共 {len(content)} 个字符）"
         except PermissionError as e:
             return format_tool_error(
@@ -301,8 +279,48 @@ def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
     return None, 0  # 未找到匹配
 
 
+
+
+"""根据用户输入决定从哪里开始
+用户给了明确文件路径，比如"改 src/auth.py 里的 foo 函数"：
+read_file → edit_file → read_file 验证
+不需要搜索，直接读取修改。
+用户给了函数名但没给文件，比如"把 foo 函数替换成这个"：
+grep_search("def foo") → read_file → edit_file → read_file 验证
+先用 grep 找到 foo 在哪个文件哪一行，再读取完整内容，再替换。
+用户给了文件名模式，比如"找所有 auth 相关文件"：
+glob_search("**/*auth*") → read_file
+按文件名找，不需要 grep。
+用户只给了业务描述，比如"帮我改登录过期逻辑"：
+list_dir → glob_search("**/*login*") → grep_search("expire|token") → read_file → edit_file → 验证
+从完全不了解项目开始，一步步缩小范围。
+
+最重要的三个原则
+
+grep 找到位置后，必须先 read_file，不能直接 edit。因为 grep 只返回匹配的那一行，不知道完整函数有多长，直接改会破坏代码。
+edit_file 的 old_text 必须来自 read_file 读到的真实内容，不能自己构造，否则容易匹配失败或误替换。
+glob 不是 grep 的前置步骤，它们是两个独立维度：glob 按文件名找，grep 按内容找。grep 本身就支持 glob 参数来缩小搜索范围，不一定要单独先调用 glob_search。"""
+
+
+
 class EditFileTool(Tool):
-    """编辑文件（查找并替换文本）"""
+    """在文件中查找指定的旧文本并替换为新文本，实现精确的局部编辑。
+
+    核心用途：
+        只修改文件中的某一段内容，而不是覆盖整个文件。
+        比如改一个函数名、替换一段逻辑、修复一个 bug，都只需要改局部代码。
+
+    典型使用场景：
+        - 修改函数实现：把旧的函数体替换为新的
+        - 重命名变量/函数：在文件中批量替换某个标识符
+        - 修复 bug：把错误的代码行替换为正确的
+        - 添加/修改 import 语句、配置项等
+
+    与其他工具的协作关系：
+        - edit_file 的 old_text 来自 read_file 的返回结果，这是铁律
+        - 如果需要全量重写文件（改动超过 50%），用 write_file 更合适
+        - 编辑后建议 read_file 验证修改结果
+    """
 
     def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
         """初始化编辑工具的工作区和访问边界。"""
@@ -317,7 +335,11 @@ class EditFileTool(Tool):
     @property
     def description(self) -> str:
         """返回编辑文件工具说明。"""
-        return "编辑文件，将 old_text 替换为 new_text。支持轻微的空白差异。设置 replace_all=true 可替换所有出现。"
+        return (
+            "局部编辑文件，将 old_text 替换为 new_text。"
+            "old_text 必须来自 read_file 返回的真实文本；不要凭记忆构造。"
+            "出现多处匹配时补充上下文，或明确设置 replace_all=true。"
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -325,10 +347,10 @@ class EditFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "要编辑的文件路径"},
-                "old_text": {"type": "string", "description": "要查找并替换的文本"},
-                "new_text": {"type": "string", "description": "替换成的新文本"},
-                "replace_all": {"type": "boolean", "description": "是否替换所有出现（默认 false）"},
+                "path": {"type": "string", "description": "要编辑的文件路径。编辑前先 read_file 确认当前内容。"},
+                "old_text": {"type": "string", "description": "要查找并替换的原文片段，必须复制自 read_file 的真实内容。"},
+                "new_text": {"type": "string", "description": "替换后的新文本，只包含要替换进去的片段。"},
+                "replace_all": {"type": "boolean", "description": "是否替换所有出现（默认 false）。不确定时保持 false 并补充 old_text 上下文。"},
             },
             "required": ["path", "old_text", "new_text"],
         }
@@ -344,19 +366,20 @@ class EditFileTool(Tool):
 
         try:
             # 解析路径并检查是否在允许范围内
-            fp = _resolve_path(path, self._workspace, self._allowed_dir)
+            fp = resolve_path(path, self._workspace, self._allowed_dir)
             # 检查文件是否存在
             if not fp.exists():
                 return format_tool_error(
                     "文件不存在",
                     attempted=f"编辑文件 {path}",
-                    observed=_path_failure_hint(path, fp, expected="文件", workspace=self._workspace),
+                    observed=path_failure_hint(path, fp, expected="文件", workspace=self._workspace),
                     do_not_repeat=f"不要继续编辑不存在的路径：{path}",
                     next_action=f"先调用 list_dir 查看父目录：{fp.parent}",
                 )
 
             # 以二进制读取，返回字节串（bytes），检测换行符类型（CRLF 还是 LF）
-            raw = fp.read_bytes()
+            async with aiofiles.open(fp, mode="rb") as f:
+                raw = await f.read()
             uses_crlf = b"\r\n" in raw  # Windows 换行符
             # 统一转为 LF 处理
             content = raw.decode("utf-8").replace("\r\n", "\n")
@@ -440,7 +463,22 @@ class EditFileTool(Tool):
 
 
 class ListDirTool(Tool):
-    """列出目录内容"""
+    """列出指定目录下的文件和子目录，帮助了解项目结构。
+
+    核心用途：
+        查看某个目录下有哪些文件和文件夹，相当于在文件管理器中打开一个目录。
+        当你完全不了解项目结构时，这是第一个应该使用的工具。
+
+    典型使用场景：
+        - 初次接触项目时，用 list_dir 查看根目录，了解整体结构
+        - 不确定某个文件在哪个子目录时，逐层 list_dir 缩小范围
+        - 确认某个目录下是否有目标文件，再用 read_file 读取
+
+    与其他工具的协作关系：
+        - list_dir 负责"看有什么"，read_file 负责"看内容"，grep_search 负责"按内容找"
+        - 通常的探索流程：list_dir 了解结构 → 缩小范围 → read_file / grep_search 定位具体内容
+        - 如果知道文件名模式（如 *.py），直接用 glob_search 更高效
+    """
 
     _DEFAULT_MAX = 200  # 默认最多返回条目数
     # 需要忽略的噪声目录（版本控制、缓存、虚拟环境等）
@@ -463,7 +501,10 @@ class ListDirTool(Tool):
     @property
     def description(self) -> str:
         """返回列目录工具说明。"""
-        return "列出目录内容。设置 recursive=true 可递归显示。常见噪声目录会被自动忽略。"
+        return (
+            "列出目录内容，用于了解项目结构或确认路径是否存在。"
+            "设置 recursive=true 可递归显示；常见缓存和依赖目录会被自动忽略。"
+        )
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -471,9 +512,9 @@ class ListDirTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "要列出的目录路径"},
-                "recursive": {"type": "boolean", "description": "是否递归列出（默认 false）"},
-                "max_entries": {"type": "integer", "description": "最多返回的条目数（默认 200）", "minimum": 1},
+                "path": {"type": "string", "description": "要列出的目录路径。路径不存在时先列父目录定位。"},
+                "recursive": {"type": "boolean", "description": "是否递归列出（默认 false）。项目很大时优先 false，再逐层缩小范围。"},
+                "max_entries": {"type": "integer", "description": "最多返回的条目数（默认 200）。结果截断时缩小目录或提高上限。", "minimum": 1},
             },
             "required": ["path"],
         }
@@ -488,13 +529,13 @@ class ListDirTool(Tool):
 
         try:
             # 解析路径并检查是否在允许范围内
-            dp = _resolve_path(path, self._workspace, self._allowed_dir)
+            dp = resolve_path(path, self._workspace, self._allowed_dir)
             # 检查目录是否存在
             if not dp.exists():
                 return format_tool_error(
                     "目录不存在",
                     attempted=f"列出目录 {path}",
-                    observed=_path_failure_hint(path, dp, expected="目录", workspace=self._workspace),
+                    observed=path_failure_hint(path, dp, expected="目录", workspace=self._workspace),
                     do_not_repeat=f"不要继续用相同路径调用 list_dir：{path}",
                     next_action=f"先列出存在的父目录：{dp.parent}",
                 )
@@ -504,7 +545,7 @@ class ListDirTool(Tool):
                 return format_tool_error(
                     "目标不是目录",
                     attempted=f"列出目录 {path}",
-                    observed=_path_failure_hint(path, dp, expected="目录", workspace=self._workspace),
+                    observed=path_failure_hint(path, dp, expected="目录", workspace=self._workspace),
                     do_not_repeat=f"不要继续用 list_dir 读取该路径：{path}",
                     next_action=next_action,
                 )

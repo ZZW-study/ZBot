@@ -7,10 +7,12 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from loguru import logger
 
+from ZBot.agent.tools.base import format_tool_error
 from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.providers.base import LLMProvider
 from ZBot.agent.tools.registry import ToolRegistry 
 from ZBot.agent.base_agent import BaseAgent
+from ZBot.providers.base import ToolCallRequest
 
 
 
@@ -112,6 +114,43 @@ class SubAgent(BaseAgent):
             progress_label=subtask_id,
         )
         return final_content or "子agent已完成处理，但没有需要额外返回的内容。"
+
+
+    async def approve_tool_call(self, tool_call: ToolCallRequest) -> str | None:
+        """限制子 Agent 的 exec 写入动作，保留只读观察、测试和构建能力。"""
+        if tool_call.name != "exec":
+            return None
+
+        command = str(tool_call.arguments.get("command", "")).strip()
+        if not command:
+            return None
+        if not self._looks_like_shell_write(command):
+            return None
+
+        return format_tool_error(
+            "子 Agent 的 exec 写入类命令被运行时策略拦截",
+            attempted=f"子 Agent 请求执行：{command}",
+            observed="子 Agent 是一次性执行单元，只能通过普通观察命令收集信息；文件写入、删除、移动、安装和重定向写入由主 Agent 负责",
+            do_not_repeat="不要继续用 exec 执行写入、删除、移动、安装或重定向写入命令",
+            next_action="改用只读命令获取证据，并把需要主 Agent 修改的内容写入子任务结果",
+        )
+
+
+    @staticmethod
+    def _looks_like_shell_write(command: str) -> bool:
+        """粗粒度识别 shell 写入/破坏性动作，作为子 Agent exec 审批的硬边界。"""
+        import re
+
+        lower = command.lower()
+        write_patterns = [
+            r"(?:^|[;&|]\s*)(set-content|add-content|out-file|new-item|remove-item|move-item|copy-item|rename-item|tee-object)\b",
+            r"(?:^|[;&|]\s*)(sc|ac|ni|ri|mi|cpi|copy|xcopy|robocopy|del|erase|rm|rmdir|mkdir|md|mv|cp)\b",
+            r"(?:^|[;&|]\s*)(pip|uv|npm|pnpm|yarn|bun)\s+(install|add|remove|uninstall|update)\b",
+            r"(?:^|[;&|]\s*)(git)\s+(commit|push|pull|merge|rebase|checkout|reset|clean|apply|am|stash)\b",
+            r"(?:^|[;&|]\s*)(python|py|node|powershell|pwsh)\b[\s\S]*(?:write_text|write_bytes|writealltext|writeallbytes|set-content|out-file|open\s*\([^)]*['\"]w|remove\s*\(|unlink\s*\(|rename\s*\(|shutil\.rmtree)",
+            r"(?<![<])>>?(?![>&])",
+        ]
+        return any(re.search(pattern, lower) for pattern in write_patterns)
     
     @classmethod
     def _subagent_rules(cls) -> str:
