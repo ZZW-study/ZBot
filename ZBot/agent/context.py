@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo   # 用于时区处理（北京时间）
 from ZBot.memory.session_memory import SessionMemoryStore
 from ZBot.memory.daily_memory import daily_memory_store
 from ZBot.memory.long_term_memory import long_term_memory_store
-from ZBot.agent.skills import SkillsLoader      
+from ZBot.agent.skills_load import SkillCatalog
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -24,7 +24,7 @@ class ContextBuilder:
     负责构建 system prompt 与当前轮消息列表。
     """
     # 模板文件列表：这些文件从包内 templates 目录读取，拼进 system prompt
-    BOOTSTRAP_FILES = ["AGENTS.md", "SOUL.md", "USER.md", "TOOLS.md"]
+    BOOTSTRAP_FILES = ["SOUL.md", "AGENTS.md", "TOOLS.md", "MEMORY.md", "USER.md"]
 
     # 运行时上下文标签：用于标记那些只对当前轮推理有意义的元信息（如当前时间）
     # 在保存历史时会被剥离，避免污染会话记忆
@@ -41,7 +41,7 @@ class ContextBuilder:
         self.session_memory = SessionMemoryStore(workspace)
         self.daily_memory = daily_memory_store
         self.long_term_memory = long_term_memory_store
-        self.skills = SkillsLoader(workspace=workspace)
+        self.skills = SkillCatalog(workspace=workspace)
 
 
     def add_assistant_message(
@@ -145,7 +145,7 @@ class ContextBuilder:
 
         # 注入技能目录（catalog），告诉模型"当前有哪些技能可用"。
         # 模型会根据摘要自行决定是否需要读取某个技能的详细内容。
-        skills_catalog = self.skills.build_catalog_for_prompt()
+        skills_catalog = await self.skills.build_catalog_for_prompt()
         if skills_catalog:
             parts.append(f"# 技能目录\n\n{skills_catalog}")
 
@@ -295,22 +295,14 @@ class ContextBuilder:
         runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}，Python {platform.python_version()}"
 
         return (
-            "# ZBot\n"
-            "你是 ZBot，一名可靠、直接、善于执行的 AI 助手。\n\n"
-            "## 运行环境\n"
+            "# 运行环境\n"
             f"{runtime}\n\n"  # 插入运行环境信息
             "## 工作区\n"
             f"你的工作区位于：{self.workspace}\n"
             f"- 会话记忆文件：{self.workspace}/memory/SESSION_MEMORY.md\n"
             f"- 日常记忆数据库：{self.workspace}/memory/DAILY_MEMORY.db\n"
             f"- 长期记忆文件：{self.workspace}/memory/LONG_TERM_MEMORY.md\n"
-            "## 行为准则\n"
-            "- 在调用工具前先说明你准备做什么，但不要在拿到结果前声称已经完成。\n"   
-            "- 编辑文件前先读取文件内容。\n"                                     
-            "- 涉及准确性的改动，编辑后要重新检查关键文件。\n"                     
-            "- 工具失败时，先分析错误原因，再决定是否换一条路径。\n"              
-            "- 当用户意图确实存在歧义时，再提出澄清问题。\n\n"                     
-            "- 普通对话时，直接给出自然语言回复即可。"                                
+            f"- 任务进度文件：{self.workspace}/memory/TASK_PROGRESS.md"
         )
 
     def _bootstrap_prompt(self) -> str:

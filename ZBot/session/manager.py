@@ -82,11 +82,13 @@ class Session:
             total_chars += len(str(message["tool_call_id"]))
         return max(1, total_chars // 2)
 
+
     @staticmethod
     def _trim_to_first_user(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """历史上下文从第一条 user 消息开始，避免 assistant/tool 无来源地开头。"""
         first_user = next((index for index, message in enumerate(messages) if message.get("role") == "user"), None)
         return messages[first_user:] if first_user is not None else messages
+
 
     @staticmethod
     def _drop_unpaired_tool_prefix(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -94,6 +96,7 @@ class Session:
         while messages and messages[0].get("role") == "tool":
             messages = messages[1:]
         return messages
+
 
     @staticmethod
     def _history_entry(message: dict[str, Any]) -> dict[str, Any]:
@@ -103,6 +106,7 @@ class Session:
             if field_name in message:
                 entry[field_name] = message[field_name]
         return entry
+
 
 
 class SessionManager:
@@ -142,7 +146,7 @@ class SessionManager:
         #   4. 线程完成后返回结果，主协程继续执行
         def write_file():
             """在线程池中把会话内容追加写入磁盘。"""
-            with open(path, mode="a", encoding="utf-8") as f:
+            with path.open("w", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
         await asyncio.to_thread(write_file)
         self._cache[session.session_name] = session

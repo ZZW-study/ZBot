@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import aiosqlite
 import sqlite_vec
 from sqlite_vec import serialize_float32
@@ -7,17 +9,11 @@ import asyncio
 from typing import Any, TYPE_CHECKING,Optional
 from ZBot.utils.helpers import normalize_tool_args, format_messages,ensure_dir
 from loguru import logger
-from langchain_community.embeddings import HuggingFaceEmbeddings
 from ZBot.config.schema import Config
 
 if TYPE_CHECKING:
     from ZBot.providers.base import LLMProvider
     from ZBot.session.manager import Session
-
-# 第一次启动时，会从网上下载模型（Windows:C:\Users\<你的用户名>\.cache\huggingface\hub），后面导入的话会从本地缓存加载，程序关闭，缓存清除，程序重启后
-# 后面每次启动程序都要重新加载进内存，这是无法避免的。
-embeddings = HuggingFaceEmbeddings(model_name="BAAI/bge-base-zh", model_kwargs={"device": "cpu"})
-
 
 async def get_db(workspace_path: Path) -> aiosqlite.Connection:
     """获取 SQLite 数据库连接，数据库文件位于工作区的 memory 目录下。"""
@@ -98,17 +94,16 @@ _SAVE_DAILY_MEMORY_TOOL = [
 class DailyMemoryStore:
     """每日记忆存储类，负责管理每日记忆的数据库操作。"""
     _instance : Optional["DailyMemoryStore"] = None
-    db: aiosqlite.Connection
+    db: aiosqlite.Connection | None
+    _embeddings: Any | None
 
     def __new__(cls,workspace_path: Path):
         """创建或复用每日记忆存储单例。"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
-            async def create_db(workspace_path: Path):
-                """初始化每日记忆数据库连接和表结构。"""
-                db: aiosqlite.Connection = await get_db(workspace_path)
-                await init_db(db)
-            asyncio.run(create_db(workspace_path)) 
+            cls._instance.workspace_path = workspace_path
+            cls._instance.db = None
+            cls._instance._embeddings = None
         return cls._instance
 
 
@@ -123,6 +118,7 @@ class DailyMemoryStore:
 
         daily_memory.id == daily_memory_vector.rowid
         """
+        db = await self._ensure_db()
         content = await self._generate_daily_memory_text(provider, model, session)
         if not content:
             return False
@@ -131,7 +127,7 @@ class DailyMemoryStore:
         vector_blob = serialize_float32(vector)
 
         try:
-            cursor = await self.db.execute(
+            cursor = await db.execute(
                 """
                 INSERT INTO daily_memory (session_name, content)
                 VALUES (?, ?)
@@ -140,13 +136,13 @@ class DailyMemoryStore:
             )
 
             memory_id = cursor.lastrowid
-            # 关闭 cursor连接以释放资源，虽然 aiosqlite 会在 commit/rollback 时自动关闭，但这里提前关闭更清晰。
+            # 关闭 cursor 连接以释放资源，虽然 aiosqlite 会在 commit/rollback 时自动关闭，但这里提前关闭更清晰。
             await cursor.close()
 
             if memory_id is None:
                 raise RuntimeError("插入 daily_memory 后没有拿到 id")
 
-            await self.db.execute(
+            await db.execute(
                 """
                 INSERT INTO daily_memory_vector (rowid, vector)
                 VALUES (?, ?)
@@ -154,11 +150,11 @@ class DailyMemoryStore:
                 (memory_id, vector_blob),
             )
 
-            await self.db.commit()
+            await db.commit()
             return True
 
         except Exception:
-            await self.db.rollback()
+            await db.rollback()
             raise
     
 
@@ -178,18 +174,19 @@ class DailyMemoryStore:
         λ = 0.12（衰减速度，可调）
         days_alive = 当前时间距离 created_at 的天数
         """
+        db = await self._ensure_db()
         try:
-            await self.db.execute(
+            await db.execute(
                 """
                 DELETE FROM daily_memory
                 JOIN daily_memory_vector ON daily_memory.id = daily_memory_vector.rowid
                 WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) < ?
                 """,(decay_rate, obsolete_score_threshold)
             )
-            await self.db.commit()
+            await db.commit()
             return True
         except Exception:
-            await self.db.rollback()
+            await db.rollback()
             raise Exception("淘汰过时日常记忆失败")
 
 
@@ -200,8 +197,9 @@ class DailyMemoryStore:
         λ = 0.12（衰减速度，可调）
         days_alive = 当前时间距离 created_at 的天数
         """
+        db = await self._ensure_db()
         try:
-            cursor = await self.db.execute(
+            cursor = await db.execute(
                 """
                 SELECT session_name, content
                 FROM daily_memory
@@ -212,18 +210,18 @@ class DailyMemoryStore:
             await cursor.close()
             # 这里可以把 results 直接返回给调用者让它们自己处理。
             # 迁移完成后再删除这些记录。
-            await self.db.execute(
+            await db.execute(
                 """
                 DELETE FROM daily_memory
                 JOIN daily_memory_vector ON daily_memory.id = daily_memory_vector.rowid
                 WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) >= ?
                 """,(decay_rate, evolve_score_threshold)
             )
-            await self.db.commit()
+            await db.commit()
             return [dict(result) for result in results]
         
         except Exception:
-            await self.db.rollback()
+            await db.rollback()
             raise Exception("升级有价值日常记忆失败")
 
 
@@ -241,7 +239,7 @@ class DailyMemoryStore:
                         "content": (
                             "你是日常记忆提取助手，负责从对话中提取跨会话可复用的通用信息。\n"
                             "⚠️ 必须调用 save_daily_memory 工具返回结果。\n"
-                            "只提取跨会话通用信息，不提取当前会话专属信息。"
+                            "只提取跨会话可复用信息，不提取当前会话专属状态。"
                         ),
                     },
                     {"role": "user", "content": prompt},
@@ -275,10 +273,16 @@ class DailyMemoryStore:
 
             "【提取范围】\n"
             "- 用户偏好：编码风格、语言习惯、工作习惯、输出格式要求\n"
-            "- 通用知识：工具使用方法、最佳实践、踩坑经验、技术结论\n"
-            "- 任务状态：跨会话的长期任务及其进度\n\n"
+            "- 用户背景：用户稳定的人设、职业背景、技术栈偏好、值得长期参考的个人细节\n"
+            "- 协作方式：用户对助手行为的稳定期待、工作风格偏好、希望的协作模式\n"
+            "- 通用知识：未来会复用的工具用法、最佳实践、踩坑经验、技术结论\n"
+            "- 长期任务线索：跨会话仍需继续关注的任务及其当前状态\n\n"
 
-            "【不提取】当前会话专属信息（项目临时配置、本次会话的临时约定）—— 由会话记忆处理\n\n"
+            "【不提取】\n"
+            "- 当前会话专属信息：项目临时配置、本次临时约定、当前上下文压缩进度\n"
+            "- 可从仓库重新推导的普通代码细节\n"
+            "- 一次性工具输出、失败流水、未经确认的猜测\n"
+            "- 已经出现在已有记忆快照里的重复内容\n\n"
 
             "【输出格式】直接使用此结构，不要加 Markdown 标记：\n"
             "【事实】\n"
@@ -297,17 +301,19 @@ class DailyMemoryStore:
 
     async def _generate_daily_memory_vec(self, content: str) -> list[float]:
         """生成每日记忆的向量表示。"""
-        return embeddings.embed_query(content)
+        embeddings = self._get_embeddings()
+        return await asyncio.to_thread(embeddings.embed_query, content)
 
     async def _retrieve_daily_memory(self, user_content: str, score_threshold: float = 0.75) -> list[dict[str, Any]]:
         """
         基于向量相似度检索相关的每日记忆记录，并返回文本内容。
         """
+        db = await self._ensure_db()
         user_content_embeddings = serialize_float32(
             await self._generate_daily_memory_vec(user_content.strip())
         )
 
-        cursor = await self.db.execute(
+        cursor = await db.execute(
             """
             WITH ranked AS(
                 SELECT rowid, distance
@@ -337,7 +343,7 @@ class DailyMemoryStore:
             for result in results:
                 # sqlite-vec 返回的 distance 是余弦距离，需要转换成相似度
                 id = result["id"]
-                await self.db.execute(
+                await db.execute(
                     """
                     UPDATE daily_memory
                     SET recall_count = recall_count + 1
@@ -353,12 +359,30 @@ class DailyMemoryStore:
                     }
                 )
 
-            await self.db.commit()
+            await db.commit()
             return memories
 
         except Exception:
-            await self.db.rollback()
+            await db.rollback()
             raise
+
+    async def _ensure_db(self) -> aiosqlite.Connection:
+        """懒初始化日常记忆数据库，避免 import 阶段运行异步初始化。"""
+        if self.db is None:
+            self.db = await get_db(self.workspace_path)
+            await init_db(self.db)
+        return self.db
+
+    def _get_embeddings(self) -> Any:
+        """懒加载 HuggingFace embedding，避免启动时就下载或占用内存。"""
+        if self._embeddings is None:
+            from langchain_community.embeddings import HuggingFaceEmbeddings
+
+            self._embeddings = HuggingFaceEmbeddings(
+                model_name="BAAI/bge-base-zh",
+                model_kwargs={"device": "cpu"},
+            )
+        return self._embeddings
     
 
 # 全局单例

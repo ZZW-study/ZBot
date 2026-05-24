@@ -1,35 +1,36 @@
 ---
 name: memory
-description: 基于 grep 检索的双层记忆系统
+description: "由 Dream 管理知识文件的双层记忆系统。"
+always: true
 ---
 
-# 记忆系统
+# 记忆
 
 ## 结构
 
-- `memory/MEMORY.md` — 长期事实记忆（用户偏好、项目上下文、关联关系）。会始终加载到上下文里。
-- `memory/HISTORY.md` — 只追加不修改的事件日志。**不会**加载到上下文。可通过 grep 类工具或内存过滤器进行检索。每条记录以 `[YYYY-MM-DD HH:MM]` 开头。
+- `SOUL.md`：Bot 的人格和沟通风格。**由 Dream 管理。**不要编辑。
+- `USER.md`：用户画像和偏好。**由 Dream 管理。**不要编辑。
+- `memory/MEMORY.md`：长期事实（项目上下文、重要事件）。**由 Dream 管理。**不要编辑。
+- `memory/history.jsonl`：只追加写入的 JSONL，不会加载进上下文。搜索时优先使用内置 `grep` 工具。
 
-## 检索历史事件
+## 搜索过去事件
 
-根据文件大小选择检索方式：
+`memory/history.jsonl` 是 JSONL 格式，每一行都是一个 JSON 对象，包含 `cursor`、`timestamp`、`content`。
 
-- 小型 `memory/HISTORY.md`：使用 `read_file` 读取后在内存中检索
-- 大型或长期使用的 `memory/HISTORY.md`：使用 `exec` 工具进行精准检索
+- 大范围搜索时，先用 `grep(..., path="memory", glob="*.jsonl", output_mode="count")` 或默认的 `files_with_matches` 模式，再决定是否展开完整内容。
+- 需要精确匹配行时，使用 `output_mode="content"`，并配合 `context_before` / `context_after`。
+- 搜索字面量时间戳或 JSON 片段时，使用 `fixed_strings=true`。
+- 历史很长时，使用 `head_limit` / `offset` 分页。
+- 只有内置搜索表达不了需求时，才把 `exec` 作为最后兜底。
 
-示例：
-- **Linux/macOS:** `grep -i "keyword" memory/HISTORY.md`
-- **Windows:** `findstr /i "keyword" memory\HISTORY.md`
-- **跨平台 Python:** `python -c "from pathlib import Path; text = Path('memory/HISTORY.md').read_text(encoding='utf-8'); print('\n'.join([l for l in text.splitlines() if 'keyword' in l.lower()][-20:]))"`
+示例（把 `keyword` 替换成真实关键词）：
+- `grep(pattern="keyword", path="memory/history.jsonl", case_insensitive=true)`
+- `grep(pattern="2026-04-02 10:00", path="memory/history.jsonl", fixed_strings=true)`
+- `grep(pattern="keyword", path="memory", glob="*.jsonl", output_mode="count", case_insensitive=true)`
+- `grep(pattern="oauth|token", path="memory", glob="*.jsonl", output_mode="content", case_insensitive=true)`
 
-对于大型历史文件，优先使用命令行精准检索。
+## 重要
 
-## 何时更新 MEMORY.md
-
-遇到重要信息请立即通过 `edit_file` 或 `write_file` 写入：
-- 用户偏好（如“我更喜欢深色模式”）
-- 项目上下文（如“该接口使用 OAuth2 鉴权”）
-- 人物/关系信息（如“Alice 是项目负责人”）
-
-## 自动整合
-当会话内容过多时，旧对话会被自动总结并追加到 `HISTORY.md`。关键长期信息会被提取到 `MEMORY.md`。你无需手动管理该过程。
+- **不要编辑 SOUL.md、USER.md 或 MEMORY.md。** 它们由 Dream 自动管理。
+- 如果发现过时信息，Dream 下一次运行时会修正。
+- 用户可以用 `/dream-log` 查看 Dream 的活动。
