@@ -1,5 +1,7 @@
 # 长期记忆
 # 就是写入一个md文档，提供读取、写入的方法，读取的话，直接读取完整的内容，写入，则调用大模型来写入。
+from __future__ import annotations
+
 from ZBot.utils.helpers import ensure_dir, normalize_tool_args, format_messages
 from ZBot.config.schema import Config
 from loguru import logger
@@ -26,7 +28,7 @@ _SAVE_LONG_TERM_MEMORY_TOOL = [
                         "description": (
                             "长期记忆精华内容。\n"
                             "每条以 [YYYY-MM-DD HH:MM] 时间戳开头。\n"
-                            "只包含【事实】和【偏好】两部分，不包含任务。"
+                            "只包含经过多次验证的【事实】和【偏好】两部分，不包含任务状态。"
                         ),
                     },
                     },
@@ -49,8 +51,6 @@ class LongTermMemoryStore:
             cls.store_path = workspace_path / "memory" / "LONG_TERM_MEMORY.md"
         return cls._instance
 
-
-    
 
 
     async def get_long_term_memory_context(self) -> str:
@@ -87,7 +87,7 @@ class LongTermMemoryStore:
                      "content":
                      "你是长期记忆提炼助手，负责从高频召回的日常记忆中提炼长期有价值的精华信息。\n"
                      "⚠️ 必须调用 save_long_term_memory 工具返回结果。\n"
-                     "只保留经过验证、长期有效的信息，不保留临时性、项目特定的信息。"},
+                     "只保留经过多次验证、长期有效的信息，不保留临时性、项目特定或任务状态信息。"},
                     {"role": "user", "content": prompt}
                 ],
             tools=_SAVE_LONG_TERM_MEMORY_TOOL,
@@ -120,7 +120,8 @@ class LongTermMemoryStore:
             "- 信息已被多次召回（验证了其价值）\n"
             "- 经过时间验证仍然有效、稳定\n"
             "- 合并相似内容，去除冗余\n"
-            "- 不提炼、摘要长期记忆内容，直接保留原文\n\n"
+            "- 保留原有仍然有效的长期记忆，并把新信息合并进去\n"
+            "- 不复制日常记忆流水，只沉淀短、具体、可验证的长期事实\n\n"
 
             "【提取范围】\n"
             "- 事实：通用知识、工具用法、最佳实践、踩坑经验\n"

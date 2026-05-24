@@ -221,6 +221,19 @@ class Tool(ABC):
         """
         t, label = schema.get("type"), path or "参数"
 
+        any_of = schema.get("anyOf")
+        if isinstance(any_of, list) and any_of:
+            base_schema = dict(schema)
+            base_schema.pop("anyOf", None)
+            branch_errors = [
+                self._validate(val, {**base_schema, **branch}, path)
+                for branch in any_of
+                if isinstance(branch, dict)
+            ]
+            if any(not errors for errors in branch_errors):
+                return []
+            return [f"{label} 不符合 anyOf 中任一参数组合要求"]
+
         # 基本类型快速校验
         if t == "integer" and (not isinstance(val, int) or isinstance(val, bool)):
             return [f"{label} 应为整数"]
