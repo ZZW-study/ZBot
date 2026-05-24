@@ -106,7 +106,11 @@ class WebSearchTool(Tool):
     @property
     def description(self) -> str:
         """返回网页搜索工具说明。"""
-        return " 使用 Bocha Search API 进行网页搜索，返回标题、URL 和摘要。"
+        return (
+            "搜索最新外部网页，返回标题、URL 和摘要。"
+            "适合本地没有的信息、时效性事实、官方资料定位；不要替代本地代码阅读。"
+            "需要引用具体页面时，搜索后再用 web_fetch 读取原文。"
+        )
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -114,8 +118,8 @@ class WebSearchTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "搜索查询语句。"},
-                "count": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回的结果数量，默认为配置中的 max_results。"},
+                "query": {"type": "string", "description": "搜索查询语句。写清实体、版本、日期或站点限定，避免泛泛搜索。"},
+                "count": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回的结果数量，默认为配置中的 max_results。需要快速定位时用 3-5 条即可。"},
             },
             "required": ["query"],
         }
@@ -194,7 +198,10 @@ class WebFetchTool(Tool):
     @property
     def description(self) -> str:
         """返回网页抓取工具说明。"""
-        return "抓取指定 URL 的内容，支持 HTML 正文提取和 JSON 格式化。"
+        return (
+            "抓取已知 URL 的页面内容，支持 HTML 正文提取和 JSON 格式化。"
+            "用于读取 web_search 找到的候选页面或用户给出的链接；只有关键词时先用 web_search。"
+        )
     
     @property
     def parameters(self) -> dict[str, Any]:
@@ -202,7 +209,7 @@ class WebFetchTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "url": {"type": "string", "description": "要抓取的网页 URL。"},
+                "url": {"type": "string", "description": "要抓取的完整 http/https URL；不是搜索关键词。"},
                 "extractMode": {"type": "string", "enum": ["markdown", "text"], "default": "markdown", "description": "内容提取模式，markdown 提取正文并转换为 Markdown 格式，text 则提取纯文本。默认为 markdown。"},
                 "maxChars": {"type": "integer", "minimum": 1000, "maximum": 100000, "default": self.max_chars, "description": f"返回内容的最大字符数，超过部分将被截断。默认为 {self.max_chars}。"},
             },

@@ -141,13 +141,13 @@ class CreateSubAgentTool(Tool):
             if result["status"] == "completed":
                 response.append(
                     f"任务ID：{result['subtask_id']}，"
-                    f"任务名字为 {result['subtask_name']} 的任务已经完成，"
+                    f"任务名字为 {result['task']} 的任务已经完成，"
                     f"任务结果为：{result['result']}"
                 )
             else:
                 response.append(
                     f"任务ID：{result['subtask_id']}，"
-                    f"任务名字为 {result['subtask_name']} 的任务失败，"
+                    f"任务名字为 {result['task']} 的任务失败，"
                     f"失败原因为：{result['error']}"
                 )
                 response.append(
@@ -200,7 +200,7 @@ class CreateSubAgentTool(Tool):
         # 子 Agent 正常返回后，只归一化成父 Agent 易读的事实结构。
         return {
             "subtask_id": subtask["subtask_id"],
-            "subtask_name": subtask["task"],
+            "task": subtask["task"],
             "status": "completed",
             "error": "",
             "result": result,
@@ -241,7 +241,7 @@ class CreateSubAgentTool(Tool):
         # 父 Agent 只需判断 status == "failed" 就能统一处理，不需要针对不同失败原因写不同逻辑。
         return {
             "subtask_id": subtask.get("subtask_id", "unknown"),
-            "subtask_name": subtask.get("task", "unknown"),
+            "task": subtask.get("task", "unknown"),
             "status": "failed",
             "error": error,
         }
