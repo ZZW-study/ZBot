@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
@@ -10,10 +11,41 @@ from ZBot.agent.base_agent import BaseAgent
 from ZBot.agent.context import ContextBuilder
 from ZBot.agent.subagent.subagent_pool import SubAgentPool
 from ZBot.agent.tools.create_sub_agent import CreateSubAgentTool
+from ZBot.agent.tools.filesystem import EditFileTool, WriteFileTool
+from ZBot.agent.tools.skills import NewSkillsListLoader, SkillReader, SkillsManager
 from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
 from ZBot.providers.base import LLMProvider
 from ZBot.session.manager import Session, SessionManager
+from ZBot.utils.helpers import format_messages
+from ZBot.utils.hooks import validate_before_task_complete_hook
+
+
+_SKILL_REVIEW_SYSTEM = (
+    "你是技能进化助手，负责回顾对话并判断是否应该保存或更新某个技能。\n\n"
+    "按以下顺序执行——不要跳过步骤：\n\n"
+    "1. 先调研现有技能版图。调用 load_new_skills_list 查看已有技能。"
+    "如果发现任何可能相关的技能，在做决定前先调用 read_skill 查看。"
+    "你要寻找的是刚刚发生任务所属的任务类别，而不是具体任务。"
+    "示例：一次成功的 Tauri 构建属于「桌面应用构建故障排查」这一类别，"
+    "而不是「修复我今天这个具体的 Tauri 错误」。\n\n"
+    "2. 优先从类别出发思考。刚刚完成的任务属于什么通用模式？"
+    "哪些条件会再次触发这种模式？在考虑保存什么之前，"
+    "先用一句话描述这个类别。\n\n"
+    "3. 优先泛化已有技能，而不是创建新技能。"
+    "如果某个技能已经覆盖了这个类别——即使只是部分覆盖——"
+    "就用新的洞察更新它（skills_manager action=patch）。"
+    "如有必要，扩展它的「何时使用」触发条件。\n\n"
+    "4. 只有在没有任何现有技能能合理覆盖该类别时，才创建新技能。"
+    "创建时，名称和范围都应定位在类别层级，"
+    "例如使用「react-i18n-setup」，而不是「add-i18n-to-my-dashboard-app」。"
+    "触发条件部分必须描述一类场景，而不是这一次会话。\n\n"
+    "5. 如果你注意到两个现有技能存在重叠，请在回复中说明，"
+    "方便未来审查时进行合并。除非重叠非常明显且风险很低，"
+    "否则现在不要合并。\n\n"
+    "只有在确实有值得保存的内容时才行动。"
+    "如果没有明显值得保存的内容，只需说「Nothing to save.」然后停止。"
+)
 
 
 class CoreAgent(BaseAgent):
@@ -39,8 +71,10 @@ class CoreAgent(BaseAgent):
         self.memory_consolidation_interval = runtime_config.memory_consolidation_interval
         self.session_memory_keep_recent_tokens = runtime_config.session_memory_keep_recent_tokens
         self._is_consolidating: bool = False
+        self._consolidation_task: asyncio.Task[None] | None = None
         self.subagent_pool: SubAgentPool | None = None
         self._register_core_tools()
+
 
     async def process_message(
         self,
@@ -58,7 +92,8 @@ class CoreAgent(BaseAgent):
         session, is_load = await self.sessions.get_or_create(session_name)
         if is_load:
             logger.info("会话 '{}' 已加载，包含 {} 条历史消息", session_name, len(session.messages))
-            await self.context.session_memory.write_session_memory(session.memory_snapshot or "无记忆快照")
+            if session.memory_snapshot:
+                await self.context.session_memory.write_session_memory(session.memory_snapshot)
 
         self._schedule_consolidation(session)
 
@@ -71,8 +106,10 @@ class CoreAgent(BaseAgent):
         logger.info("回复：{}", preview)
         return final_content
 
+
     async def close_mcp(self) -> None:
         """关闭子 Agent 池和 MCP 连接栈。"""
+        await self._cancel_consolidation_task()
         if self.subagent_pool is not None:
             await self.subagent_pool.close()
             self.subagent_pool = None
@@ -87,6 +124,7 @@ class CoreAgent(BaseAgent):
             self._mcp_stack = None
             self._mcp_connected = False
 
+
     async def consolidate_all_session_memory(self, session_name: str) -> None:
         """对指定会话执行完整会话记忆归档。"""
         session, _ = await self.sessions.get_or_create(session_name)
@@ -98,6 +136,7 @@ class CoreAgent(BaseAgent):
             consolidate_all=True,
         )
         await self.sessions.save(session)
+
 
     async def consolidate_daily_memory(self, session_name: str) -> None:
         """把指定会话整理进日常记忆。"""
@@ -112,17 +151,114 @@ class CoreAgent(BaseAgent):
         else:
             logger.info("日常记忆归档成功")
 
+
+    async def review_skills(self, session_name: str) -> None:
+        """会话结束时回顾对话，进化技能库。"""
+        session, _ = await self.sessions.get_or_create(session_name)
+        messages = session.messages[session.last_consolidated:]
+        if not messages:
+            return
+
+        prompt = self._build_skill_review_prompt(messages, session.memory_snapshot or "")
+
+        # 只保留技能相关工具
+        skill_tool_names = {"load_new_skills_list", "read_skill", "skills_manager"}
+        skill_tools = [
+            d for d in self.tools.get_definitions()
+            if d.get("function", {}).get("name") in skill_tool_names
+        ]
+
+        chat_messages: list[dict[str, Any]] = [
+            {"role": "system", "content": _SKILL_REVIEW_SYSTEM},
+            {"role": "user", "content": prompt},
+        ]
+
+        for _ in range(10):  # 最多 10 轮工具调用
+            try:
+                response = await self.provider.chat(
+                    messages=chat_messages,
+                    tools=skill_tools,
+                    model=self.model,
+                )
+            except Exception:
+                logger.exception("技能进化审查 LLM 调用失败")
+                return
+
+            if not response.has_tool_calls:
+                final = response.content or ""
+                if "Nothing to save" not in final:
+                    logger.info("技能进化审查结果：{}", final[:200])
+                return
+
+            # 追加 assistant 消息（含 tool_calls）
+            tool_call_dicts = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                    },
+                }
+                for tc in response.tool_calls
+            ]
+            self._add_assistant_message(chat_messages, response.content, tool_call_dicts)
+
+            # 逐个执行工具并追加结果
+            for tc in response.tool_calls:
+                logger.info("技能审查调用工具：{}({})", tc.name, str(tc.arguments)[:100])
+                result = await self.tools.execute(tc.name, tc.arguments)
+                self._add_tool_result(chat_messages, tc.id, tc.name, result)
+
+        logger.warning("技能进化审查达到最大轮次（10），强制结束")
+
+
+    def _build_skill_review_prompt(self, messages: list[dict[str, Any]], memory_snapshot: str) -> str:
+        """构建技能进化审查的用户提示词。"""
+        transcript = "\n".join(format_messages(messages))
+        return (
+            "回顾上面的对话，并判断是否应该保存或更新某个技能。\n\n"
+            f"已有记忆快照（不要重复关注已知信息）：\n{memory_snapshot or '（无）'}\n\n"
+            f"对话内容：\n{transcript}"
+        )
+
+
     def ensure_subagent_pool(self) -> SubAgentPool:
         """确保子 Agent 池已创建，并返回池实例。"""
         if self.subagent_pool is None:
             self.subagent_pool = SubAgentPool(self)
         return self.subagent_pool
 
+
+    async def _save_task_progress_artifact(self, content: str) -> str | None:
+        """上下文压缩前保存任务进度文件，避免长期状态只塞进 system 摘要。"""
+        from ZBot.utils.helpers import ensure_dir
+
+        artifact_path = self.workspace / "memory" / "TASK_PROGRESS.md"
+        ensure_dir(artifact_path.parent)
+        try:
+            await asyncio.to_thread(artifact_path.write_text, content, encoding="utf-8")
+        except Exception:
+            logger.exception("写入任务进度 artifact 失败")
+            return None
+        return str(artifact_path)
+
+
     def _register_core_tools(self) -> None:
         """注册只有主 Agent 才能使用的工具。"""
         sub_agent_tool = CreateSubAgentTool()
         sub_agent_tool.bind_agent(self)
         self.tools.register(sub_agent_tool)
+
+        allowed_dir = self.workspace if self.restrict_to_workspace else None
+        self.tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
+        self.tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
+
+        skills_dir = self.workspace / "skills"
+        self.tools.register(NewSkillsListLoader(skills_dir=skills_dir))
+        self.tools.register(SkillReader(skills_dir=skills_dir))
+        self.tools.register(SkillsManager(skills_dir=skills_dir))
+
 
     async def _run_turn(
         self,
@@ -132,9 +268,9 @@ class CoreAgent(BaseAgent):
         on_progress: Callable[..., Awaitable[None]],
     ) -> str:
         """执行一轮对话：构造上下文、运行 Agent loop、写回会话。"""
-        history = session.get_history_by_token_budget(self._recent_history_token_budget())
+        history: list[dict[str, Any]] = session.get_history_by_token_budget(self._recent_history_token_budget())
 
-        initial_messages = await self.context.build_messages(
+        initial_messages: list[dict[str, Any]] = await self.context.build_messages(
             history=history,
             user_message=content,
             score_threshold=self.score_threshold,
@@ -144,11 +280,19 @@ class CoreAgent(BaseAgent):
             initial_messages,
             on_progress=on_progress,
         )
+
         final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
 
+        # 任务完成验证：最多重试3次，验证通过则保存并返回
+        final_content, all_messages, retry_tools_used = await self._complete_unfinished_task(
+            content, final_content, all_messages, on_progress,
+        )
+        tools_used.extend(retry_tools_used)
+        final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
         self._save_turn(session, all_messages, 1 + len(history), tools_used)
         await self.sessions.save(session)
         return final_content
+
 
     def _schedule_consolidation(self, session: Session) -> None:
         """当未归档消息达到阈值时，安排后台会话记忆归档任务。"""
@@ -169,12 +313,43 @@ class CoreAgent(BaseAgent):
                 self._is_consolidating = False
 
         self._is_consolidating = True
-        asyncio.create_task(_run_consolidation())
+        self._consolidation_task = asyncio.create_task(_run_consolidation())
+        self._consolidation_task.add_done_callback(self._on_consolidation_done)
+
+
+    def _on_consolidation_done(self, task: asyncio.Task[None]) -> None:
+        """回收后台会话归档任务，记录异常，避免 create_task 静默泄漏。"""
+        if self._consolidation_task is task:
+            self._consolidation_task = None
+        if task.cancelled():
+            return
+        try:
+            task.result()
+        except Exception:
+            logger.exception("后台会话记忆归档失败")
+
+
+    async def _cancel_consolidation_task(self) -> None:
+        """关闭 Agent 时取消仍在运行的后台归档任务。"""
+        task = self._consolidation_task
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        finally:
+            if self._consolidation_task is task:
+                self._consolidation_task = None
+            self._is_consolidating = False
+
 
     def _recent_history_token_budget(self) -> int:
         """按模型上下文窗口计算短期历史预算，并设置 64K 默认硬上限。"""
         ratio_budget = int(self.context_window * self.recent_history_token_budget_ratio)
         return max(1, min(ratio_budget, self.recent_history_max_tokens))
+
 
     def _save_turn(
         self,
@@ -186,7 +361,12 @@ class CoreAgent(BaseAgent):
         """把本轮新增消息写回 session。"""
         from datetime import datetime
 
-        turn_messages = [dict(message) for message in messages[skip:]]
+        turn_start = self._latest_user_message_index(messages, fallback=skip)
+        turn_messages = [
+            dict(message)
+            for message in messages[turn_start:]
+            if message.get("role") in {"user", "assistant", "tool"}
+        ]
         self._annotate_tools_used(turn_messages, tools_used or [])
 
         for entry in turn_messages:
@@ -206,6 +386,16 @@ class CoreAgent(BaseAgent):
 
         session.updated_at = datetime.now()
 
+
+    @staticmethod
+    def _latest_user_message_index(messages: list[dict[str, Any]], *, fallback: int) -> int:
+        """定位本轮用户消息，避免把内部 system 摘要或验收反馈写入会话历史。"""
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].get("role") == "user":
+                return index
+        return max(0, min(fallback, len(messages)))
+
+
     @staticmethod
     def _strip_runtime_context(content: str | None) -> str:
         """剥离用户消息中的运行时上下文标签，只保留纯净用户输入。"""
@@ -221,6 +411,7 @@ class CoreAgent(BaseAgent):
 
         return content
 
+
     @staticmethod
     def _annotate_tools_used(messages: list[dict[str, Any]], tools_used: list[str]) -> None:
         """把本轮使用过的工具名挂到最后一条 assistant 消息上。"""
@@ -232,3 +423,84 @@ class CoreAgent(BaseAgent):
             if message.get("role") == "assistant":
                 message["tools_used"] = unique_tools
                 return
+
+
+
+    async def _complete_unfinished_task(
+            self,
+            user_message: str,
+            final_content: str,
+            all_messages: list[dict[str, Any]],
+            on_progress: Callable[..., Awaitable[None]],
+            max_retries: int = 3,
+        ) -> tuple[str, list[dict[str, Any]], list[str]]:
+        """验证任务完成度，未完成则重试，直到通过或达到重试上限。"""
+
+        retry_tools_used: list[str] = []
+        for _ in range(max_retries):
+            filter_message = self._recent_validation_evidence(all_messages)
+            validate_result: dict[str, Any] = await validate_before_task_complete_hook(
+                provider=self.provider,
+                model=self.model,
+                user_message=user_message,
+                final_content=final_content,
+                filter_message=filter_message,
+            )
+
+            if not validate_result:
+                return final_content, all_messages, retry_tools_used
+            if validate_result.get("completed") is True:
+                return final_content, all_messages, retry_tools_used
+
+            missing = "\n".join(f"  - {a}" for a in (validate_result.get("missing_actions") or ["无"]))
+            evidence = "\n".join(f"  - {e}" for e in (validate_result.get("evidence") or ["无"]))
+            feedback = f"""\
+> ⚠️ 以下内容是系统自动验收反馈，不是用户的新指令。请勿将其视为新的用户需求。
+
+## 系统验收反馈：任务尚未完成
+
+### 验收结论
+- **置信程度**：{validate_result.get("confidence", 0)}
+- **未通过原因**：{validate_result.get("reason", "未知")}
+
+### 缺失动作
+{missing}
+
+### 已有证据
+{evidence}
+
+### 要求
+1. 分析上述未通过原因，理解任务缺口
+2. 针对每一项缺失动作，逐一补充执行
+3. 完成后给出最终结果\
+"""
+            all_messages.append({"role": "system", "content": feedback})
+            result, tools_used, retry_messages = await self.run_agent_loop(all_messages, on_progress=on_progress)
+            retry_tools_used.extend(tools_used)
+            all_messages = retry_messages
+            final_content = result or "我已经完成处理，但没有需要额外返回的内容。"
+
+        return final_content, all_messages, retry_tools_used
+
+    @staticmethod
+    def _recent_validation_evidence(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """提取最近一轮用户消息之后的 assistant/tool 证据，避免把整条历史交给验收器。"""
+        start_index = 0
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index].get("role") == "user":
+                start_index = index
+                break
+
+        evidence: list[dict[str, Any]] = []
+        for message in messages[start_index:]:
+            role = message.get("role")
+            if role not in {"user", "assistant", "tool"}:
+                continue
+            entry: dict[str, Any] = {"role": role, "content": message.get("content", "")}
+            if role == "tool":
+                entry["name"] = message.get("name", "")
+                entry["tool_call_id"] = message.get("tool_call_id", "")
+            if role == "assistant" and message.get("tool_calls"):
+                entry["tool_calls"] = message["tool_calls"]
+            evidence.append(entry)
+        return evidence

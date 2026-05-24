@@ -18,8 +18,9 @@ from loguru import logger
 
 from ZBot.agent.tools.cron import CronTool
 from ZBot.agent.tools.base import format_tool_error
-from ZBot.agent.tools.filesystem import EditFileTool, ListDirTool, ReadFileTool, WriteFileTool
+from ZBot.agent.tools.filesystem import ListDirTool, ReadFileTool
 from ZBot.agent.tools.registry import ToolRegistry
+from ZBot.agent.tools.search import glob_search, grep_search
 from ZBot.agent.tools.shell import ExecTool
 from ZBot.agent.tools.web import WebFetchTool, WebSearchTool
 from ZBot.config.agent_runtime import AgentRuntimeConfig
@@ -157,6 +158,7 @@ class BaseAgent(ABC):
         loop_started_at: float = time.monotonic() # 获取系统单调时钟的时间戳（浮点秒数），核心特点：只递增、不会被系统时间校准 / 时区修改 / 手动改系统时间影响，记录 Agent loop 开始时间用于超时判断
         turn_index: int = 0
         consecutive_no_progress_failures: int = 0
+        mixed_subagent_call_count: int = 0
         self._current_messages_for_subagent: list[dict[str, Any]] | None = None
         self._active_progress_callback = on_progress
 
@@ -199,13 +201,16 @@ class BaseAgent(ABC):
 
                 if response.has_tool_calls:
                     if self._has_mixed_create_sub_agent_calls(response.tool_calls):
+                        mixed_subagent_call_count += 1
                         messages.append(
                             {
                                 "role": "system",
-                                "content": self._mixed_subagent_tool_call_message(),
+                                "content": self._mixed_subagent_tool_call_message(mixed_subagent_call_count),
                             }
                         )
                         continue
+
+                    mixed_subagent_call_count = 0
 
                     # 提取思考内容（去除 <think>...</think> 块，只保留可见文本）
                     thought = self._strip_think(response.content)
@@ -246,14 +251,19 @@ class BaseAgent(ABC):
                         logger.info("调用工具：{}({})", tool_call.name, args_str[:200])
 
                         try:
-                            if tool_call.name == "create_sub_agent":
-                                # 工具执行前的上下文可以安全交给子 agent；它不包含尚未配对的 tool_call，复制三份了已经。
-                                self._current_messages_for_subagent = copy.deepcopy(messages)
-                            # 执行工具。用户中断会向上传播，确保上层 finally 清理资源。
-                            result: str = await asyncio.wait_for(
-                                self.tools.execute(tool_call.name, tool_call.arguments),
-                                timeout=self._remaining_agent_seconds(loop_started_at),
-                            )
+                            # Codex 风格的工具前置审批点：模型可以请求工具，但真正执行前先过运行时策略。
+                            approval_error = await self.approve_tool_call(tool_call)
+                            if approval_error is not None:
+                                result = approval_error
+                            else:
+                                if tool_call.name == "create_sub_agent":
+                                    # 工具执行前的上下文可以安全交给子 agent；它不包含尚未配对的 tool_call。
+                                    self._current_messages_for_subagent = copy.deepcopy(messages)
+                                # 执行工具。用户中断会向上传播，确保上层 finally 清理资源。
+                                result = await asyncio.wait_for(
+                                    self.tools.execute(tool_call.name, tool_call.arguments),
+                                    timeout=self._remaining_agent_seconds(loop_started_at),
+                                )
                         except asyncio.TimeoutError:
                             result: str = self._tool_timeout_result(tool_call.name)
 
@@ -308,8 +318,8 @@ class BaseAgent(ABC):
         # 如果限制了工作区，文件工具只能访问工作区内的文件
         allowed_dir = self.workspace if self.restrict_to_workspace else None
 
-        # 注册文件操作工具
-        for tool_cls in (ReadFileTool, WriteFileTool, EditFileTool, ListDirTool):
+        # 注册只读文件工具；写入和编辑工具只在 CoreAgent 注册，避免子 Agent 并行写冲突。
+        for tool_cls in (ReadFileTool, ListDirTool):
             self.tools.register(tool_cls(workspace=self.workspace, allowed_dir=allowed_dir))
 
         # 注册 Shell 执行工具
@@ -327,11 +337,19 @@ class BaseAgent(ABC):
         # 注册网页抓取工具
         self.tools.register(WebFetchTool(proxy=self.web_proxy))
 
+        # 注册搜索工具
+        self.tools.register(glob_search(workspace=self.workspace, allowed_dir=allowed_dir))
+        self.tools.register(grep_search(workspace=self.workspace, allowed_dir=allowed_dir))
+
         # 如果提供了定时任务服务，注册定时任务工具
         if self.cron_service:
             self.tools.register(CronTool(self.cron_service))
 
         logger.info("默认工具注册完成")
+
+    async def approve_tool_call(self, tool_call: ToolCallRequest) -> str | None:
+        """工具执行前的审批钩子；返回错误文本表示拒绝执行，返回 None 表示允许。"""
+        return None
 
     @staticmethod
     def _has_mixed_create_sub_agent_calls(tool_calls: list[ToolCallRequest]) -> bool:
@@ -340,12 +358,19 @@ class BaseAgent(ABC):
         return "create_sub_agent" in names and len(names) > 1
 
     @staticmethod
-    def _mixed_subagent_tool_call_message() -> str:
+    def _mixed_subagent_tool_call_message(retry_count: int = 1) -> str:
         """生成 create_sub_agent 并列调用时的停止提示。"""
+        if retry_count <= 1:
+            return (
+                "本轮模型同时请求了 create_sub_agent 和其他工具。"
+                "为避免子 Agent 拿到未配对完成的工具调用链，create_sub_agent 必须单独一轮调用。"
+                "请先完成必要的普通工具调用，再单独创建子 Agent。"
+            )
         return (
             "本轮模型同时请求了 create_sub_agent 和其他工具。"
-            "为避免子 Agent 拿到未配对完成的工具调用链，create_sub_agent 必须单独一轮调用。"
-            "请先完成必要的普通工具调用，再单独创建子 Agent。"
+            f"这是连续第 {retry_count} 次混合调用，当前路径必须停止。"
+            "下一轮只能二选一：要么只调用普通工具补充信息；要么只调用 create_sub_agent。"
+            "不要再把 create_sub_agent 和任何普通工具放在同一轮。"
         )
 
     @staticmethod
@@ -443,9 +468,12 @@ class BaseAgent(ABC):
         )
         await on_progress("上下文接近模型窗口，正在压缩历史工具链和中间过程。")
 
-        compacted = self._compact_messages(messages)
+        artifact_path = await self._save_task_progress_artifact(
+            self._build_task_progress_artifact(messages)
+        )
+        compacted = self._compact_messages(messages, artifact_path=artifact_path)
         if self._estimate_messages_tokens(compacted) >= estimated_tokens:
-            compacted = self._minimal_compacted_messages(messages)
+            compacted = self._minimal_compacted_messages(messages, artifact_path=artifact_path)
         logger.info(
             "上下文压缩完成：{} 条消息 -> {} 条消息，估算 token {} -> {}",
             len(messages),
@@ -455,7 +483,16 @@ class BaseAgent(ABC):
         )
         return compacted
 
-    def _compact_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    async def _save_task_progress_artifact(self, content: str) -> str | None:
+        """保存任务进度 artifact；BaseAgent 默认不落盘，CoreAgent 可覆盖实现。"""
+        return None
+
+    def _compact_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        artifact_path: str | None = None,
+    ) -> list[dict[str, Any]]:
         """把旧工具链压成一条 system 摘要，避免简单截断导致 Agent 失忆。"""
         system_messages = [
             message
@@ -467,10 +504,15 @@ class BaseAgent(ABC):
             message for message in messages if message.get("role") == "user"
         ][-self._RECENT_USER_MESSAGES_AFTER_COMPACTION :]
 
-        summary = self._build_compaction_summary(messages)
+        summary = self._build_compaction_summary(messages, artifact_path=artifact_path)
         return [*copy.deepcopy(system_messages), {"role": "system", "content": summary}, *copy.deepcopy(recent_user_messages)]
 
-    def _minimal_compacted_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def _minimal_compacted_messages(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        artifact_path: str | None = None,
+    ) -> list[dict[str, Any]]:
         """常规摘要没有变小时，退回最小摘要，保证压缩一定减少上下文。"""
         system_messages = [
             message
@@ -488,21 +530,30 @@ class BaseAgent(ABC):
             "工具调用结论：旧工具链已压缩。\n"
             "失败尝试：不要重复刚才无效路径。\n"
             "不要重复：不要重复已失败的同参数工具调用。\n"
+            f"任务进度 artifact：{artifact_path or '未写入'}\n"
             "剩余待办：继续完成用户任务；如缺信息，先获取新的有效观察。"
         )
         return [*copy.deepcopy(system_messages), {"role": "system", "content": summary}]
 
-    def _build_compaction_summary(self, messages: list[dict[str, Any]]) -> str:
+    def _build_compaction_summary(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        artifact_path: str | None = None,
+    ) -> str:
         """生成给模型继续工作的压缩摘要，只保留任务推进所需的信息。"""
         task_goal = (self._latest_content(messages, "user") or "未识别到明确用户任务")[: self._COMPACTION_SNIPPET_CHARS]
         assistant_notes = self._collect_role_snippets(messages, "assistant", limit=4)
         tool_successes, tool_failures = self._collect_tool_snippets(messages)
+        latest_assistant = self._latest_content(messages, "assistant")
 
         return (
             f"{self._COMPACTION_MARKER}\n"
             f"本轮任务目标：\n{task_goal}\n\n"
             "已完成：\n"
             f"{self._format_snippets(assistant_notes) or '暂无明确完成项'}\n\n"
+            "最近结论：\n"
+            f"{latest_assistant[: self._COMPACTION_SNIPPET_CHARS] if latest_assistant else '暂无'}\n\n"
             "关键事实：\n"
             f"{self._format_snippets(tool_successes) or '暂无可保留事实'}\n\n"
             "重要文件/路径：\n"
@@ -513,7 +564,31 @@ class BaseAgent(ABC):
             f"{self._format_snippets(tool_failures) or '暂无'}\n\n"
             "不要重复：\n"
             f"{self._collect_do_not_repeat(messages) or '暂无'}\n\n"
+            "任务进度 artifact：\n"
+            f"{artifact_path or '未写入'}\n\n"
             "剩余待办：\n根据当前摘要继续完成用户任务；如信息不足，优先获取新的有效观察，不要重复失败路径。"
+        )
+
+    def _build_task_progress_artifact(self, messages: list[dict[str, Any]]) -> str:
+        """生成比上下文摘要更完整的任务进度 artifact，供压缩后按需读取。"""
+        task_goal = self._latest_content(messages, "user") or "未识别到明确用户任务"
+        assistant_notes = self._collect_role_snippets(messages, "assistant", limit=12)
+        tool_successes, tool_failures = self._collect_tool_snippets(messages)
+        return (
+            "# ZBot Task Progress\n\n"
+            "## 当前任务目标\n"
+            f"{task_goal}\n\n"
+            "## 已完成/最近结论\n"
+            f"{self._format_snippets(assistant_notes) or '- 暂无'}\n\n"
+            "## 工具成功观察\n"
+            f"{self._format_snippets(tool_successes) or '- 暂无'}\n\n"
+            "## 工具失败和不要重复\n"
+            f"{self._format_snippets(tool_failures) or '- 暂无'}\n"
+            f"{self._collect_do_not_repeat(messages) or ''}\n\n"
+            "## 重要文件/路径\n"
+            f"{self._extract_paths(messages) or '- 暂无'}\n\n"
+            "## 剩余待办\n"
+            "- 根据当前任务目标继续推进；如信息不足，获取新的有效观察。\n"
         )
 
     @staticmethod
@@ -529,7 +604,7 @@ class BaseAgent(ABC):
 
     @staticmethod
     def _latest_content(messages: list[dict[str, Any]], role: str) -> str | None:
-        """?????????????????"""
+        """从消息链中倒序查找指定角色的最新一条消息，截断后返回。"""
         for message in reversed(messages):
             if message.get("role") == role and isinstance(message.get("content"), str):
                 content = message["content"].strip()
@@ -539,7 +614,7 @@ class BaseAgent(ABC):
 
     @staticmethod
     def _collect_role_snippets(messages: list[dict[str, Any]], role: str, *, limit: int) -> list[str]:
-        """????????????????"""
+        """收集指定角色的最新若干条消息片段，用于压缩摘要。"""
         snippets: list[str] = []
         for message in messages:
             content = message.get("content")
@@ -550,7 +625,7 @@ class BaseAgent(ABC):
 
     @staticmethod
     def _collect_tool_snippets(messages: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
-        """?????????????????"""
+        """从消息链中提取工具调用的成功与失败片段，分别返回。"""
         successes: list[str] = []
         failures: list[str] = []
         for message in messages:
@@ -566,12 +641,12 @@ class BaseAgent(ABC):
 
     @staticmethod
     def _format_snippets(snippets: list[str]) -> str:
-        """????????? Markdown ???"""
+        """将片段列表格式化为 Markdown 无序列表。"""
         return "\n".join(f"- {snippet}" for snippet in snippets)
 
     @staticmethod
     def _extract_paths(messages: list[dict[str, Any]]) -> str:
-        """??????????????????"""
+        """从消息链中提取出现过的文件路径，去重后返回最近若干条。"""
         text = "\n".join(str(message.get("content", "")) for message in messages)
         paths = re.findall(r"(?:[A-Za-z]:\\[^\s\"'<>|]+|[\w./-]+/[\w./-]+)", text)
         unique_paths = list(dict.fromkeys(paths))
@@ -579,7 +654,7 @@ class BaseAgent(ABC):
 
     @staticmethod
     def _collect_do_not_repeat(messages: list[dict[str, Any]]) -> str:
-        """???????????????"""
+        """从工具返回结果中收集"不要重复"指令，去重后返回。"""
         items: list[str] = []
         for message in messages:
             content = message.get("content")

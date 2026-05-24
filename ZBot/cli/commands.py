@@ -285,7 +285,11 @@ def agent(
             cron.stop()
             await core_agent.close_mcp()
             await core_agent.consolidate_all_session_memory(session_name=session_name)
-            await core_agent.consolidate_daily_memory(session_name=session_name) 
+            await core_agent.consolidate_daily_memory(session_name=session_name)
+            try:
+                await core_agent.review_skills(session_name=session_name)
+            except Exception:
+                logger.exception("技能进化回顾失败")
 
         asyncio.run(run_once())     
         return                      # 单次模式执行完毕直接返回
@@ -341,7 +345,11 @@ def agent(
             cron.stop()
             await core_agent.close_mcp()
             await core_agent.consolidate_all_session_memory(session_name=session_name)  # 退出前进行最终的会话归档
-            await core_agent.consolidate_daily_memory(session_name=session_name) 
+            await core_agent.consolidate_daily_memory(session_name=session_name)
+            try:
+                await core_agent.review_skills(session_name=session_name)
+            except Exception:
+                logger.exception("技能进化回顾失败")
 
     asyncio.run(run_interactive())  # 启动交互循环
 
