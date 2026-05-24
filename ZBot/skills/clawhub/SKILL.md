@@ -1,21 +1,21 @@
 ---
 name: clawhub
-description: 从公共技能仓库 ClawHub 搜索并安装智能体技能
+description: "从公共技能注册表 ClawHub 搜索和安装 Agent 技能。"
 homepage: https://clawhub.ai
-metadata: {"ZBot":{"emoji":"🦞"}}
+metadata: {"nanobot":{"emoji":"🦞"}}
 ---
+
 # ClawHub
 
-面向 AI 智能体的公共技能仓库，支持自然语言搜索（向量搜索）。
+ClawHub 是 AI Agent 的公共技能注册表，支持用自然语言搜索技能（向量搜索）。
 
-## 使用场景
+## 什么时候使用
 
-当用户提出以下任意请求时，使用该技能：
-
-- “查找用于……的技能”
+当用户提出下面这类请求时，使用这个技能：
+- “找一个能做……的技能”
 - “搜索技能”
 - “安装一个技能”
-- “有哪些可用的技能？”
+- “有哪些技能可用？”
 - “更新我的技能”
 
 ## 搜索
@@ -27,27 +27,27 @@ npx --yes clawhub@latest search "web scraping" --limit 5
 ## 安装
 
 ```bash
-npx --yes clawhub@latest install <slug> --workdir ~/.ZBot/workspace
+npx --yes clawhub@latest install <slug> --workdir ~/.nanobot/workspace
 ```
 
-将 `<slug>` 替换为搜索结果中的技能名称。该命令会将技能安装至 `~/.ZBot/workspace/skills/` 目录，ZBot 会从此目录加载工作区技能。**必须携带 `--workdir` 参数**。
+把 `<slug>` 替换成搜索结果里的技能名称。这个命令会把技能安装到 `~/.nanobot/workspace/skills/`，nanobot 会从这里加载工作区技能。务必带上 `--workdir`。
 
 ## 更新
 
 ```bash
-npx --yes clawhub@latest update --all --workdir ~/.ZBot/workspace
+npx --yes clawhub@latest update --all --workdir ~/.nanobot/workspace
 ```
 
 ## 列出已安装技能
 
 ```bash
-npx --yes clawhub@latest list --workdir ~/.ZBot/workspace
+npx --yes clawhub@latest list --workdir ~/.nanobot/workspace
 ```
 
 ## 注意事项
 
-- 需要安装 Node.js（`npx` 随 Node.js 自带）。
-- 搜索与安装操作无需 API 密钥。
-- 仅在发布技能时需要登录（`npx --yes clawhub@latest login`）。
-- `--workdir ~/.ZBot/workspace` 为关键参数，缺少该参数时技能会安装至当前目录，而非 ZBot 工作区。
-- 安装完成后，提醒用户新建会话以加载技能。
+- 需要 Node.js，`npx` 会随 Node.js 一起提供。
+- 搜索和安装不需要 API key。
+- 只有发布技能时才需要登录：`npx --yes clawhub@latest login`。
+- `--workdir ~/.nanobot/workspace` 很重要。没有它，技能会安装到当前目录，而不是 nanobot 工作区。
+- 安装完成后，提醒用户开启一个新会话来加载新技能。
