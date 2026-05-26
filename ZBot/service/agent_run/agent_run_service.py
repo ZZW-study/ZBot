@@ -47,6 +47,24 @@ class AgentEvent:
             "created_at": self.created_at,
         }
 
+    @classmethod
+    def control_event(
+        cls,
+        event_type: str,
+        session_name: str,
+        message: str,
+        *,
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """构造控制事件 dict（不依赖 service 实例）。"""
+        return cls(
+            type=event_type,
+            run_id="control",
+            session_name=session_name,
+            message=message,
+            payload=payload or {},
+        ).to_dict()
+
 
 EventSink = Callable[[AgentEvent], Awaitable[None]]
 

@@ -8,9 +8,10 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from loguru import logger
 
-from ZBot.config.loader import load_config
-from ZBot.service.agent_run.agent_factory import AgentSetupError, create_agent_bundle
+from ZBot.service.agent_run.agent_factory import AgentSetupError
 from ZBot.service.agent_run.agent_run_service import AgentEvent, AgentRunService
+from ZBot.service.agent_run.agent_runner import create_agent_run_service
+from ZBot.service.config_service import config_cache
 
 router = APIRouter(tags=["agent"])
 
@@ -32,25 +33,29 @@ async def agent_websocket(websocket: WebSocket) -> None:
 
             if command_type == "run.start":
                 if active_task and not active_task.done():
-                    await queue.put(_control_event("run.failed", "default", "已有任务正在运行，请先停止当前任务。"))
+                    await queue.put(AgentEvent.control_event("run.failed", "default", "已有任务正在运行，请先停止当前任务。"))
                     continue
 
                 message = str(command.get("message") or "").strip()
                 session_name = str(command.get("session_name") or "default")
                 current_session_name = session_name
                 if not message:
-                    await queue.put(_control_event("run.failed", session_name, "消息不能为空。"))
+                    await queue.put(AgentEvent.control_event("run.failed", session_name, "消息不能为空。"))
                     continue
 
                 if service is None:
-                    service = await _create_websocket_service(session_name, queue)
-                    if service is None:
+                    config = config_cache.get()
+                    if config is None:
+                        await queue.put(AgentEvent.control_event("run.failed", session_name, "无法加载配置文件，请先完成 ZBot 配置。"))
+                        continue
+                    try:
+                        service = create_agent_run_service(config)
+                    except AgentSetupError as exc:
+                        await queue.put(AgentEvent.control_event("run.failed", session_name, exc.message, payload={"code": exc.code}))
                         continue
                     await service.start(session_name, event_sink=_queue_event_sink(queue))
 
-                active_task = asyncio.create_task(
-                    _run_agent_for_websocket(service, message, session_name, queue)
-                )
+                active_task = asyncio.create_task(_run_agent(service, message, session_name, queue))
                 continue
 
             if command_type == "run.cancel":
@@ -63,7 +68,7 @@ async def agent_websocket(websocket: WebSocket) -> None:
                     service = None
                 continue
 
-            await queue.put(_control_event("run.failed", "default", f"不支持的命令类型：{command_type}"))
+            await queue.put(AgentEvent.control_event("run.failed", "default", f"不支持的命令类型：{command_type}"))
     except WebSocketDisconnect:
         if active_task and not active_task.done():
             active_task.cancel()
@@ -77,24 +82,7 @@ async def agent_websocket(websocket: WebSocket) -> None:
         await asyncio.gather(writer_task, return_exceptions=True)
 
 
-async def _create_websocket_service(
-    session_name: str,
-    queue: asyncio.Queue[dict[str, Any] | None],
-) -> AgentRunService | None:
-    """为当前 WebSocket 连接创建会话级 AgentRunService。"""
-    try:
-        config = load_config()
-        if config is None:
-            await queue.put(_control_event("run.failed", session_name, "无法加载配置文件，请先完成 ZBot 配置。"))
-            return None
-
-        return AgentRunService(create_agent_bundle(config))
-    except AgentSetupError as exc:
-        await queue.put(_control_event("run.failed", session_name, exc.message, payload={"code": exc.code}))
-        return None
-
-
-async def _run_agent_for_websocket(
+async def _run_agent(
     service: AgentRunService,
     message: str,
     session_name: str,
@@ -111,7 +99,7 @@ async def _run_agent_for_websocket(
         raise
     except Exception as exc:
         logger.exception("WebSocket Agent run 失败")
-        await queue.put(_control_event("run.failed", session_name, f"任务失败：{exc}"))
+        await queue.put(AgentEvent.control_event("run.failed", session_name, f"任务失败：{exc}"))
 
 
 async def _websocket_writer(
@@ -134,20 +122,3 @@ def _queue_event_sink(queue: asyncio.Queue[dict[str, Any] | None]):
         await queue.put(event.to_dict())
 
     return _sink
-
-
-def _control_event(
-    event_type: str,
-    session_name: str,
-    message: str,
-    *,
-    payload: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """构造不依赖 AgentRunService 的控制事件。"""
-    return AgentEvent(
-        type=event_type,
-        run_id="control",
-        session_name=session_name,
-        message=message,
-        payload=payload or {},
-    ).to_dict()
