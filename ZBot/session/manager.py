@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 from loguru import logger
 
-from ZBot.utils.helpers import ensure_dir, safe_filename
+from ZBot.service.utils.helpers import ensure_dir, safe_filename
 
 # 历史消息中需要特别保留的字段
 # 这些字段在转换历史记录时需要特殊处理

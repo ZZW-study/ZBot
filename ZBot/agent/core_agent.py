@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from typing import Any, Awaitable, Callable
 
@@ -17,8 +18,8 @@ from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
 from ZBot.providers.base import LLMProvider
 from ZBot.session.manager import Session, SessionManager
-from ZBot.utils.helpers import format_messages
-from ZBot.utils.hooks import validate_before_task_complete_hook
+from ZBot.service.utils.helpers import format_messages
+from ZBot.service.utils.hooks import validate_before_task_complete_hook
 
 
 _SKILL_REVIEW_SYSTEM = (
@@ -78,7 +79,7 @@ class CoreAgent(BaseAgent):
 
     async def process_message(
         self,
-        message: str,
+        message: str | list[dict[str, Any]],
         session_name: str = "default",
         *,
         on_progress: Callable[..., Awaitable[None]],
@@ -87,7 +88,8 @@ class CoreAgent(BaseAgent):
         await self.connect_mcp()
         self.subagent_pool = self.ensure_subagent_pool()
 
-        logger.info("正在处理消息：{}", message[:80] + "..." if len(message) > 80 else message)
+        preview_message = self._message_preview(message)
+        logger.info("正在处理消息：{}", preview_message[:80] + "..." if len(preview_message) > 80 else preview_message)
 
         session, is_load = await self.sessions.get_or_create(session_name)
         if is_load:
@@ -232,7 +234,7 @@ class CoreAgent(BaseAgent):
 
     async def _save_task_progress_artifact(self, content: str) -> str | None:
         """上下文压缩前保存任务进度文件，避免长期状态只塞进 system 摘要。"""
-        from ZBot.utils.helpers import ensure_dir
+        from ZBot.service.utils.helpers import ensure_dir
 
         artifact_path = self.workspace / "memory" / "TASK_PROGRESS.md"
         ensure_dir(artifact_path.parent)
@@ -264,7 +266,7 @@ class CoreAgent(BaseAgent):
         self,
         session: Session,
         *,
-        content: str,
+        content: str | list[dict[str, Any]],
         on_progress: Callable[..., Awaitable[None]],
     ) -> str:
         """执行一轮对话：构造上下文、运行 Agent loop、写回会话。"""
@@ -285,7 +287,7 @@ class CoreAgent(BaseAgent):
 
         # 任务完成验证：最多重试3次，验证通过则保存并返回
         final_content, all_messages, retry_tools_used = await self._complete_unfinished_task(
-            content, final_content, all_messages, on_progress,
+            self._message_preview(content), final_content, all_messages, on_progress,
         )
         tools_used.extend(retry_tools_used)
         final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
@@ -363,7 +365,7 @@ class CoreAgent(BaseAgent):
 
         turn_start = self._latest_user_message_index(messages, fallback=skip)
         turn_messages = [
-            dict(message)
+            copy.deepcopy(message)
             for message in messages[turn_start:]
             if message.get("role") in {"user", "assistant", "tool"}
         ]
@@ -397,10 +399,13 @@ class CoreAgent(BaseAgent):
 
 
     @staticmethod
-    def _strip_runtime_context(content: str | None) -> str:
-        """剥离用户消息中的运行时上下文标签，只保留纯净用户输入。"""
+    def _strip_runtime_context(content: str | list[dict[str, Any]] | None) -> str:
+        """剥离用户消息中的运行时上下文标签，并把大 base64 块改成轻量元信息。"""
         if not content:
             return content or ""
+
+        if isinstance(content, list):
+            return CoreAgent._sanitize_content_blocks(content)
 
         runtime_tag = ContextBuilder._RUNTIME_CONTEXT_TAG
         if content.startswith(runtime_tag):
@@ -410,6 +415,50 @@ class CoreAgent(BaseAgent):
             return ""
 
         return content
+
+
+    @staticmethod
+    def _sanitize_content_blocks(blocks: list[dict[str, Any]]) -> str:
+        """保存历史时把多模态 blocks 转成文本摘要，避免 session 里残留 base64。"""
+        texts: list[str] = []
+        for block in blocks:
+            block_copy = copy.deepcopy(block)
+            if block_copy.get("type") == "text":
+                text = CoreAgent._strip_runtime_context(str(block_copy.get("text") or "")).strip()
+                if text:
+                    texts.append(text)
+            elif block_copy.get("type") == "image_url":
+                image_url = block_copy.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else ""
+                mime = CoreAgent._data_url_mime(url)
+                texts.append(f"[已上传图片，MIME={mime or 'unknown'}，原始 data URL 未写入会话历史]")
+            else:
+                texts.append(f"[已上传内容块，type={block_copy.get('type', 'unknown')}，原始内容未写入会话历史]")
+        return "\n\n".join(texts)
+
+
+    @staticmethod
+    def _data_url_mime(url: str) -> str | None:
+        """从 data URL 中提取 MIME 类型。"""
+        if not url.startswith("data:") or ";base64," not in url:
+            return None
+        return url[5:].split(";base64,", 1)[0] or None
+
+
+    @staticmethod
+    def _message_preview(message: str | list[dict[str, Any]]) -> str:
+        """生成适合日志、验收提示和错误信息使用的用户消息文本预览。"""
+        if isinstance(message, str):
+            return message
+        texts: list[str] = []
+        media_count = 0
+        for block in message:
+            if block.get("type") == "text":
+                texts.append(str(block.get("text") or ""))
+            else:
+                media_count += 1
+        suffix = f"\n[包含 {media_count} 个多模态内容块]" if media_count else ""
+        return "\n".join(texts).strip() + suffix
 
 
     @staticmethod
@@ -496,7 +545,7 @@ class CoreAgent(BaseAgent):
             role = message.get("role")
             if role not in {"user", "assistant", "tool"}:
                 continue
-            entry: dict[str, Any] = {"role": role, "content": message.get("content", "")}
+            entry: dict[str, Any] = {"role": role, "content": CoreAgent._evidence_content(message.get("content", ""))}
             if role == "tool":
                 entry["name"] = message.get("name", "")
                 entry["tool_call_id"] = message.get("tool_call_id", "")
@@ -504,3 +553,11 @@ class CoreAgent(BaseAgent):
                 entry["tool_calls"] = message["tool_calls"]
             evidence.append(entry)
         return evidence
+
+
+    @staticmethod
+    def _evidence_content(content: Any) -> str:
+        """把验收证据里的多模态内容转成文本，避免把 base64 交给验收器。"""
+        if isinstance(content, list):
+            return CoreAgent._sanitize_content_blocks(content)
+        return str(content or "")

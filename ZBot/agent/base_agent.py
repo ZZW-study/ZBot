@@ -175,6 +175,25 @@ class BaseAgent(ABC):
                 logger.debug("Agent循环迭代: {}, 消息长度: {}", turn_index, len(messages))
 
                 try:
+                    await on_progress(
+                        "正在请求大模型",
+                        event_type="model.started",
+                        agent_label=progress_label,
+                    )
+                    streamed_content_parts: list[str] = []
+
+                    async def _on_model_delta(delta: str) -> None:
+                        streamed_content_parts.append(delta)
+                        visible_delta = self._visible_delta_from_stream(streamed_content_parts)
+                        if not visible_delta:
+                            return
+                        await on_progress(
+                            visible_delta,
+                            event_type="assistant.delta",
+                            agent_label=progress_label,
+                            delta=visible_delta,
+                        )
+
                     response = await asyncio.wait_for(
                         self.provider.chat(
                             messages=messages,
@@ -183,8 +202,15 @@ class BaseAgent(ABC):
                             temperature=self.temperature,
                             max_tokens=self.max_tokens,
                             reasoning_effort=self.reasoning_effort,  # 推理努力程度（仅部分模型支持）
+                            on_delta=_on_model_delta,
                         ),
                         timeout=self._remaining_agent_seconds(loop_started_at),
+                    )
+                    await on_progress(
+                        "大模型响应完成",
+                        event_type="model.completed",
+                        agent_label=progress_label,
+                        finish_reason=response.finish_reason,
                     )
                 except asyncio.TimeoutError:
                     final_content = self._timeout_message()
@@ -249,6 +275,14 @@ class BaseAgent(ABC):
                         tools_used.append(tool_call.name)
                         args_str = json.dumps(tool_call.arguments, ensure_ascii=False)
                         logger.info("调用工具：{}({})", tool_call.name, args_str[:200])
+                        await on_progress(
+                            self._tool_hint([tool_call]),
+                            tool_hint=True,
+                            event_type="tool.started",
+                            agent_label=progress_label,
+                            tool_name=tool_call.name,
+                            tool_call_id=tool_call.id,
+                        )
 
                         try:
                             # Codex 风格的工具前置审批点：模型可以请求工具，但真正执行前先过运行时策略。
@@ -266,6 +300,15 @@ class BaseAgent(ABC):
                                 )
                         except asyncio.TimeoutError:
                             result: str = self._tool_timeout_result(tool_call.name)
+
+                        await on_progress(
+                            self._tool_hint([tool_call]),
+                            tool_hint=True,
+                            event_type="tool.failed" if self._is_tool_error_result(result) else "tool.completed",
+                            agent_label=progress_label,
+                            tool_name=tool_call.name,
+                            tool_call_id=tool_call.id,
+                        )
 
                         consecutive_no_progress_failures = self._count_no_progress_failures(
                             consecutive_no_progress_failures,
@@ -300,6 +343,12 @@ class BaseAgent(ABC):
                     messages,
                     clean,
                     reasoning_content=response.reasoning_content,
+                )
+                await on_progress(
+                    clean or "",
+                    event_type="assistant.completed",
+                    agent_label=progress_label,
+                    final_content=clean or "",
                 )
                 final_content = clean
                 break
@@ -389,6 +438,27 @@ class BaseAgent(ABC):
         return cleaned or None
 
     @staticmethod
+    def _visible_delta_from_stream(content_parts: list[str]) -> str:
+        """从累计流式文本里只取本次新增的可见内容，隐藏 <think> 块。"""
+        raw_text = "".join(content_parts)
+        previous_text = "".join(content_parts[:-1])
+        current_visible = BaseAgent._strip_incomplete_think(raw_text)
+        previous_visible = BaseAgent._strip_incomplete_think(previous_text)
+        if len(current_visible) <= len(previous_visible):
+            return ""
+        return current_visible[len(previous_visible):]
+
+    @staticmethod
+    def _strip_incomplete_think(text: str) -> str:
+        """移除完整和正在生成中的 think 块，避免把推理过程流式展示给用户。"""
+        cleaned = _THINK_BLOCK_RE.sub("", text)
+        start = cleaned.lower().rfind("<think>")
+        end = cleaned.lower().rfind("</think>")
+        if start > end:
+            cleaned = cleaned[:start]
+        return cleaned
+
+    @staticmethod
     def _tool_hint(tool_calls: list[ToolCallRequest]) -> str:
         """把工具调用列表压缩成一行简短提示，便于在 CLI 中展示进度。"""
         hints: list[str] = []
@@ -449,6 +519,12 @@ class BaseAgent(ABC):
             next_action="总结当前已知信息并给出最终回复",
         )
 
+    @staticmethod
+    def _is_tool_error_result(result: str) -> bool:
+        """判断工具返回是否为标准错误文本。"""
+        stripped = result.lstrip()
+        return stripped.startswith(("错误：", "错误:", "Error:", "ERROR:"))
+
     async def _compact_messages_if_needed(
         self,
         messages: list[dict[str, Any]],
@@ -466,7 +542,10 @@ class BaseAgent(ABC):
             threshold_tokens,
             self.context_window,
         )
-        await on_progress("上下文接近模型窗口，正在压缩历史工具链和中间过程。")
+        await on_progress(
+            "上下文接近模型窗口，正在压缩历史工具链和中间过程。",
+            event_type="compaction.started",
+        )
 
         artifact_path = await self._save_task_progress_artifact(
             self._build_task_progress_artifact(messages)
@@ -480,6 +559,12 @@ class BaseAgent(ABC):
             len(compacted),
             estimated_tokens,
             self._estimate_messages_tokens(compacted),
+        )
+        await on_progress(
+            "上下文压缩完成，继续执行当前任务。",
+            event_type="compaction.completed",
+            before_message_count=len(messages),
+            after_message_count=len(compacted),
         )
         return compacted
 
@@ -597,7 +682,7 @@ class BaseAgent(ABC):
         total_chars = 0
         for message in messages:
             total_chars += len(str(message.get("role", "")))
-            total_chars += len(str(message.get("content", "")))
+            total_chars += len(BaseAgent._content_for_budget(message.get("content", "")))
             if "tool_calls" in message:
                 total_chars += len(json.dumps(message["tool_calls"], ensure_ascii=False))
         return max(1, total_chars // 2)
@@ -606,8 +691,8 @@ class BaseAgent(ABC):
     def _latest_content(messages: list[dict[str, Any]], role: str) -> str | None:
         """从消息链中倒序查找指定角色的最新一条消息，截断后返回。"""
         for message in reversed(messages):
-            if message.get("role") == role and isinstance(message.get("content"), str):
-                content = message["content"].strip()
+            if message.get("role") == role:
+                content = BaseAgent._content_text(message.get("content")).strip()
                 if content:
                     return content[:1200]
         return None
@@ -617,8 +702,8 @@ class BaseAgent(ABC):
         """收集指定角色的最新若干条消息片段，用于压缩摘要。"""
         snippets: list[str] = []
         for message in messages:
-            content = message.get("content")
-            if message.get("role") != role or not isinstance(content, str) or not content.strip():
+            content = BaseAgent._content_text(message.get("content"))
+            if message.get("role") != role or not content.strip():
                 continue
             snippets.append(content.strip()[: BaseAgent._COMPACTION_SNIPPET_CHARS])
         return snippets[-limit:]
@@ -647,10 +732,50 @@ class BaseAgent(ABC):
     @staticmethod
     def _extract_paths(messages: list[dict[str, Any]]) -> str:
         """从消息链中提取出现过的文件路径，去重后返回最近若干条。"""
-        text = "\n".join(str(message.get("content", "")) for message in messages)
+        text = "\n".join(BaseAgent._content_text(message.get("content")) for message in messages)
         paths = re.findall(r"(?:[A-Za-z]:\\[^\s\"'<>|]+|[\w./-]+/[\w./-]+)", text)
         unique_paths = list(dict.fromkeys(paths))
         return "\n".join(f"- {path}" for path in unique_paths[-6:])
+
+    @staticmethod
+    def _content_for_budget(content: Any) -> str:
+        """把 content 转成估算用文本，图片 data URL 只按一个占位块计。"""
+        if isinstance(content, str):
+            return BaseAgent._replace_data_urls(content)
+        if not isinstance(content, list):
+            return str(content)
+
+        parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                parts.append(str(block))
+                continue
+            if block.get("type") == "text":
+                parts.append(str(block.get("text") or ""))
+            elif block.get("type") == "image_url":
+                parts.append("[image_url content block]")
+            else:
+                parts.append(f"[{block.get('type', 'content')} content block]")
+        return "\n".join(parts)
+
+    @staticmethod
+    def _content_text(content: Any) -> str:
+        """从 content 中提取文本内容，忽略大体积多模态原文。"""
+        if isinstance(content, str):
+            return BaseAgent._replace_data_urls(content)
+        if not isinstance(content, list):
+            return str(content or "")
+
+        texts: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                texts.append(str(block.get("text") or ""))
+        return "\n".join(texts)
+
+    @staticmethod
+    def _replace_data_urls(text: str) -> str:
+        """把 data URL 替换成短占位符，避免估算和摘要被 base64 主导。"""
+        return re.sub(r"data:[^;\s]+;base64,[A-Za-z0-9+/=\r\n]+", "[base64 data url]", text)
 
     @staticmethod
     def _collect_do_not_repeat(messages: list[dict[str, Any]]) -> str:

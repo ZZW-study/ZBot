@@ -68,7 +68,7 @@ class glob_search(Tool):
     
     async def execute(self, **kwargs: Any) -> str:
         """执行 glob 搜索，返回匹配的文件路径列表,转化为字符串。"""
-        from ZBot.utils.helpers import resolve_path
+        from ZBot.service.utils.helpers import resolve_path
         name_contains = kwargs.get("name_contains", "")
         extension = kwargs.get("extension", "")
         search_path = kwargs.get("search_path", "")
@@ -183,7 +183,7 @@ class grep_search(Tool):
 
     async def execute(self, **kwargs: Any) -> str:
         """执行 grep 搜索，返回匹配的文件路径列表,转化为字符串。"""
-        from ZBot.utils.helpers import resolve_path
+        from ZBot.service.utils.helpers import resolve_path
 
         content_contains = kwargs.get("content_contains", "")
         if not content_contains:

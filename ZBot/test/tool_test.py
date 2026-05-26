@@ -74,7 +74,7 @@ from ZBot.agent.tools.filesystem import (
     ListDirTool,
     _find_match,
 )
-from ZBot.utils.helpers import resolve_path
+from ZBot.service.utils.helpers import resolve_path
 from ZBot.agent.tools.shell import ExecTool
 
 
