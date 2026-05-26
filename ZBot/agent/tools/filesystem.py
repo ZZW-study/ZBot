@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 import aiofiles
 from ZBot.agent.tools.base import Tool, format_tool_error
-from ZBot.utils.helpers import resolve_path, path_failure_hint
+from ZBot.service.utils.helpers import resolve_path, path_failure_hint
 
 
 class ReadFileTool(Tool):

@@ -5,15 +5,18 @@ import sqlite_vec
 from sqlite_vec import serialize_float32
 from pathlib import Path
 import asyncio
+import threading
 
 from typing import Any, TYPE_CHECKING,Optional
-from ZBot.utils.helpers import normalize_tool_args, format_messages,ensure_dir
+from ZBot.service.utils.helpers import normalize_tool_args, format_messages,ensure_dir
 from loguru import logger
 from ZBot.config.schema import Config
 
 if TYPE_CHECKING:
     from ZBot.providers.base import LLMProvider
     from ZBot.session.manager import Session
+
+DEFAULT_DAILY_MEMORY_TOP_K = 5
 
 async def get_db(workspace_path: Path) -> aiosqlite.Connection:
     """获取 SQLite 数据库连接，数据库文件位于工作区的 memory 目录下。"""
@@ -96,6 +99,8 @@ class DailyMemoryStore:
     _instance : Optional["DailyMemoryStore"] = None
     db: aiosqlite.Connection | None
     _embeddings: Any | None
+    _embedding_lock: threading.Lock
+    workspace_path: Path
 
     def __new__(cls,workspace_path: Path):
         """创建或复用每日记忆存储单例。"""
@@ -104,6 +109,7 @@ class DailyMemoryStore:
             cls._instance.workspace_path = workspace_path
             cls._instance.db = None
             cls._instance._embeddings = None
+            cls._instance._embedding_lock = threading.Lock()
         return cls._instance
 
 
@@ -160,8 +166,11 @@ class DailyMemoryStore:
 
     async def get_daily_memory_text(self,user_content: str, score_threshold: float = 0.75) -> str:
         """基于向量相似度检索相关的每日记忆记录(给上下文构造用的)，并返回文本内容。就是每一次问，在构造上下文提示词的时候，会进行召回"""
-        
-        daily_memory = await self._retrieve_daily_memory(user_content, score_threshold)
+        try:
+            daily_memory = await self._retrieve_daily_memory(user_content, score_threshold)
+        except Exception:
+            logger.exception("日常记忆召回失败，已跳过，不阻断本轮对话")
+            return ""
         merged_daily_memory = "\n---\n".join(f"- 会话名字:{entry['session_name']}\n- 日常记忆内容:{entry['content']}" for entry in daily_memory)
         return f"## DAILY_MEMORY.md\n{merged_daily_memory}" if daily_memory else ""
 
@@ -301,14 +310,25 @@ class DailyMemoryStore:
 
     async def _generate_daily_memory_vec(self, content: str) -> list[float]:
         """生成每日记忆的向量表示。"""
-        embeddings = self._get_embeddings()
-        return await asyncio.to_thread(embeddings.embed_query, content)
+        def _embed() -> list[float]:
+            embeddings = self._get_embeddings()
+            return embeddings.embed_query(content)
 
-    async def _retrieve_daily_memory(self, user_content: str, score_threshold: float = 0.75) -> list[dict[str, Any]]:
+        return await asyncio.to_thread(_embed)
+
+    async def _retrieve_daily_memory(
+        self,
+        user_content: str,
+        score_threshold: float = 0.75,
+        top_k: int = DEFAULT_DAILY_MEMORY_TOP_K,
+    ) -> list[dict[str, Any]]:
         """
         基于向量相似度检索相关的每日记忆记录，并返回文本内容。
         """
         db = await self._ensure_db()
+        if not user_content.strip() or not await self._has_daily_memory(db):
+            return []
+
         user_content_embeddings = serialize_float32(
             await self._generate_daily_memory_vec(user_content.strip())
         )
@@ -319,7 +339,7 @@ class DailyMemoryStore:
                 SELECT rowid, distance
                 FROM daily_memory_vector
                 WHERE vector MATCH ?
-                AND 1 - distance >= ?
+                LIMIT ?
             )
 
             SELECT daily_memory.id, daily_memory.session_name, daily_memory.content, ranked.distance
@@ -329,9 +349,10 @@ class DailyMemoryStore:
             -- 然后去 daily_memory 表里找 id 等于这个 rowid 的记录，
             -- 最后把两边的数据拼在一起返回。
             JOIN daily_memory ON daily_memory.id = ranked.rowid
+            WHERE 1 - ranked.distance >= ?
             ORDER BY ranked.distance ASC
             """,
-            (user_content_embeddings, score_threshold)
+            (user_content_embeddings, top_k, score_threshold)
         )
 
         results = await cursor.fetchall()
@@ -366,6 +387,14 @@ class DailyMemoryStore:
             await db.rollback()
             raise
 
+    async def warmup_embeddings(self) -> None:
+        """后台预热 embedding；首次会下载模型，之后从本地缓存加载到内存。"""
+        try:
+            await asyncio.to_thread(self._get_embeddings)
+            logger.info("日常记忆 embedding 预热完成")
+        except Exception:
+            logger.exception("日常记忆 embedding 预热失败，后续对话会降级为空记忆")
+
     async def _ensure_db(self) -> aiosqlite.Connection:
         """懒初始化日常记忆数据库，避免 import 阶段运行异步初始化。"""
         if self.db is None:
@@ -376,13 +405,23 @@ class DailyMemoryStore:
     def _get_embeddings(self) -> Any:
         """懒加载 HuggingFace embedding，避免启动时就下载或占用内存。"""
         if self._embeddings is None:
-            from langchain_community.embeddings import HuggingFaceEmbeddings
+            with self._embedding_lock:
+                if self._embeddings is None:
+                    from langchain_community.embeddings import HuggingFaceEmbeddings
 
-            self._embeddings = HuggingFaceEmbeddings(
-                model_name="BAAI/bge-base-zh",
-                model_kwargs={"device": "cpu"},
-            )
+                    self._embeddings = HuggingFaceEmbeddings(
+                        model_name="BAAI/bge-base-zh",
+                        model_kwargs={"device": "cpu"},
+                    )
         return self._embeddings
+
+    @staticmethod
+    async def _has_daily_memory(db: aiosqlite.Connection) -> bool:
+        """判断是否已有日常记忆；空库时不需要加载 embedding。"""
+        cursor = await db.execute("SELECT 1 FROM daily_memory LIMIT 1")
+        row = await cursor.fetchone()
+        await cursor.close()
+        return row is not None
     
 
 # 全局单例
