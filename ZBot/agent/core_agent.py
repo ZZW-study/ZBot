@@ -183,9 +183,9 @@ class CoreAgent(BaseAgent):
             return
         if not complexity.should_review:
             logger.info(
-                "任务复杂度 {} 低于阈值 {}，跳过技能进化（工具调用: {}, 唯一工具: {}, 消息: {}）",
+                "任务复杂度 {} 低于阈值 {}，跳过技能进化（工具调用: {}, 唯一工具: {}）",
                 complexity.score, self.skill_review_complexity_threshold,
-                complexity.tool_call_count, complexity.unique_tools, complexity.message_count,
+                complexity.tool_call_count, complexity.unique_tools
             )
             return
 

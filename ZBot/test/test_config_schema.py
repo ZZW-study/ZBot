@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ZBot.config.schema import Config, ProviderConfig, ProvidersConfig
+from ZBot.config.schema import Config, MCPServerConfig, ProviderConfig, ProvidersConfig
 
 
 class TestConfigDefaults:
@@ -55,6 +55,20 @@ class TestConfigValidators:
         """context_compaction_threshold > 0.95 应抛出 ValueError。"""
         with pytest.raises(ValueError, match="比例参数"):
             Config(context_compaction_threshold=1.0)
+
+
+class TestMCPServerConfig:
+    def test_infers_stdio_from_command(self):
+        config = MCPServerConfig(command="npx", args=["-y", "server"])
+        assert config.type == "stdio"
+
+    def test_accepts_transport_alias(self):
+        config = MCPServerConfig.model_validate({"transport": "sse", "url": "https://example.com/sse"})
+        assert config.type == "sse"
+
+    def test_infers_streamable_http_from_url(self):
+        config = MCPServerConfig(url="https://example.com/mcp")
+        assert config.type == "streamableHttp"
 
 
 class TestGetProvider:

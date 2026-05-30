@@ -25,6 +25,13 @@
   font-size: 17px;
 }
 
+.config-warning {
+  margin: var(--space-1) 0 0;
+  color: var(--color-warning);
+  font-size: var(--text-sm);
+  line-height: var(--leading-normal);
+}
+
 /* Message list */
 .message-list {
   overflow-y: auto;
@@ -32,6 +39,12 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+.message-state {
+  margin: auto;
+  color: var(--color-text-tertiary);
+  font-size: var(--text-sm);
 }
 
 /* Single message */

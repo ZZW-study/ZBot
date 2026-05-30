@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { useConfig } from '../hooks/useConfig';
@@ -15,6 +15,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [sessionName, setSessionName] = useState('default');
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const activeSessionRef = useRef(sessionName);
 
   const { apiBase, configured, reason } = useConfig();
   const {
@@ -26,6 +27,10 @@ export default function ChatPage() {
     renameSession,
     deleteSession,
   } = useSessions(apiBase);
+
+  useEffect(() => {
+    activeSessionRef.current = sessionName;
+  }, [sessionName]);
 
   useEffect(() => {
     let ignore = false;
@@ -57,6 +62,11 @@ export default function ChatPage() {
   }, []);
 
   const handleCompleted = useCallback((event: AgentEvent) => {
+    if (event.session_name && event.session_name !== activeSessionRef.current) {
+      refresh();
+      return;
+    }
+
     const payloadContent = event.payload?.final_content;
     const finalContent = typeof payloadContent === 'string' ? payloadContent : event.message || '';
     setStreamingContent('');
@@ -68,18 +78,27 @@ export default function ChatPage() {
   }, [refresh]);
 
   const handleFailed = useCallback((event: AgentEvent) => {
+    if (event.session_name && event.session_name !== activeSessionRef.current) {
+      refresh();
+      return;
+    }
+
     setStreamingContent('');
     setMessages((prev) => [
       ...prev,
       { id: `${event.run_id}-${event.created_at}-error`, role: 'assistant', content: event.message || '任务失败' },
     ]);
-  }, []);
+  }, [refresh]);
 
-  const handleStarted = useCallback(() => {
+  const handleStarted = useCallback((event: AgentEvent) => {
+    if (event.session_name && event.session_name !== activeSessionRef.current) return;
+
     setStreamingContent('');
   }, []);
 
   const handleDelta = useCallback((event: AgentEvent) => {
+    if (event.session_name && event.session_name !== activeSessionRef.current) return;
+
     const payloadDelta = event.payload?.delta;
     const delta = (typeof payloadDelta === 'string' ? payloadDelta : event.message) ?? '';
     if (!delta) return;
