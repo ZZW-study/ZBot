@@ -13,7 +13,7 @@ import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from loguru import logger
-from ZBot.utils.helpers import format_messages, normalize_tool_args,ensure_dir
+from ZBot.service.utils.helpers import format_messages, normalize_tool_args,ensure_dir
 
 
 if TYPE_CHECKING:

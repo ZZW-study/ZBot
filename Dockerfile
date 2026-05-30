@@ -13,4 +13,10 @@ RUN uv sync --frozen
 
 COPY . .
 
-CMD ["uv", "run", "python", "-m", "ZBot", "--help"]
+# 默认启动后端服务（uvicorn）
+# 前端可通过 start.py 或 docker-compose 单独启动
+# 使用 start.py 启动完整服务（后端 + 前端）:
+#   docker run -p 8000:8000 -p 5173:5173 zbot python start.py
+EXPOSE 8000
+
+CMD ["uv", "run", "uvicorn", "ZBot.backend.app:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -6,7 +6,7 @@
 from typing import ClassVar, Literal, Optional                          # Literal 用于限定变量只能是几个固定值之一
 from pathlib import Path                    
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic.alias_generators import to_camel      # 将下划线命名转为驼峰命名的工具函数
 # 继承它，定义结构化数据
 # 你写的自定义类继承 BaseModel 后，就变成了严格的结构化数据模型,本身python的类型注解，只是注解，你传入其他的类型也可以，但是这就会强制！。
@@ -111,6 +111,23 @@ class MCPServerConfig(Base):
     headers: dict[str, str] = Field(default_factory=dict)            # HTTP 请求头
     tool_timeout: int = 30  # 工具调用超时时间（秒）
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_transport(cls, data):
+        if not isinstance(data, dict):
+            return data
+
+        normalized = dict(data)
+        if normalized.get("type") is None:
+            transport = normalized.get("transport")
+            if isinstance(transport, str) and transport:
+                normalized["type"] = transport
+            elif normalized.get("command") or normalized.get("args"):
+                normalized["type"] = "stdio"
+            elif normalized.get("url"):
+                normalized["type"] = "streamableHttp"
+        return normalized
+
 class ToolsConfig(Base):
     """所有工具的全局配置。
     汇总了网页工具、命令执行工具、工作区限制和 MCP 服务器的配置。
@@ -148,6 +165,7 @@ class Config(BaseModel):
     obsolete_score_threshold : float = 0.5       # 记忆过时分数阈值
     decay_rate: float = 0.12                      # 记忆衰减率
     evolve_score_threshold: float = 1.3          # 记忆进化分数阈值
+    skill_review_complexity_threshold: float = 0.3  # 技能审查复杂度阈值
 
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)  # 所有 LLM 提供商
     tools: ToolsConfig = Field(default_factory=ToolsConfig)              # 所有工具配置

@@ -10,9 +10,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 DEFAULT_CONTEXT_WINDOW = 128_000
+StreamCallback = Callable[[str], Awaitable[None]]
 
 
 @dataclass
@@ -57,6 +58,7 @@ class LLMProvider(ABC):
         max_tokens: int = 4096,
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
+        on_delta: StreamCallback | None = None,
     ) -> LLMResponse:
         """发送聊天请求并返回标准化响应。"""
         raise NotImplementedError

@@ -1,9 +1,9 @@
 import asyncio
-from celery_app import app
+from ZBot.tasks.celery_app import app
 from ZBot.memory.daily_memory import daily_memory_store
 from ZBot.memory.long_term_memory import long_term_memory_store
 from ZBot.config.schema import Config
-from ZBot.cli.commands import make_provider
+from ZBot.service.agent_run.agent_factory import create_provider
 from loguru import logger
 
 @app.task(
@@ -26,17 +26,17 @@ def weekly_daily_memory_operate(self): # ⚠️ 改成同步 def
 async def _run_memory_operations():
     """真正的异步业务逻辑"""
     config = Config()
-    provider = make_provider(config)
+    provider = create_provider(config)
 
     # 1. 清理过时日常记忆
-    obsolete_ok = await daily_memory_store.obsolete_daily_memory(
-        decay_rate=config.decay_rate,
-        obsolete_score_threshold=config.obsolete_score_threshold
-    )
-    logger.info(f"日常记忆清理结果: {'成功' if obsolete_ok else '失败'}")
-
-    # 2. 晋升并写入长期记忆
     try:
+        obsolete_ok = await daily_memory_store.obsolete_daily_memory(
+            decay_rate=config.decay_rate,
+            obsolete_score_threshold=config.obsolete_score_threshold
+        )
+        logger.info(f"日常记忆清理结果: {'成功' if obsolete_ok else '失败'}")
+
+        # 2. 晋升并写入长期记忆
         evolve_data = await daily_memory_store.evolve_daily_memory(
             decay_rate=config.decay_rate,
             evolve_score_threshold=config.evolve_score_threshold

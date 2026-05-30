@@ -43,13 +43,13 @@
 import json
 import secrets                                  # 安全随机，random伪随机
 import string
-from typing import Any,Optional
+from typing import Any, Optional
 import litellm
 from litellm import acompletion                 # async，调用大模型，返回回答
 from loguru import logger 
 
-from ZBot.providers.base import DEFAULT_CONTEXT_WINDOW, LLMProvider, LLMResponse, ToolCallRequest
-from ZBot.providers.registry import find_by_model, find_gateway
+from ZBot.providers.base import DEFAULT_CONTEXT_WINDOW, LLMProvider, LLMResponse, StreamCallback, ToolCallRequest
+from ZBot.providers.registry import context_window_for_model, find_by_model, find_gateway
 from ZBot.providers.registry import ProviderSpec
 
 _ALLOWED_MSG_KEYS = frozenset({"role","content","tool_calls","tool_call_id", "name", "reasoning_content"}) # 允许的消息标准字段（所有厂商通用）
@@ -64,37 +64,11 @@ def _short_tool_id() ->str:
 
 
 class LiteLLMProvider(LLMProvider):
-    """LiteLLM统一调用实现类,为什么_instance这样写，这就是cls._instance就是一个实例"""
+    """LiteLLM 统一调用实现。"""
 
-    _instance: Optional["LiteLLMProvider"] = None
     default_model: str
     _std_provider: Optional["ProviderSpec"] = None
     _gateway: Optional["ProviderSpec"] = None
-
-    def __new__(
-            cls,
-            api_key: str | None = None,
-            api_base: str | None = None,
-            default_model: str = "GLM-5.0-Pro",  # 默认模型名称
-            provider_name: str | None = None,        
-    ):
-        """创建或复用 LiteLLM 提供商单例。"""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls) # 创建了实例，并赋值给了cls的_instance属性，如果再次cls._instance.某某 = 某某，就是在给实例写属性
-            # 初始化父类（API密钥/地址）
-            cls._instance.api_key = api_key
-            cls._instance.api_base = api_base
-            cls._instance.default_model = default_model
-            # 检测网关,返回ProviderSpec类
-            cls._instance._gateway = find_gateway(provider_name)
-            # 监测标准提供商，返回ProviderSpec类
-            cls._instance._std_provider = find_by_model(default_model)
-            litellm.api_key = api_key
-            litellm.api_base = api_base    
-            # LiteLLM基础配置
-            litellm.suppress_debug_info = True  # 关闭调试日志
-            litellm.drop_params = True          # 自动删除不支持的参数
-        return cls._instance   # 返回实例对象
 
     def __init__(
         self,
@@ -103,9 +77,14 @@ class LiteLLMProvider(LLMProvider):
         default_model: str = "GLM-5.0-Pro",
         provider_name: str | None = None,
     ):
-        """匹配 __new__ 的参数签名，避免实例化时落到父类 __init__ 报多余参数。"""
-        # 实际初始化在 __new__ 中完成；这里保留空实现是为了兼容现有单例写法。
-        pass
+        """按每个 AgentBundle 创建独立 provider，确保配置变更立即生效。"""
+        self.api_key = api_key
+        self.api_base = api_base
+        self.default_model = default_model
+        self._gateway = find_gateway(provider_name)
+        self._std_provider = find_by_model(default_model)
+        litellm.suppress_debug_info = True
+        litellm.drop_params = True
 
 
     async def chat(
@@ -116,6 +95,7 @@ class LiteLLMProvider(LLMProvider):
         max_tokens: int = 4396,
         temperature: float = 0.1,
         reasoning_effort: str | None = None,
+        on_delta: StreamCallback | None = None,
     ) -> LLMResponse:
         """【核心方法】异步发送聊天请求给 LiteLLM，并返回标准化响应。"""
         if model is None:
@@ -146,6 +126,8 @@ class LiteLLMProvider(LLMProvider):
 
         try:
             logger.debug("发送给模型的消息：{}", json.dumps(kwargs.get("messages", []), ensure_ascii=False, indent=2))
+            if on_delta is not None:
+                return await self._stream_response(kwargs, on_delta)
             response = await acompletion(**kwargs)
             return self._parse_response(response)
         except Exception as e:
@@ -158,17 +140,24 @@ class LiteLLMProvider(LLMProvider):
     def get_context_window(self, model: str | None = None) -> int:
         """优先读取 LiteLLM 的模型元数据，失败时回退到 128K。"""
         target_model = model or self.default_model
+        local_window = context_window_for_model(target_model, self._gateway or self._std_provider)
+        if local_window:
+            return local_window
+
         try:
             resolved_model = self._resolve_model(target_model)
             info = litellm.get_model_info(resolved_model)
         except Exception:
-            logger.debug("无法读取模型 {} 的上下文窗口，使用默认值 {}", target_model, DEFAULT_CONTEXT_WINDOW)
+            logger.info("LiteLLM 未收录模型 {} 的上下文窗口，使用默认值 {}", target_model, DEFAULT_CONTEXT_WINDOW)
             return DEFAULT_CONTEXT_WINDOW
 
         for key in ("max_input_tokens", "max_context_tokens", "max_tokens"):
             value = info.get(key)
             if isinstance(value, int) and value > 0:
                 return value
+        local_window = context_window_for_model(resolved_model, self._gateway or self._std_provider)
+        if local_window:
+            return local_window
         return DEFAULT_CONTEXT_WINDOW
 
 
@@ -253,3 +242,138 @@ class LiteLLMProvider(LLMProvider):
             usage=usage,
             reasoning_content=reasoning_content,
         )
+
+    async def _stream_response(
+        self,
+        kwargs: dict[str, Any],
+        on_delta: StreamCallback,
+    ) -> LLMResponse:
+        """使用 LiteLLM stream=True 读取增量文本，同时兼容工具调用 delta。"""
+        kwargs = dict(kwargs)
+        kwargs["stream"] = True
+
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        finish_reason = "stop"
+        usage: dict[str, int] = {}
+        tool_call_parts: dict[int, dict[str, str]] = {}
+
+        stream = await acompletion(**kwargs)
+        async for chunk in stream:
+            choice = self._first_choice(chunk)
+            if choice is None:
+                continue
+
+            chunk_finish_reason = self._get_value(choice, "finish_reason")
+            if chunk_finish_reason:
+                finish_reason = chunk_finish_reason
+
+            delta = self._get_value(choice, "delta")
+            if delta is None:
+                continue
+
+            content_delta = self._get_value(delta, "content")
+            if content_delta:
+                content_parts.append(str(content_delta))
+                await on_delta(str(content_delta))
+
+            reasoning_delta = self._get_value(delta, "reasoning_content")
+            if reasoning_delta:
+                reasoning_parts.append(str(reasoning_delta))
+
+            for index, tc_delta in enumerate(self._get_value(delta, "tool_calls") or []):
+                self._merge_tool_call_delta(tool_call_parts, index, tc_delta)
+
+            chunk_usage = self._get_value(chunk, "usage")
+            if chunk_usage:
+                usage = self._parse_usage(chunk_usage)
+
+        return LLMResponse(
+            content="".join(content_parts) or None,
+            tool_calls=self._parse_stream_tool_calls(tool_call_parts),
+            finish_reason=finish_reason or "stop",
+            usage=usage,
+            reasoning_content="".join(reasoning_parts) or None,
+        )
+
+    @staticmethod
+    def _first_choice(response: Any) -> Any | None:
+        """取出兼容对象/字典两种形态的第一个 choice。"""
+        choices = LiteLLMProvider._get_value(response, "choices")
+        if not choices:
+            return None
+        return choices[0]
+
+    @staticmethod
+    def _get_value(obj: Any, key: str, default: Any = None) -> Any:
+        """兼容 LiteLLM 返回的对象属性和 dict 字段。"""
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
+    @staticmethod
+    def _merge_tool_call_delta(
+        tool_call_parts: dict[int, dict[str, str]],
+        fallback_index: int,
+        tc_delta: Any,
+    ) -> None:
+        """把 OpenAI 兼容的 tool_calls 流式片段拼回完整工具调用。"""
+        index = LiteLLMProvider._get_value(tc_delta, "index", fallback_index)
+        if not isinstance(index, int):
+            index = fallback_index
+
+        current = tool_call_parts.setdefault(
+            index,
+            {"id": "", "name": "", "arguments": ""},
+        )
+
+        tool_id = LiteLLMProvider._get_value(tc_delta, "id")
+        if tool_id:
+            current["id"] = str(tool_id)
+
+        function_delta = LiteLLMProvider._get_value(tc_delta, "function")
+        if function_delta:
+            name_delta = LiteLLMProvider._get_value(function_delta, "name")
+            arguments_delta = LiteLLMProvider._get_value(function_delta, "arguments")
+            if name_delta:
+                current["name"] += str(name_delta)
+            if arguments_delta:
+                current["arguments"] += str(arguments_delta)
+
+    @staticmethod
+    def _parse_stream_tool_calls(tool_call_parts: dict[int, dict[str, str]]) -> list[ToolCallRequest]:
+        """把流式工具调用片段转成统一 ToolCallRequest。"""
+        tool_calls: list[ToolCallRequest] = []
+        for _, item in sorted(tool_call_parts.items()):
+            name = item.get("name", "")
+            if not name:
+                continue
+
+            args_text = item.get("arguments", "")
+            try:
+                args = json.loads(args_text) if args_text else {}
+            except json.JSONDecodeError:
+                args = {}
+
+            tool_calls.append(
+                ToolCallRequest(
+                    id=item.get("id") or _short_tool_id(),
+                    name=name,
+                    arguments=args if isinstance(args, dict) else {},
+                )
+            )
+        return tool_calls
+
+    @staticmethod
+    def _parse_usage(usage: Any) -> dict[str, int]:
+        """解析流式响应可能携带的 usage。"""
+        result: dict[str, int] = {}
+        for source_key, target_key in (
+            ("prompt_tokens", "prompt_tokens"),
+            ("completion_tokens", "completion_tokens"),
+            ("total_tokens", "total_tokens"),
+        ):
+            value = LiteLLMProvider._get_value(usage, source_key)
+            if isinstance(value, int):
+                result[target_key] = value
+        return result

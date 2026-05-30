@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from ZBot.agent.evolution.lifecycle import read_lifecycle_info
 from ZBot.agent.tools.skills import SkillManifest, _normalize_manifest
 
 # 内置技能目录：ZBot/skills/
@@ -26,12 +27,17 @@ class SkillCatalog:
         self.workspace_skills_dir: Path | None = workspace / "skills" if workspace else None
         self._registry_cache: dict[str, SkillManifest] | None = None
 
+
     def invalidate_cache(self) -> None:
         """清空技能注册表缓存，下次调用时重新扫描。"""
         self._registry_cache = None
 
+
     async def build_catalog_for_prompt(self) -> str:
-        """构建技能目录摘要，注入到 system prompt。"""
+        """构建技能目录摘要，注入到 system prompt。
+
+        过滤 archived 技能（不可见），stale 技能标注 "(stale)"。
+        """
         skills = await self._list_skills()
         if not skills:
             return ""
@@ -44,8 +50,17 @@ class SkillCatalog:
         ]
 
         for manifest in skills:
+            # 读取生命周期状态
+            lifecycle = await read_lifecycle_info(manifest.skill_file)
+
+            # archived 技能不显示在目录中
+            if lifecycle.status == "archived":
+                continue
+
+            # stale 技能标注
+            stale_tag = " (stale)" if lifecycle.status == "stale" else ""
             lines.append(
-                f"- `{manifest.name}`：{manifest.description}（路径：{manifest.skill_file}）"
+                f"- `{manifest.name}`{stale_tag}：{manifest.description}（路径：{manifest.skill_file}）"
             )
 
         return "\n".join(lines)
