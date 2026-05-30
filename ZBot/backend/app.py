@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -50,12 +51,18 @@ app = FastAPI(title="ZBot Harness API", lifespan=lifespan)
 #   2. 后端返回 CORS 响应头（Access-Control-Allow-Origin 等），表示同意
 #   3. 浏览器收到同意后，才发送真正的 GET/POST 请求
 #
-# allow_origins=["*"] = 允许所有来源访问（开发阶段用，上线后应改为具体域名）
-# allow_methods=["*"] = 允许所有 HTTP 方法（GET/POST/PUT/DELETE 等）
-# allow_headers=["*"] = 允许所有请求头
+# 环境变量 ZBOT_CORS_ORIGINS 控制允许的域名：
+#   未设置或设为 "*" → 允许所有来源（开发阶段）
+#   设为逗号分隔的域名列表 → 仅允许指定域名（生产阶段）
+_cors_env = os.environ.get("ZBOT_CORS_ORIGINS", "*").strip()
+if _cors_env == "*":
+    _allow_origins = ["*"]
+else:
+    _allow_origins = [origin.strip() for origin in _cors_env.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],       # 开发阶段允许所有来源
+    allow_origins=_allow_origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )

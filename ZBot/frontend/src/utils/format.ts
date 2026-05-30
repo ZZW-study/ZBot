@@ -10,7 +10,14 @@
 
 // export function — 具名导出
 // 导入时：import { socketStateLabel } from '../utils/format'
-export function socketStateLabel(state) {
+import type { AgentEvent, SocketState } from '../types';
+
+function payloadString(event: AgentEvent, key: string): string {
+  const value = event.payload?.[key];
+  return typeof value === 'string' ? value : '';
+}
+
+export function socketStateLabel(state: SocketState): string {
   // if-else 链：根据状态字符串返回对应的中文
   if (state === 'connected') return '已连接';
   if (state === 'connecting') return '连接中';
@@ -24,12 +31,12 @@ export function socketStateLabel(state) {
 // eventTitle — 事件类型转中文标题
 // ═══════════════════════════════════════════════════════════
 
-export function eventTitle(event) {
+export function eventTitle(event: AgentEvent): string {
   // || 默认值：如果 event.agent_label 是假值，用 'Agent'
   const agent = event.agent_label || 'Agent';
 
   // ?. 可选链 + 动态属性访问
-  const toolName = event.payload?.tool_name;
+  const toolName = payloadString(event, 'tool_name');
 
   // 模板字符串里可以嵌入三元运算符
   // ${toolName ? `：${toolName}` : ''} — 如果有工具名就显示，没有就显示空字符串
@@ -63,12 +70,12 @@ export function eventTitle(event) {
 // eventMessage — 事件转可读消息
 // ═══════════════════════════════════════════════════════════
 
-export function eventMessage(event) {
+export function eventMessage(event: AgentEvent | null): string {
   // 如果 event 不存在（null/undefined），返回默认文本
   if (!event) return '正在处理任务...';
 
   // assistant.delta — 流式文本片段
-  if (event.type === 'assistant.delta') return event.payload?.delta || event.message || '';
+  if (event.type === 'assistant.delta') return payloadString(event, 'delta') || event.message || '';
 
   // assistant.completed — 回答完成
   if (event.type === 'assistant.completed') return '回答生成完成';
@@ -94,7 +101,7 @@ export function eventMessage(event) {
 // formatTime — ISO 时间戳转本地化时间
 // ═══════════════════════════════════════════════════════════
 
-export function formatTime(value) {
+export function formatTime(value?: string): string {
   // 空值检查
   if (!value) return '';
 

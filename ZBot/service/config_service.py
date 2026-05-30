@@ -5,8 +5,6 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from pydantic import ValidationError
-
 from ZBot.config.loader import load_config
 from ZBot.config.schema import Config
 from ZBot.service.utils.config_utils import is_masked_or_empty_key

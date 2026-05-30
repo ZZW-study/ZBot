@@ -3,12 +3,22 @@
  * 包含文本输入框和发送按钮
  */
 
+import type { KeyboardEvent } from 'react';
+import type { StringSetter } from '../types';
+
+interface ComposerProps {
+  input: string;
+  setInput: StringSetter;
+  onSend: () => void;
+  disabled: boolean;
+}
+
 // 函数组件，接收 4 个 props
-export default function Composer({ input, setInput, onSend, disabled }) {
+export default function Composer({ input, setInput, onSend, disabled }: ComposerProps) {
 
   // 键盘事件处理
   // event — 事件对象，包含按了什么键、有没有按修饰键等信息
-  const handleKeyDown = (event) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // event.key — 按下的键名（字符串，如 "Enter"、"a"、"Escape"）
     // event.ctrlKey — 是否按了 Ctrl（布尔值）
     // event.metaKey — 是否按了 Cmd（Mac 的 Command 键）

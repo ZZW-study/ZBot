@@ -1,46 +1,30 @@
 /**
- * index.css — 全局重置样式
- * 所有页面共享的基础样式，类似"重置浏览器默认样式"
+ * index.css — Global reset + base styles
  */
 
-/* * 选择器：选中所有元素 */
-/* box-sizing: border-box — 让 padding 和 border 包含在 width/height 内 */
-/* 默认浏览器是 content-box，padding 会额外增加宽度，容易导致布局溢出 */
+@import './styles/tokens.css';
+
+/* Box-sizing: border-box — include padding/border in width/height */
 * {
   box-sizing: border-box;
 }
 
-/* 多个选择器用逗号分隔，表示同时选中 html、body、#root */
-/* min-height: 100% — 最小高度等于父元素高度（即视口高度） */
-/* 作用：让页面至少占满整个屏幕 */
+/* Ensure full-height layout */
 html,
 body,
 #root {
   min-height: 100%;
 }
 
-/* body 样式 */
 body {
-  margin: 0;  /* 去掉浏览器默认的 8px 外边距 */
-
-  /* font-family — 字体列表，按优先级从左到右尝试 */
-  /* 如果系统没有 Inter，就用 ui-sans-serif，再没有就用 system-ui... */
-  font-family:
-    Inter,
-    ui-sans-serif,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-
-  background: #f6f6fb;  /* 浅灰背景色 */
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--color-brand-bg);
+  color: var(--color-text-primary);
 }
 
-/* button、input、textarea 继承父元素的字体 */
-/* 因为浏览器默认给表单元素用系统字体，不继承 body 的 font-family */
 button,
 input,
 textarea {
-  font: inherit;  /* inherit = 继承父元素的字体样式 */
+  font: inherit;
 }

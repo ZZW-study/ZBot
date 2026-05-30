@@ -1,0 +1,110 @@
+/**
+ * chat.css — Chat area: header, message list, message bubbles
+ */
+
+.chat {
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+/* Chat header */
+.chat-header {
+  height: var(--chat-header-height);
+  border-bottom: 1px solid var(--color-border-light);
+  background: rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: 0 var(--space-7);
+}
+
+.chat-header h2,
+.notes h2 {
+  font-size: 17px;
+}
+
+/* Message list */
+.message-list {
+  overflow-y: auto;
+  padding: var(--space-7);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Single message */
+.message {
+  max-width: min(760px, 88%);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.message span {
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  font-weight: 700;
+}
+
+.message p {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: var(--leading-relaxed);
+  padding: 14px var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-light);
+  background: var(--color-surface);
+}
+
+/* User message (right-aligned) */
+.message.user {
+  align-self: flex-end;
+}
+
+.message.user span {
+  text-align: right;
+}
+
+.message.user p {
+  background: var(--color-brand-dark);
+  border-color: var(--color-brand-dark);
+  color: var(--color-surface);
+}
+
+/* Streaming message */
+.message.streaming p {
+  color: var(--color-text-secondary);
+}
+
+/* Stop button */
+.stop-button {
+  border: 0;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  cursor: pointer;
+  height: 38px;
+  padding: 0 var(--space-4);
+  background: #fff2f1;
+  color: var(--color-destructive);
+  border: 1px solid #ffc9c3;
+}
+
+.stop-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* Responsive */
+@media (max-width: 760px) {
+  .chat-header {
+    height: auto;
+    align-items: flex-start;
+    padding: 18px;
+  }
+
+  .message-list {
+    padding: 18px;
+  }
+}
