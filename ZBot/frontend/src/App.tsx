@@ -10,7 +10,7 @@ import OnboardPage from './pages/OnboardPage';
 import ChatPage from './pages/ChatPage';
 
 function App() {
-  const { exists, setExists, configured, setConfigured, apiBase } = useConfig();
+  const { exists, setExists, setConfigured, apiBase } = useConfig();
 
   if (exists === null) {
     return (

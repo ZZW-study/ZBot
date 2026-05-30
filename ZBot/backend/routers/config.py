@@ -12,7 +12,6 @@ from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
 from ZBot.config.loader import save_config
-from ZBot.config.paths import get_config_path
 from ZBot.config.schema import Config
 from ZBot.service.config_service import (
     PROVIDER_DEFAULTS,
@@ -31,7 +30,7 @@ async def config_status() -> dict[str, Any]:
     """检测配置是否可用。前端启动时调用此端点决定显示引导页还是聊天界面。"""
     config = config_cache.get()
     if config is None:
-        return {"exists": get_config_path().exists(), "configured": False, "model": "", "provider": ""}
+        return {"exists": False, "configured": False, "model": "", "provider": ""}
 
     configured, provider_name, reason = resolved_provider_status(config)
     return {
