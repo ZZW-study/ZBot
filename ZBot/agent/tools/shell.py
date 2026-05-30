@@ -15,11 +15,11 @@
 
 from __future__ import annotations  # 启用未来版本的类型注解特性
 
-import asyncio                      # 用于异步执行 shell 命令
-import os  
-import re                           # 用于正则表达式匹配危险命令模式
-from pathlib import Path  
-from typing import Any  
+import asyncio  # 用于异步执行 shell 命令
+import os
+import re  # 用于正则表达式匹配危险命令模式
+from pathlib import Path
+from typing import Any
 
 from ZBot.agent.tools.base import Tool, format_tool_error
 
@@ -60,7 +60,7 @@ class ExecTool(Tool):
             deny_patterns: 危险命令黑名单正则表达式列表，None 使用默认黑名单
             restrict_to_workspace: 是否限制只能访问工作区内的路径
         """
-        self.timeout = timeout          # 默认超时时间
+        self.timeout = timeout  # 默认超时时间
         self.working_dir = working_dir  # 默认工作目录
         # 默认危险命令模式覆盖删除磁盘、关机、fork bomb 等高风险操作
         # 这些正则表达式会匹配命令字符串，阻止执行
@@ -100,7 +100,10 @@ class ExecTool(Tool):
             "properties": {
                 "command": {
                     "type": "string",  # command 参数必须是字符串
-                    "description": "要执行的 shell 命令。优先使用只读观察命令、测试命令或构建命令；高风险命令会被安全策略拦截。",
+                    "description": (
+                        "要执行的 shell 命令。优先使用只读观察命令、测试命令或构建命令；"
+                        "高风险命令会被安全策略拦截。"
+                    ),
                 },
                 "working_dir": {
                     "type": "string",  # working_dir 参数可选，字符串类型
@@ -109,7 +112,7 @@ class ExecTool(Tool):
                 "timeout": {
                     "type": "integer",  # timeout 参数可选，整数类型
                     "description": "超时时间，单位秒。默认 60 秒，最大 600 秒。",
-                    "minimum": 1,    # 最小值 1 秒
+                    "minimum": 1,  # 最小值 1 秒
                     "maximum": 600,  # 最大值 600 秒（10 分钟）
                 },
             },
@@ -171,10 +174,10 @@ class ExecTool(Tool):
         try:
             # 使用 asyncio 异步创建子进程执行 shell 命令
             process = await asyncio.create_subprocess_shell(
-                command,                         # 要执行的命令
+                command,  # 要执行的命令
                 stdout=asyncio.subprocess.PIPE,  # 捕获标准输出
                 stderr=asyncio.subprocess.PIPE,  # 捕获标准错误
-                cwd=cwd,                         # 工作目录
+                cwd=cwd,  # 工作目录
             )
 
             try:
@@ -331,9 +334,7 @@ class ExecTool(Tool):
 
                 # 检查路径是否在工作区外
                 # path.parents 包含所有父目录，如果 cwd_path 不在其中，说明越界
-                if path.is_absolute() and (
-                    cwd_path not in path.parents and path != cwd_path
-                ):
+                if path.is_absolute() and (cwd_path not in path.parents and path != cwd_path):
                     return format_tool_error(
                         "命令被安全策略拦截，访问路径超出了当前工作目录",
                         attempted=f"在 {cwd} 执行：{command}",

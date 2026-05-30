@@ -1,8 +1,10 @@
 """通用辅助函数模块。"""
+
+import json
 import re
 from pathlib import Path
 from typing import Any
-import json
+
 # 文件名中不允许出现的不安全字符（Windows/Unix 系统保留字符）
 _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')
 
@@ -21,7 +23,7 @@ def safe_filename(name: str) -> str:
     return _UNSAFE_CHARS.sub("_", name).strip()
 
 
-def ensure_workspace_dirs(workspace: Path) ->None:
+def ensure_workspace_dirs(workspace: Path) -> None:
     """创建工作区所需的必要目录。"""
     dirs = [
         workspace / "memory",
@@ -31,6 +33,7 @@ def ensure_workspace_dirs(workspace: Path) ->None:
     for d in dirs:
         if not d.exists():
             ensure_dir(d)
+
 
 def format_messages(messages: list[dict[str, Any]]) -> list[str]:
     """把消息列表格式化成适合归档模型阅读的转录文本。每条消息的格式：[timestamp] ROLE[tools_used]: content"""

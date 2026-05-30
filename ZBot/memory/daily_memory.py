@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-import aiosqlite
-import sqlite_vec
-from sqlite_vec import serialize_float32
-from pathlib import Path
 import asyncio
 import threading
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
 
-from typing import Any, TYPE_CHECKING,Optional
-from ZBot.service.utils.helpers import normalize_tool_args, format_messages,ensure_dir
+import aiosqlite
+import sqlite_vec
 from loguru import logger
+from sqlite_vec import serialize_float32
+
 from ZBot.config.schema import Config
+from ZBot.service.utils.helpers import ensure_dir, format_messages, normalize_tool_args
 
 if TYPE_CHECKING:
     from ZBot.providers.base import LLMProvider
@@ -18,16 +19,17 @@ if TYPE_CHECKING:
 
 DEFAULT_DAILY_MEMORY_TOP_K = 5
 
+
 async def get_db(workspace_path: Path) -> aiosqlite.Connection:
     """获取 SQLite 数据库连接，数据库文件位于工作区的 memory 目录下。"""
     db_path = workspace_path / "memory" / "DAILY_MEMORY.db"
     ensure_dir(db_path.parent)  # 确保目录存在
 
     db = await aiosqlite.connect(db_path)
-    await db.enable_load_extension(True)   # 允许加载扩展
+    await db.enable_load_extension(True)  # 允许加载扩展
     await db.load_extension(sqlite_vec.loadable_path())  # 加载向量扩展
     await db.enable_load_extension(False)  # 加载完成后禁用扩展加载以增强安全性
-    db.row_factory = aiosqlite.Row         # 以字典形式返回查询结果
+    db.row_factory = aiosqlite.Row  # 以字典形式返回查询结果
 
     return db
 
@@ -82,8 +84,7 @@ _SAVE_DAILY_MEMORY_TOOL = [
                     "content": {
                         "type": "string",
                         "description": (
-                            "跨会话通用信息的结构化内容。\n"
-                            "必须包含【事实】【偏好】【任务】三个部分，用方括号标题分隔。"
+                            "跨会话通用信息的结构化内容。\n必须包含【事实】【偏好】【任务】三个部分，用方括号标题分隔。"
                         ),
                     },
                 },
@@ -96,13 +97,14 @@ _SAVE_DAILY_MEMORY_TOOL = [
 
 class DailyMemoryStore:
     """每日记忆存储类，负责管理每日记忆的数据库操作。"""
-    _instance : Optional["DailyMemoryStore"] = None
+
+    _instance: Optional["DailyMemoryStore"] = None
     db: aiosqlite.Connection | None
     _embeddings: Any | None
     _embedding_lock: threading.Lock
     workspace_path: Path
 
-    def __new__(cls,workspace_path: Path):
+    def __new__(cls, workspace_path: Path):
         """创建或复用每日记忆存储单例。"""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
@@ -111,7 +113,6 @@ class DailyMemoryStore:
             cls._instance._embeddings = None
             cls._instance._embedding_lock = threading.Lock()
         return cls._instance
-
 
     async def add_daily_memory(
         self,
@@ -162,21 +163,20 @@ class DailyMemoryStore:
         except Exception:
             await db.rollback()
             raise
-    
 
-    async def get_daily_memory_text(self,user_content: str, score_threshold: float = 0.75) -> str:
+    async def get_daily_memory_text(self, user_content: str, score_threshold: float = 0.75) -> str:
         """基于向量相似度检索相关的每日记忆记录(给上下文构造用的)，并返回文本内容。就是每一次问，在构造上下文提示词的时候，会进行召回"""
         try:
             daily_memory = await self._retrieve_daily_memory(user_content, score_threshold)
         except Exception:
             logger.exception("日常记忆召回失败，已跳过，不阻断本轮对话")
             return ""
-        merged_daily_memory = "\n---\n".join(f"- 会话名字:{entry['session_name']}\n- 日常记忆内容:{entry['content']}" for entry in daily_memory)
+        merged_daily_memory = "\n---\n".join(
+            f"- 会话名字:{entry['session_name']}\n- 日常记忆内容:{entry['content']}" for entry in daily_memory
+        )
         return f"## DAILY_MEMORY.md\n{merged_daily_memory}" if daily_memory else ""
 
-
-    
-    async def obsolete_daily_memory(self,decay_rate: float = 0.12,obsolete_score_threshold: float = 0.5) -> bool:
+    async def obsolete_daily_memory(self, decay_rate: float = 0.12, obsolete_score_threshold: float = 0.5) -> bool:
         """
         根据衰减率淘汰过时的日常记忆记录。
         score = recall_count * e^(-λ * days_alive)
@@ -190,7 +190,8 @@ class DailyMemoryStore:
                 DELETE FROM daily_memory
                 JOIN daily_memory_vector ON daily_memory.id = daily_memory_vector.rowid
                 WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) < ?
-                """,(decay_rate, obsolete_score_threshold)
+                """,
+                (decay_rate, obsolete_score_threshold),
             )
             await db.commit()
             return True
@@ -198,8 +199,9 @@ class DailyMemoryStore:
             await db.rollback()
             raise Exception("淘汰过时日常记忆失败")
 
-
-    async def evolve_daily_memory(self, decay_rate: float = 0.12, evolve_score_threshold: float = 1.3) -> list[dict[str,str]]:
+    async def evolve_daily_memory(
+        self, decay_rate: float = 0.12, evolve_score_threshold: float = 1.3
+    ) -> list[dict[str, str]]:
         """
         根据进化阈值升级有价值的日常记忆记录为长期记忆。
         score = recall_count * e^(-λ * days_alive)
@@ -213,7 +215,8 @@ class DailyMemoryStore:
                 SELECT session_name, content
                 FROM daily_memory
                 WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) >= ?
-                """,(decay_rate, evolve_score_threshold)
+                """,
+                (decay_rate, evolve_score_threshold),
             )
             results = await cursor.fetchall()
             await cursor.close()
@@ -224,20 +227,20 @@ class DailyMemoryStore:
                 DELETE FROM daily_memory
                 JOIN daily_memory_vector ON daily_memory.id = daily_memory_vector.rowid
                 WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) >= ?
-                """,(decay_rate, evolve_score_threshold)
+                """,
+                (decay_rate, evolve_score_threshold),
             )
             await db.commit()
             return [dict(result) for result in results]
-        
+
         except Exception:
             await db.rollback()
             raise Exception("升级有价值日常记忆失败")
 
-
     async def _generate_daily_memory_text(self, provider: "LLMProvider", model: str, session: "Session") -> str:
         """调用大模型生成每日记忆文本。"""
-        memory_snapshot = session.memory_snapshot or ""  # 只用记忆快照即可，因为如果没有生成记忆快照，说明之前没有生成过会话记忆，也就不用会话记忆，如果生成了记忆快照，会话记忆就是记忆快照了。
-        messages = session.messages[session.last_consolidated:]
+        memory_snapshot = session.memory_snapshot or ""
+        messages = session.messages[session.last_consolidated :]
         prompt = self._build_daily_memory_prompt(messages, memory_snapshot)
 
         try:
@@ -279,20 +282,17 @@ class DailyMemoryStore:
 
         return (
             "请从以下对话中提取跨会话可复用的通用信息。\n\n"
-
             "【提取范围】\n"
             "- 用户偏好：编码风格、语言习惯、工作习惯、输出格式要求\n"
             "- 用户背景：用户稳定的人设、职业背景、技术栈偏好、值得长期参考的个人细节\n"
             "- 协作方式：用户对助手行为的稳定期待、工作风格偏好、希望的协作模式\n"
             "- 通用知识：未来会复用的工具用法、最佳实践、踩坑经验、技术结论\n"
             "- 长期任务线索：跨会话仍需继续关注的任务及其当前状态\n\n"
-
             "【不提取】\n"
             "- 当前会话专属信息：项目临时配置、本次临时约定、当前上下文压缩进度\n"
             "- 可从仓库重新推导的普通代码细节\n"
             "- 一次性工具输出、失败流水、未经确认的猜测\n"
             "- 已经出现在已有记忆快照里的重复内容\n\n"
-
             "【输出格式】直接使用此结构，不要加 Markdown 标记：\n"
             "【事实】\n"
             "- [提取的事实条目]\n\n"
@@ -300,16 +300,15 @@ class DailyMemoryStore:
             "- [提取的偏好条目]\n\n"
             "【任务】\n"
             "- [提取的任务及状态条目]\n\n"
-
             "已有记忆快照（不要重复提取）：\n"
             f"{memory_snapshot}\n\n"
-
             "对话内容：\n"
             f"{formatted_messages}"
         )
 
     async def _generate_daily_memory_vec(self, content: str) -> list[float]:
         """生成每日记忆的向量表示。"""
+
         def _embed() -> list[float]:
             embeddings = self._get_embeddings()
             return embeddings.embed_query(content)
@@ -329,9 +328,7 @@ class DailyMemoryStore:
         if not user_content.strip() or not await self._has_daily_memory(db):
             return []
 
-        user_content_embeddings = serialize_float32(
-            await self._generate_daily_memory_vec(user_content.strip())
-        )
+        user_content_embeddings = serialize_float32(await self._generate_daily_memory_vec(user_content.strip()))
 
         cursor = await db.execute(
             """
@@ -352,7 +349,7 @@ class DailyMemoryStore:
             WHERE 1 - ranked.distance >= ?
             ORDER BY ranked.distance ASC
             """,
-            (user_content_embeddings, top_k, score_threshold)
+            (user_content_embeddings, top_k, score_threshold),
         )
 
         results = await cursor.fetchall()
@@ -370,7 +367,7 @@ class DailyMemoryStore:
                     SET recall_count = recall_count + 1
                     WHERE id = ?
                     """,
-                    (id,)
+                    (id,),
                 )
 
                 memories.append(
@@ -422,7 +419,7 @@ class DailyMemoryStore:
         row = await cursor.fetchone()
         await cursor.close()
         return row is not None
-    
+
 
 # 全局单例
 config = Config()

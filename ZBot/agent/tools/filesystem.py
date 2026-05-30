@@ -3,9 +3,11 @@
 import difflib
 from pathlib import Path
 from typing import Any
+
 import aiofiles
+
 from ZBot.agent.tools.base import Tool, format_tool_error
-from ZBot.service.utils.helpers import resolve_path, path_failure_hint
+from ZBot.service.utils.helpers import path_failure_hint, resolve_path
 
 
 class ReadFileTool(Tool):
@@ -34,13 +36,15 @@ class ReadFileTool(Tool):
         - list_dir 负责"看目录里有什么"，read_file 负责"看文件里写了什么"
     """
 
-    _MAX_CHARS = 128_000  # 返回内容的最大字符数，超出则截断.数字下划线写法,下划线只用来分隔数字、方便阅读，不影响数值大小
+    _MAX_CHARS = (
+        128_000  # 返回内容的最大字符数，超出则截断.数字下划线写法,下划线只用来分隔数字、方便阅读，不影响数值大小
+    )
     _DEFAULT_LIMIT = 2000  # 默认读取行数
 
     def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
         """初始化读取工具的工作区和访问边界。"""
-        self._workspace = workspace         # 工作区根目录
-        self._allowed_dir = allowed_dir     # 允许访问的目录
+        self._workspace = workspace  # 工作区根目录
+        self._allowed_dir = allowed_dir  # 允许访问的目录
 
     @property
     def name(self) -> str:
@@ -61,9 +65,20 @@ class ReadFileTool(Tool):
         return {
             "type": "object",
             "properties": {
-                "path": {"type": "string", "description": "要读取的文件路径。已知路径时直接读取；未知路径先用 list_dir 或搜索工具定位。"},
-                "offset": {"type": "integer", "description": "起始行号（1 索引）。继续读取大文件时使用工具返回提示里的下一个 offset。", "minimum": 1},
-                "limit": {"type": "integer", "description": "最多读取的行数（默认 2000）。读取局部上下文时设置较小值。", "minimum": 1},
+                "path": {
+                    "type": "string",
+                    "description": "要读取的文件路径。已知路径时直接读取；未知路径先用 list_dir 或搜索工具定位。",
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "起始行号（1 索引）。继续读取大文件时使用工具返回提示里的下一个 offset。",
+                    "minimum": 1,
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "最多读取的行数（默认 2000）。读取局部上下文时设置较小值。",
+                    "minimum": 1,
+                },
             },
             "required": ["path"],
         }
@@ -230,7 +245,6 @@ class WriteFileTool(Tool):
             async with aiofiles.open(fp, mode="w", encoding="utf-8") as f:
                 await f.write(content)
 
-
             return f"已成功写入文件：{fp}（共 {len(content)} 个字符）"
         except PermissionError as e:
             return format_tool_error(
@@ -279,8 +293,6 @@ def _find_match(content: str, old_text: str) -> tuple[str | None, int]:
     return None, 0  # 未找到匹配
 
 
-
-
 """根据用户输入决定从哪里开始
 用户给了明确文件路径，比如"改 src/auth.py 里的 foo 函数"：
 read_file → edit_file → read_file 验证
@@ -299,8 +311,9 @@ list_dir → glob_search("**/*login*") → grep_search("expire|token") → read_
 
 grep 找到位置后，必须先 read_file，不能直接 edit。因为 grep 只返回匹配的那一行，不知道完整函数有多长，直接改会破坏代码。
 edit_file 的 old_text 必须来自 read_file 读到的真实内容，不能自己构造，否则容易匹配失败或误替换。
-glob 不是 grep 的前置步骤，它们是两个独立维度：glob 按文件名找，grep 按内容找。grep 本身就支持 glob 参数来缩小搜索范围，不一定要单独先调用 glob_search。"""
-
+        glob 不是 grep 的前置步骤，它们是两个独立维度：glob 按文件名找，grep 按内容找。
+        grep 本身支持 glob 参数缩小搜索范围，不一定要单独先调用 glob_search。
+        """
 
 
 class EditFileTool(Tool):
@@ -348,16 +361,20 @@ class EditFileTool(Tool):
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "要编辑的文件路径。编辑前先 read_file 确认当前内容。"},
-                "old_text": {"type": "string", "description": "要查找并替换的原文片段，必须复制自 read_file 的真实内容。"},
+                "old_text": {
+                    "type": "string",
+                    "description": "要查找并替换的原文片段，必须复制自 read_file 的真实内容。",
+                },
                 "new_text": {"type": "string", "description": "替换后的新文本，只包含要替换进去的片段。"},
-                "replace_all": {"type": "boolean", "description": "是否替换所有出现（默认 false）。不确定时保持 false 并补充 old_text 上下文。"},
+                "replace_all": {
+                    "type": "boolean",
+                    "description": "是否替换所有出现（默认 false）。不确定时保持 false 并补充 old_text 上下文。",
+                },
             },
             "required": ["path", "old_text", "new_text"],
         }
 
-    async def execute(
-        self, **kwargs: Any
-    ) -> str:
+    async def execute(self, **kwargs: Any) -> str:
         """查找并替换文件中的指定文本。"""
         path = kwargs.get("path", "")
         old_text = kwargs.get("old_text", "")
@@ -440,12 +457,15 @@ class EditFileTool(Tool):
 
         # 相似度超过 50% 则展示 diff 差异
         if best_ratio > 0.5:
-            diff = "\n".join(difflib.unified_diff(
-                old_lines, lines[best_start : best_start + window],
-                fromfile="old_text（输入内容）",
-                tofile=f"{path}（文件实际内容，第 {best_start + 1} 行起）",
-                lineterm="",
-            ))
+            diff = "\n".join(
+                difflib.unified_diff(
+                    old_lines,
+                    lines[best_start : best_start + window],
+                    fromfile="old_text（输入内容）",
+                    tofile=f"{path}（文件实际内容，第 {best_start + 1} 行起）",
+                    lineterm="",
+                )
+            )
             return format_tool_error(
                 "找不到 old_text",
                 attempted=f"在 {path} 中替换指定文本",
@@ -483,9 +503,19 @@ class ListDirTool(Tool):
     _DEFAULT_MAX = 200  # 默认最多返回条目数
     # 需要忽略的噪声目录（版本控制、缓存、虚拟环境等）
     _IGNORE_DIRS = {
-        ".git", "node_modules", "__pycache__", ".venv", "venv",
-        "dist", "build", ".tox", ".mypy_cache", ".pytest_cache",
-        ".ruff_cache", ".coverage", "htmlcov",
+        ".git",
+        "node_modules",
+        "__pycache__",
+        ".venv",
+        "venv",
+        "dist",
+        "build",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        ".coverage",
+        "htmlcov",
     }
 
     def __init__(self, workspace: Path | None = None, allowed_dir: Path | None = None):
@@ -513,15 +543,20 @@ class ListDirTool(Tool):
             "type": "object",
             "properties": {
                 "path": {"type": "string", "description": "要列出的目录路径。路径不存在时先列父目录定位。"},
-                "recursive": {"type": "boolean", "description": "是否递归列出（默认 false）。项目很大时优先 false，再逐层缩小范围。"},
-                "max_entries": {"type": "integer", "description": "最多返回的条目数（默认 200）。结果截断时缩小目录或提高上限。", "minimum": 1},
+                "recursive": {
+                    "type": "boolean",
+                    "description": "是否递归列出（默认 false）。项目很大时优先 false，再逐层缩小范围。",
+                },
+                "max_entries": {
+                    "type": "integer",
+                    "description": "最多返回的条目数（默认 200）。结果截断时缩小目录或提高上限。",
+                    "minimum": 1,
+                },
             },
             "required": ["path"],
         }
 
-    async def execute(
-        self, **kwargs: Any
-    ) -> str:
+    async def execute(self, **kwargs: Any) -> str:
         """列出目录内容并按上限截断返回。"""
         path = kwargs.get("path", "")
         recursive = kwargs.get("recursive", False)

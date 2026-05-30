@@ -70,9 +70,7 @@ def _parse_simple_frontmatter(frontmatter_text: str) -> Optional[dict[str, str]]
             multiline_key = key
             continue
 
-        if (value.startswith('"') and value.endswith('"')) or (
-            value.startswith("'") and value.endswith("'")
-        ):
+        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
             value = value[1:-1]
         parsed[key] = value
         current_key = key
@@ -101,15 +99,9 @@ def _load_frontmatter(frontmatter_text: str) -> tuple[Optional[dict], Optional[s
 
 def _validate_skill_name(name: str, folder_name: str) -> Optional[str]:
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
-        return (
-            f"Name '{name}' should be hyphen-case "
-            "(lowercase letters, digits, and single hyphens only)"
-        )
+        return f"Name '{name}' should be hyphen-case (lowercase letters, digits, and single hyphens only)"
     if len(name) > MAX_SKILL_NAME_LENGTH:
-        return (
-            f"Name is too long ({len(name)} characters). "
-            f"Maximum is {MAX_SKILL_NAME_LENGTH} characters."
-        )
+        return f"Name is too long ({len(name)} characters). Maximum is {MAX_SKILL_NAME_LENGTH} characters."
     if name != folder_name:
         return f"Skill name '{name}' must match directory name '{folder_name}'"
     return None
