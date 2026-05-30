@@ -1,0 +1,141 @@
+/**
+ * sidebar.css — Left sidebar: brand, session list, status panel, buttons
+ */
+
+.sidebar {
+  border-right: 1px solid var(--color-border-light);
+  background: var(--color-surface);
+  padding: var(--space-6);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+/* Brand */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.brand-mark {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: var(--color-brand-dark);
+  color: var(--color-surface);
+  font-weight: 800;
+}
+
+.brand h1,
+.chat-header h2,
+.notes h2 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.brand h1 {
+  font-size: var(--text-xl);
+}
+
+.brand p,
+.chat-header p,
+.notes p {
+  margin: var(--space-1) 0 0;
+  color: var(--color-text-tertiary);
+  line-height: var(--leading-normal);
+}
+
+.field-label {
+  color: var(--color-text-secondary);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* Status panel */
+.status-panel,
+.notes {
+  border: 1px solid var(--color-border-light);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  background: var(--color-panel-bg);
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  font-size: var(--text-sm);
+}
+
+.status-row + .status-row {
+  border-top: 1px solid var(--color-border-lighter);
+}
+
+.status-row span {
+  color: var(--color-text-tertiary);
+}
+
+.status-row strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
+/* Status tones */
+.tone.connected,
+.tone.running {
+  color: var(--color-success);
+}
+
+.tone.connecting {
+  color: var(--color-warning);
+}
+
+.tone.disconnected,
+.tone.error {
+  color: var(--color-destructive);
+}
+
+.tone.idle,
+.tone.neutral {
+  color: #334155;
+}
+
+/* Sidebar buttons */
+.connect-button,
+.settings-button {
+  border: 0;
+  border-radius: var(--radius-md);
+  font-weight: 700;
+  cursor: pointer;
+  height: 38px;
+}
+
+.connect-button {
+  background: #edf3ff;
+  color: var(--color-brand-accent);
+}
+
+.settings-button {
+  background: #f1f4f9;
+  color: #334155;
+}
+
+.connect-button:disabled,
+.settings-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* Responsive */
+@media (max-width: 760px) {
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--color-border-light);
+  }
+}

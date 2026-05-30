@@ -35,7 +35,7 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     """
     把配置对象写回磁盘。
     """
-    from ZBot.utils.helpers import ensure_dir
+    from ZBot.service.utils.helpers import ensure_dir
 
     path = config_path or get_config_path()
     ensure_dir(path.parent)  

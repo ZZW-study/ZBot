@@ -19,6 +19,7 @@ import re
 import shutil
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -606,12 +607,14 @@ async def _normalize_manifest(skill_dir: Path) -> tuple[SkillManifest, str]:
 class NewSkillsListLoader(Tool):
     """扫描技能目录，返回当前所有可用技能的 name + description。
 
+    同时扫描 builtin（ZBot/skills/）和 workspace（workspace/skills/）两个目录。
     模型可以传入已知技能名列表，工具只返回增量（新创建的）。
     不传 known_skills 则返回全部。
     """
 
-    def __init__(self, skills_dir: Path) -> None:
+    def __init__(self, skills_dir: Path, builtin_skills_dir: Path | None = None) -> None:
         self.skills_dir: Path = skills_dir
+        self.builtin_skills_dir: Path | None = builtin_skills_dir
 
     @property
     def name(self) -> str:
@@ -640,19 +643,36 @@ class NewSkillsListLoader(Tool):
         }
 
     async def execute(self, **kwargs: Any) -> str:
+        from ZBot.agent.evolution.lifecycle import read_lifecycle_info
+
         known: set[str] = set(kwargs.get("known_skills", []))
 
-        if not self.skills_dir.exists():
+        # 收集要扫描的目录：builtin + workspace，后者覆盖前者
+        scan_dirs: list[Path] = []
+        if self.builtin_skills_dir and self.builtin_skills_dir.exists():
+            scan_dirs.append(self.builtin_skills_dir)
+        if self.skills_dir.exists():
+            scan_dirs.append(self.skills_dir)
+
+        if not scan_dirs:
             return json.dumps({"success": True, "skills": [], "count": 0}, ensure_ascii=False)
 
-        all_skills = []
-        for skill_md in self.skills_dir.rglob("SKILL.md"):
-            skill_dir = skill_md.parent
-            try:
-                manifest, _ = await _normalize_manifest(skill_dir)
-                all_skills.append(manifest)
-            except Exception as e:
-                logger.warning("解析技能 {} 失败: {}", skill_dir, e)
+        # 用 dict 去重，workspace 同名技能覆盖 builtin
+        all_skills_dict: dict[str, Any] = {}
+        for scan_dir in scan_dirs:
+            for skill_md in scan_dir.rglob("SKILL.md"):
+                skill_dir = skill_md.parent
+                try:
+                    manifest, _ = await _normalize_manifest(skill_dir)
+                    # 过滤 archived 技能
+                    lifecycle = await read_lifecycle_info(skill_md)
+                    if lifecycle.status == "archived":
+                        continue
+                    all_skills_dict[manifest.name] = manifest
+                except Exception as e:
+                    logger.warning("解析技能 {} 失败: {}", skill_dir, e)
+
+        all_skills = list(all_skills_dict.values())
 
         # 如果传了 known_skills，只返回增量
         if known:
@@ -706,6 +726,8 @@ class SkillReader(Tool):
         }
 
     async def execute(self, **kwargs: Any) -> str:
+        from ZBot.agent.evolution.lifecycle import read_lifecycle_info
+
         skill_names: list[str] = kwargs.get("skill_names", [])
         if not skill_names:
             return json.dumps({"success": False, "error": "未传入任何技能名称。"}, ensure_ascii=False)
@@ -721,6 +743,13 @@ class SkillReader(Tool):
                 results.append({"name": name, "success": False, "error": f"技能 '{name}' 不存在。"})
                 continue
             try:
+                # 检查生命周期状态
+                skill_file = skill_dir / "SKILL.md"
+                lifecycle = await read_lifecycle_info(skill_file)
+                if lifecycle.status == "archived":
+                    results.append({"name": name, "success": False, "error": f"技能 '{name}' 已归档，不可读取。"})
+                    continue
+
                 manifest, body = await _normalize_manifest(skill_dir)
                 results.append({
                     "name": manifest.name,
@@ -810,6 +839,10 @@ class SkillsManager(Tool):
                     "type": "boolean",
                     "description": "patch 时可选。true=替换所有匹配，false（默认）=要求唯一匹配。",
                 },
+                "force": {
+                    "type": "boolean",
+                    "description": "create 时可选。true=跳过相似度检查强制创建，false（默认）=发现相似技能时拒绝创建。",
+                },
             },
             "required": ["action", "name"],
         }
@@ -834,6 +867,7 @@ class SkillsManager(Tool):
 
     async def _handle_create(self, name: str, kwargs: dict) -> str:
         content: str = kwargs.get("content", "")
+        force: bool = kwargs.get("force", False)
 
         # 校验名称
         err = _validate_name(name)
@@ -867,6 +901,28 @@ class SkillsManager(Tool):
         if err:
             return json.dumps({"success": False, "error": err}, ensure_ascii=False)
 
+        # 相似度预检（除非 force=True）
+        if not force:
+            new_desc = self._extract_description_from_content(content)
+            if new_desc:
+                similar = await self._find_similar_skills(new_desc, threshold=0.6)
+                if similar:
+                    similar_info = [
+                        {"name": s["name"], "similarity": f"{s['score']:.0%}"}
+                        for s in similar
+                    ]
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "error": (
+                                f"发现与已有技能描述相似的技能：{similar[0]['name']}（相似度 {similar[0]['score']:.0%}）。"
+                                "请优先使用 patch 更新该技能，或传入 force=True 强制创建。"
+                            ),
+                            "similar_skills": similar_info,
+                        },
+                        ensure_ascii=False,
+                    )
+
         # 名称冲突检查
         skill_dir = self.skills_dir / name
         if skill_dir.exists():
@@ -896,6 +952,59 @@ class SkillsManager(Tool):
             {"success": True, "message": f"技能 '{name}' 已创建。", "path": str(skill_dir)},
             ensure_ascii=False,
         )
+
+    # -- 相似度检查 --
+
+    @staticmethod
+    def _extract_description_from_content(content: str) -> str:
+        """从 SKILL.md 内容中提取 description 字段。"""
+        if not content.startswith("---"):
+            return ""
+        end_match = re.search(r"\n---\s*\n", content[3:])
+        if not end_match:
+            return ""
+        yaml_content = content[3 : end_match.start() + 3]
+        try:
+            fm = yaml.safe_load(yaml_content)
+            if isinstance(fm, dict):
+                return str(fm.get("description", "")).strip()
+        except yaml.YAMLError:
+            pass
+        return ""
+
+    async def _find_similar_skills(
+        self, description: str, threshold: float = 0.6
+    ) -> list[dict[str, Any]]:
+        """查找与给定 description 相似的已有技能。
+
+        Returns:
+            按相似度降序排列的匹配列表，每项包含 name, description, score。
+        """
+        if not description or not self.skills_dir.exists():
+            return []
+
+        matches: list[dict[str, Any]] = []
+        for skill_md in self.skills_dir.rglob("SKILL.md"):
+            skill_dir = skill_md.parent
+            try:
+                manifest, _ = await _normalize_manifest(skill_dir)
+            except Exception:
+                continue
+
+            existing_desc = manifest.description
+            if not existing_desc:
+                continue
+
+            score = SequenceMatcher(None, description.lower(), existing_desc.lower()).ratio()
+            if score >= threshold:
+                matches.append({
+                    "name": manifest.name,
+                    "description": existing_desc[:200],
+                    "score": score,
+                })
+
+        matches.sort(key=lambda x: x["score"], reverse=True)
+        return matches[:3]
 
     # -- patch --
 
@@ -962,6 +1071,16 @@ class SkillsManager(Tool):
         err = _validate_content_size(new_content)
         if err:
             return json.dumps({"success": False, "error": err}, ensure_ascii=False)
+
+        # 版本快照：patch 前保存原内容到 .versions/
+        try:
+            versions_dir = skill_dir / ".versions"
+            versions_dir.mkdir(exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            snapshot_path = versions_dir / f"SKILL.md.{timestamp}"
+            await _atomic_write_text(snapshot_path, original_content)
+        except Exception as e:
+            logger.warning("保存技能版本快照失败（不影响 patch）: {}", e)
 
         # 原子写入（失败时回滚）
         try:

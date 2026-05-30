@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 from typing import Any, Awaitable, Callable
 
@@ -9,6 +10,11 @@ from loguru import logger
 
 from ZBot.agent.base_agent import BaseAgent
 from ZBot.agent.context import ContextBuilder
+from ZBot.agent.evolution.complexity import compute_complexity
+from ZBot.agent.evolution.curator import SkillCurator
+from ZBot.agent.evolution.metrics import record_evolution_event
+from ZBot.agent.evolution.trajectory import SessionTrajectory, extract_trajectory
+from ZBot.agent.evolution.usage_tracker import SkillUsageTracker
 from ZBot.agent.subagent.subagent_pool import SubAgentPool
 from ZBot.agent.tools.create_sub_agent import CreateSubAgentTool
 from ZBot.agent.tools.filesystem import EditFileTool, WriteFileTool
@@ -17,8 +23,8 @@ from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
 from ZBot.providers.base import LLMProvider
 from ZBot.session.manager import Session, SessionManager
-from ZBot.utils.helpers import format_messages
-from ZBot.utils.hooks import validate_before_task_complete_hook
+from ZBot.service.utils.helpers import format_messages
+from ZBot.service.utils.hooks import validate_before_task_complete_hook
 
 
 _SKILL_REVIEW_SYSTEM = (
@@ -73,12 +79,20 @@ class CoreAgent(BaseAgent):
         self._is_consolidating: bool = False
         self._consolidation_task: asyncio.Task[None] | None = None
         self.subagent_pool: SubAgentPool | None = None
+        self.skill_review_complexity_threshold = runtime_config.skill_review_complexity_threshold
+        self.usage_tracker = SkillUsageTracker(self.workspace)
+        self.curator = SkillCurator(
+            skills_dir=self.workspace / "skills",
+            usage_tracker=self.usage_tracker,
+            workspace_path=self.workspace,
+            catalog=self.context.skills,
+        )
         self._register_core_tools()
 
 
     async def process_message(
         self,
-        message: str,
+        message: str | list[dict[str, Any]],
         session_name: str = "default",
         *,
         on_progress: Callable[..., Awaitable[None]],
@@ -87,7 +101,8 @@ class CoreAgent(BaseAgent):
         await self.connect_mcp()
         self.subagent_pool = self.ensure_subagent_pool()
 
-        logger.info("正在处理消息：{}", message[:80] + "..." if len(message) > 80 else message)
+        preview_message = self._message_preview(message)
+        logger.info("正在处理消息：{}", preview_message[:80] + "..." if len(preview_message) > 80 else preview_message)
 
         session, is_load = await self.sessions.get_or_create(session_name)
         if is_load:
@@ -108,8 +123,9 @@ class CoreAgent(BaseAgent):
 
 
     async def close_mcp(self) -> None:
-        """关闭子 Agent 池和 MCP 连接栈。"""
+        """关闭子 Agent 池、MCP 连接栈和使用追踪器。"""
         await self._cancel_consolidation_task()
+        await self.usage_tracker.close()
         if self.subagent_pool is not None:
             await self.subagent_pool.close()
             self.subagent_pool = None
@@ -159,7 +175,36 @@ class CoreAgent(BaseAgent):
         if not messages:
             return
 
-        prompt = self._build_skill_review_prompt(messages, session.memory_snapshot or "")
+        # 复杂度门槛：简单任务不触发技能进化
+        try:
+            complexity = compute_complexity(messages, threshold=self.skill_review_complexity_threshold)
+        except Exception:
+            logger.exception("复杂度计算失败，跳过技能进化")
+            return
+        if not complexity.should_review:
+            logger.info(
+                "任务复杂度 {} 低于阈值 {}，跳过技能进化（工具调用: {}, 唯一工具: {}）",
+                complexity.score, self.skill_review_complexity_threshold,
+                complexity.tool_call_count, complexity.unique_tools
+            )
+            return
+
+        # 提取结构化轨迹替代原始 transcript
+        trajectory = extract_trajectory(messages)
+
+        # 跨会话模式注入：查询日常记忆中的技能相关模式
+        cross_session_patterns = ""
+        try:
+            cross_session_patterns = await self.context.daily_memory.get_daily_memory_text(
+                "最近会话中是否有工具调用失败、重试、或需要创建和更新技能的模式",
+                score_threshold=0.6,
+            )
+        except Exception:
+            logger.warning("跨会话模式查询失败，跳过")
+
+        prompt = self._build_skill_review_prompt(
+            trajectory, session.memory_snapshot or "", cross_session_patterns
+        )
 
         # 只保留技能相关工具
         skill_tool_names = {"load_new_skills_list", "read_skill", "skills_manager"}
@@ -175,11 +220,17 @@ class CoreAgent(BaseAgent):
 
         for _ in range(10):  # 最多 10 轮工具调用
             try:
-                response = await self.provider.chat(
-                    messages=chat_messages,
-                    tools=skill_tools,
-                    model=self.model,
+                response = await asyncio.wait_for(
+                    self.provider.chat(
+                        messages=chat_messages,
+                        tools=skill_tools,
+                        model=self.model,
+                    ),
+                    timeout=120,
                 )
+            except asyncio.TimeoutError:
+                logger.warning("技能进化审查 LLM 调用超时（120秒）")
+                return
             except Exception:
                 logger.exception("技能进化审查 LLM 调用失败")
                 return
@@ -210,16 +261,71 @@ class CoreAgent(BaseAgent):
                 result = await self.tools.execute(tc.name, tc.arguments)
                 self._add_tool_result(chat_messages, tc.id, tc.name, result)
 
+                # 记录技能使用事件和进化指标
+                if tc.name == "skills_manager":
+                    action = tc.arguments.get("action", "")
+                    skill_name = tc.arguments.get("name", "")
+                    if action in ("create", "patch") and skill_name:
+                        await self.usage_tracker.record(skill_name, session_name, action)
+                        await record_evolution_event(
+                            self.workspace, action, skill_name, session_name
+                        )
+
         logger.warning("技能进化审查达到最大轮次（10），强制结束")
 
 
-    def _build_skill_review_prompt(self, messages: list[dict[str, Any]], memory_snapshot: str) -> str:
-        """构建技能进化审查的用户提示词。"""
-        transcript = "\n".join(format_messages(messages))
+    async def run_curator(self) -> None:
+        """运行技能 Curator：健康检查 + 自动生命周期转换。"""
+        try:
+            report = await self.curator.run_maintenance()
+
+            # 记录生命周期转换事件
+            for skill_name, new_status in report.transitions_made:
+                await record_evolution_event(
+                    self.workspace, new_status, skill_name
+                )
+
+            if report.transitions_made:
+                logger.info(
+                    "Curator 维护完成：{} 个技能状态转换",
+                    len(report.transitions_made),
+                )
+            else:
+                logger.debug("Curator 维护完成：无需转换")
+        except Exception:
+            logger.exception("Curator 维护失败")
+
+
+    def _build_skill_review_prompt(
+        self,
+        trajectory: SessionTrajectory,
+        memory_snapshot: str,
+        cross_session_patterns: str = "",
+    ) -> str:
+        """构建技能进化审查的用户提示词（使用结构化轨迹替代原始 transcript）。"""
+        steps_text = "\n".join(
+            f"  {i + 1}. {s.tool_name}({'OK' if s.success else 'FAIL'}) — {s.arguments_summary}"
+            + (f" → {s.result_summary[:100]}" if s.result_summary else "")
+            for i, s in enumerate(trajectory.steps)
+        )
+        error_section = ""
+        if trajectory.error_pattern:
+            error_section = f"\n错误模式：{trajectory.error_pattern}"
+
+        cross_session_section = ""
+        if cross_session_patterns:
+            truncated_patterns = cross_session_patterns[:2000]
+            cross_session_section = f"\n最近的跨会话模式（来自日常记忆）：\n{truncated_patterns}"
+
         return (
-            "回顾上面的对话，并判断是否应该保存或更新某个技能。\n\n"
+            "回顾以下任务轨迹，判断是否应该保存或更新某个技能。\n\n"
+            f"任务摘要：{trajectory.task_summary}\n\n"
             f"已有记忆快照（不要重复关注已知信息）：\n{memory_snapshot or '（无）'}\n\n"
-            f"对话内容：\n{transcript}"
+            f"工具调用轨迹（共 {len(trajectory.steps)} 步）：\n{steps_text or '  无工具调用'}\n\n"
+            f"使用过的工具：{', '.join(trajectory.tools_used) or '无'}\n"
+            f"{error_section}\n"
+            f"最终结果：{trajectory.final_outcome}"
+            f"{cross_session_section}"
         )
 
 
@@ -232,7 +338,7 @@ class CoreAgent(BaseAgent):
 
     async def _save_task_progress_artifact(self, content: str) -> str | None:
         """上下文压缩前保存任务进度文件，避免长期状态只塞进 system 摘要。"""
-        from ZBot.utils.helpers import ensure_dir
+        from ZBot.service.utils.helpers import ensure_dir
 
         artifact_path = self.workspace / "memory" / "TASK_PROGRESS.md"
         ensure_dir(artifact_path.parent)
@@ -254,17 +360,23 @@ class CoreAgent(BaseAgent):
         self.tools.register(WriteFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
         self.tools.register(EditFileTool(workspace=self.workspace, allowed_dir=allowed_dir))
 
+        from ZBot.agent.skills_load import BUILTIN_SKILLS_DIR
+
         skills_dir = self.workspace / "skills"
-        self.tools.register(NewSkillsListLoader(skills_dir=skills_dir))
-        self.tools.register(SkillReader(skills_dir=skills_dir))
-        self.tools.register(SkillsManager(skills_dir=skills_dir))
+        self.tools.register(NewSkillsListLoader(skills_dir=skills_dir, builtin_skills_dir=BUILTIN_SKILLS_DIR))
+        self.tools.register(
+            SkillReader(
+                skills_dir=skills_dir,
+            )
+        )
+        self.tools.register(SkillsManager(skills_dir=skills_dir, catalog=self.context.skills))
 
 
     async def _run_turn(
         self,
         session: Session,
         *,
-        content: str,
+        content: str | list[dict[str, Any]],
         on_progress: Callable[..., Awaitable[None]],
     ) -> str:
         """执行一轮对话：构造上下文、运行 Agent loop、写回会话。"""
@@ -285,7 +397,7 @@ class CoreAgent(BaseAgent):
 
         # 任务完成验证：最多重试3次，验证通过则保存并返回
         final_content, all_messages, retry_tools_used = await self._complete_unfinished_task(
-            content, final_content, all_messages, on_progress,
+            self._message_preview(content), final_content, all_messages, on_progress,
         )
         tools_used.extend(retry_tools_used)
         final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
@@ -363,7 +475,7 @@ class CoreAgent(BaseAgent):
 
         turn_start = self._latest_user_message_index(messages, fallback=skip)
         turn_messages = [
-            dict(message)
+            copy.deepcopy(message)
             for message in messages[turn_start:]
             if message.get("role") in {"user", "assistant", "tool"}
         ]
@@ -397,10 +509,13 @@ class CoreAgent(BaseAgent):
 
 
     @staticmethod
-    def _strip_runtime_context(content: str | None) -> str:
-        """剥离用户消息中的运行时上下文标签，只保留纯净用户输入。"""
+    def _strip_runtime_context(content: str | list[dict[str, Any]] | None) -> str | None | list[dict[str, Any]]:
+        """剥离用户消息中的运行时上下文标签，并把大 base64 块改成轻量元信息。"""
         if not content:
             return content or ""
+
+        if isinstance(content, list):
+            return CoreAgent._sanitize_content_blocks(content)
 
         runtime_tag = ContextBuilder._RUNTIME_CONTEXT_TAG
         if content.startswith(runtime_tag):
@@ -410,6 +525,52 @@ class CoreAgent(BaseAgent):
             return ""
 
         return content
+
+
+    @staticmethod
+    def _sanitize_content_blocks(blocks: list[dict[str, Any]]) -> str:
+        """保存历史时把多模态 blocks 转成文本摘要，避免 session 里残留 base64。"""
+        texts: list[str] = []
+        for block in blocks:
+            block_copy = copy.deepcopy(block)
+            if block_copy.get("type") == "text":
+                text_value = CoreAgent._strip_runtime_context(str(block_copy.get("text") or ""))
+                if isinstance(text_value, str):
+                    text = text_value.strip()
+                    if text:
+                        texts.append(text)
+            elif block_copy.get("type") == "image_url":
+                image_url = block_copy.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else ""
+                mime = CoreAgent._data_url_mime(url)
+                texts.append(f"[已上传图片，MIME={mime or 'unknown'}，原始 data URL 未写入会话历史]")
+            else:
+                texts.append(f"[已上传内容块，type={block_copy.get('type', 'unknown')}，原始内容未写入会话历史]")
+        return "\n\n".join(texts)
+
+
+    @staticmethod
+    def _data_url_mime(url: str | None) -> str | None:
+        """从 data URL 中提取 MIME 类型。"""
+        if not isinstance(url, str) or not url.startswith("data:") or ";base64," not in url:
+            return None
+        return url[5:].split(";base64,", 1)[0] or None
+
+
+    @staticmethod
+    def _message_preview(message: str | list[dict[str, Any]]) -> str:
+        """生成适合日志、验收提示和错误信息使用的用户消息文本预览。"""
+        if isinstance(message, str):
+            return message
+        texts: list[str] = []
+        media_count = 0
+        for block in message:
+            if block.get("type") == "text":
+                texts.append(str(block.get("text") or ""))
+            else:
+                media_count += 1
+        suffix = f"\n[包含 {media_count} 个多模态内容块]" if media_count else ""
+        return "\n".join(texts).strip() + suffix
 
 
     @staticmethod
@@ -496,7 +657,7 @@ class CoreAgent(BaseAgent):
             role = message.get("role")
             if role not in {"user", "assistant", "tool"}:
                 continue
-            entry: dict[str, Any] = {"role": role, "content": message.get("content", "")}
+            entry: dict[str, Any] = {"role": role, "content": CoreAgent._evidence_content(message.get("content", ""))}
             if role == "tool":
                 entry["name"] = message.get("name", "")
                 entry["tool_call_id"] = message.get("tool_call_id", "")
@@ -504,3 +665,11 @@ class CoreAgent(BaseAgent):
                 entry["tool_calls"] = message["tool_calls"]
             evidence.append(entry)
         return evidence
+
+
+    @staticmethod
+    def _evidence_content(content: Any) -> str:
+        """把验收证据里的多模态内容转成文本，避免把 base64 交给验收器。"""
+        if isinstance(content, list):
+            return CoreAgent._sanitize_content_blocks(content)
+        return str(content or "")

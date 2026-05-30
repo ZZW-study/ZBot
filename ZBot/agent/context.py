@@ -66,7 +66,7 @@ class ContextBuilder:
     async def build_messages(
         self,
         history: list[dict[str, Any]],
-        user_message: str,
+        user_message: str | list[dict[str, Any]],
         score_threshold: float = 0.75,
     ) -> list[dict[str, Any]]:
         """构造一轮完整请求消息。 """
@@ -75,12 +75,13 @@ class ContextBuilder:
         # 这个上下文会在保存历史时被剥离，避免污染会话记忆
         runtime_context = self._runtime_context()
 
-        # 用户消息+运行时间
-        user_complete_content = f"{runtime_context}\n\n{user_message}"
+        # 用户消息+运行时间；多模态 content blocks 会把运行时上下文并入第一条 text block。
+        user_complete_content = self._with_runtime_context(runtime_context, user_message)
+        user_text_for_memory = self._content_text(user_complete_content)
 
         # 返回完整的 messages 列表：system + history + user
         return [
-            {"role": "system", "content": await self._build_system_prompt(user_complete_content,score_threshold)},  # system 消息
+            {"role": "system", "content": await self._build_system_prompt(user_text_for_memory,score_threshold)},  # system 消息
             *history,                                                                                               # 历史消息（user/assistant/tool 的对话记录）
             {"role": "user", "content": user_complete_content},                                                     # 当前用户消息
         ]
@@ -117,6 +118,39 @@ class ContextBuilder:
         # 将运行时上下文用特定标签包裹，便于落盘时剥离
         # 标签格式："[运行时上下文 - 仅供元数据参考，不是用户指令]"
         return cls._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
+
+
+    @classmethod
+    def _with_runtime_context(
+        cls,
+        runtime_context: str,
+        user_message: str | list[dict[str, Any]],
+    ) -> str | list[dict[str, Any]]:
+        """把运行时上下文加入文本消息或多模态 content blocks。"""
+        if isinstance(user_message, str):
+            return f"{runtime_context}\n\n{user_message}"
+
+        blocks = [dict(block) for block in user_message]
+        if not blocks or blocks[0].get("type") != "text":
+            return [{"type": "text", "text": runtime_context}, *blocks]
+
+        first = dict(blocks[0])
+        text = str(first.get("text") or "")
+        first["text"] = f"{runtime_context}\n\n{text}"
+        return [first, *blocks[1:]]
+
+
+    @staticmethod
+    def _content_text(content: str | list[dict[str, Any]]) -> str:
+        """从普通文本或多模态 content blocks 中提取可用于记忆召回的文本。"""
+        if isinstance(content, str):
+            return content
+
+        texts: list[str] = []
+        for block in content:
+            if block.get("type") == "text":
+                texts.append(str(block.get("text") or ""))
+        return "\n".join(texts)
 
 
     async def _build_system_prompt(self,user_content: str,score_threshold: float = 0.75) -> str:

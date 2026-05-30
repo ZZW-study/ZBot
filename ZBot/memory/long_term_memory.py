@@ -2,7 +2,7 @@
 # 就是写入一个md文档，提供读取、写入的方法，读取的话，直接读取完整的内容，写入，则调用大模型来写入。
 from __future__ import annotations
 
-from ZBot.utils.helpers import ensure_dir, normalize_tool_args, format_messages
+from ZBot.service.utils.helpers import ensure_dir, normalize_tool_args, format_messages
 from ZBot.config.schema import Config
 from loguru import logger
 from pathlib import Path

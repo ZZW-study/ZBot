@@ -14,6 +14,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    "kimi-k2.6": 262_144,
+    "moonshotai/kimi-k2.6": 262_144,
+    "qwen3.6-max-preview": 262_144,
+    "qwen/qwen3.6-max-preview": 262_144,
+}
+
+
 @dataclass(frozen=True)
 class ProviderSpec:
     """
@@ -25,6 +33,7 @@ class ProviderSpec:
     is_gateway: bool = False                                        # 是否为网关（OpenRouter/AiHubMix，支持任意模型）
     keywords: tuple[str,...] = ()                                   # 模型名称匹配关键词
     supports_prompt_caching: bool = False                           # 是否支持提示词缓存
+    context_windows: dict[str, int] | None = None                    # LiteLLM 未收录的新模型窗口兜底
 
 
 # 【核心注册表】所有提供商配置
@@ -60,7 +69,13 @@ PROVIDERS: tuple[ProviderSpec, ...] = (   # ... 表示任意长度，主要是�
     ProviderSpec(
         name="dashscope",
         litellm_prefix="dashscope",
-        keywords=("qwen","tongyi","Qwen",)
+        keywords=("qwen","tongyi","Qwen",),
+        context_windows={
+            "qwen3.6-max-preview": 262_144,
+            "qwen-max": 32_768,
+            "qwen-plus": 131_072,
+            "qwen-turbo": 1_000_000,
+        },
     ),
 )
 
@@ -94,5 +109,26 @@ def find_gateway(provider_name: str | None) -> ProviderSpec | None:
         if spec.name == provider_name and spec.is_gateway:
             return spec
         
+    return None
+
+
+def context_window_for_model(model: str, provider: ProviderSpec | None = None) -> int | None:
+    """Return a locally maintained context window for models missing from LiteLLM metadata."""
+    for candidate in (model, model.split("/", 1)[-1]):
+        if candidate in MODEL_CONTEXT_WINDOWS:
+            return MODEL_CONTEXT_WINDOWS[candidate]
+
+    specs = (provider,) if provider is not None else PROVIDERS
+    for spec in specs:
+        windows = spec.context_windows or {}
+        if model in windows:
+            return windows[model]
+
+        normalized = model
+        prefix = f"{spec.litellm_prefix}/" if spec.litellm_prefix else ""
+        if prefix and normalized.startswith(prefix):
+            normalized = normalized[len(prefix):]
+        if normalized in windows:
+            return windows[normalized]
     return None
 

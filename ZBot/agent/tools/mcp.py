@@ -27,6 +27,24 @@ from ZBot.agent.tools.base import Tool, format_tool_error
 from ZBot.agent.tools.registry import ToolRegistry
 from mcp import ClientSession
 
+
+def _cfg_value(cfg: Any, key: str, default: Any = None) -> Any:
+    if isinstance(cfg, dict):
+        return cfg.get(key, default)
+    return getattr(cfg, key, default)
+
+
+def _resolve_transport_type(cfg: Any) -> str | None:
+    transport_type = _cfg_value(cfg, "type") or _cfg_value(cfg, "transport")
+    if transport_type:
+        return str(transport_type)
+    if _cfg_value(cfg, "command") or _cfg_value(cfg, "args"):
+        return "stdio"
+    if _cfg_value(cfg, "url"):
+        return "streamableHttp"
+    return None
+
+
 class MCPToolWrapper(Tool):
     """
     MCP 工具包装器 (适配器模式实现)。
@@ -158,7 +176,7 @@ async def connect_mcp_servers(
     for name, cfg in mcp_servers.items():
         try:
             # ==================== 步骤 1: 确定传输类型 ====================
-            transport_type = cfg.type
+            transport_type = _resolve_transport_type(cfg)
             # ==================== 步骤 2: 根据传输类型建立连接 ====================
             # ---- 类型 1: stdio 模式----
             if transport_type == "stdio":
