@@ -53,6 +53,9 @@ class BaseAgent(ABC):
     _RECENT_USER_MESSAGES_AFTER_COMPACTION = 1
     # 摘要里的单条片段上限，防止压缩摘要比原工具结果还膨胀。
     _COMPACTION_SNIPPET_CHARS = 240
+    _COMPACTION_PARAM_LIMIT = 12
+    _COMPACTION_PATH_LIMIT = 8
+    _COMPACTION_FAILURE_LIMIT = 8
 
     def __init__(
         self,
@@ -396,9 +399,11 @@ class BaseAgent(ABC):
 
         logger.info("默认工具注册完成")
 
+
     async def approve_tool_call(self, tool_call: ToolCallRequest) -> str | None:
         """工具执行前的审批钩子；返回错误文本表示拒绝执行，返回 None 表示允许。"""
         return None
+
 
     @staticmethod
     def _has_mixed_create_sub_agent_calls(tool_calls: list[ToolCallRequest]) -> bool:
@@ -606,15 +611,20 @@ class BaseAgent(ABC):
             and not str(message.get("content", "")).startswith(self._COMPACTION_MARKER)
         ]
         latest_user = self._latest_content(messages, "user") or "未识别到明确用户任务"
+        anchor_facts = self._collect_anchor_facts(messages)
         summary = (
             f"{self._COMPACTION_MARKER}\n"
             f"本轮任务目标：\n{latest_user[: self._COMPACTION_SNIPPET_CHARS]}\n\n"
             "已完成：见此前工具链，已因上下文预算压缩。\n"
-            "关键事实：保留最近用户目标，后续如信息不足请重新获取新的有效观察。\n"
-            "重要文件/路径：暂无可安全保留的完整列表。\n"
+            "关键事实：\n"
+            f"{self._format_anchor_facts(anchor_facts) or '保留最近用户目标，后续如信息不足请重新获取新的有效观察。'}\n"
+            "重要文件/路径：\n"
+            f"{self._format_snippets(anchor_facts.get('paths', [])) or '暂无可安全保留的完整列表。'}\n"
             "工具调用结论：旧工具链已压缩。\n"
-            "失败尝试：不要重复刚才无效路径。\n"
-            "不要重复：不要重复已失败的同参数工具调用。\n"
+            "失败尝试：\n"
+            f"{self._format_snippets(anchor_facts.get('failures', [])) or '- 不要重复刚才无效路径。'}\n"
+            "不要重复：\n"
+            f"{self._format_snippets(anchor_facts.get('avoid', [])) or '- 不要重复已失败的同参数工具调用。'}\n"
             f"任务进度 artifact：{artifact_path or '未写入'}\n"
             "剩余待办：继续完成用户任务；如缺信息，先获取新的有效观察。"
         )
@@ -630,6 +640,7 @@ class BaseAgent(ABC):
         task_goal = (self._latest_content(messages, "user") or "未识别到明确用户任务")[: self._COMPACTION_SNIPPET_CHARS]
         assistant_notes = self._collect_role_snippets(messages, "assistant", limit=4)
         tool_successes, tool_failures = self._collect_tool_snippets(messages)
+        anchor_facts = self._collect_anchor_facts(messages)
         latest_assistant = self._latest_content(messages, "assistant")
 
         return (
@@ -640,15 +651,15 @@ class BaseAgent(ABC):
             "最近结论：\n"
             f"{latest_assistant[: self._COMPACTION_SNIPPET_CHARS] if latest_assistant else '暂无'}\n\n"
             "关键事实：\n"
-            f"{self._format_snippets(tool_successes) or '暂无可保留事实'}\n\n"
+            f"{self._format_anchor_facts(anchor_facts) or self._format_snippets(tool_successes) or '暂无可保留事实'}\n\n"
             "重要文件/路径：\n"
-            f"{self._extract_paths(messages) or '暂无'}\n\n"
+            f"{self._format_snippets(anchor_facts.get('paths', [])) or self._extract_paths(messages) or '暂无'}\n\n"
             "工具调用结论：\n"
             f"{self._format_snippets(tool_successes) or '暂无'}\n\n"
             "失败尝试：\n"
-            f"{self._format_snippets(tool_failures) or '暂无'}\n\n"
+            f"{self._format_snippets(anchor_facts.get('failures', [])) or self._format_snippets(tool_failures) or '暂无'}\n\n"
             "不要重复：\n"
-            f"{self._collect_do_not_repeat(messages) or '暂无'}\n\n"
+            f"{self._format_snippets(anchor_facts.get('avoid', [])) or self._collect_do_not_repeat(messages) or '暂无'}\n\n"
             "任务进度 artifact：\n"
             f"{artifact_path or '未写入'}\n\n"
             "剩余待办：\n根据当前摘要继续完成用户任务；如信息不足，优先获取新的有效观察，不要重复失败路径。"
@@ -659,10 +670,13 @@ class BaseAgent(ABC):
         task_goal = self._latest_content(messages, "user") or "未识别到明确用户任务"
         assistant_notes = self._collect_role_snippets(messages, "assistant", limit=12)
         tool_successes, tool_failures = self._collect_tool_snippets(messages)
+        anchor_facts = self._collect_anchor_facts(messages)
         return (
             "# ZBot Task Progress\n\n"
             "## 当前任务目标\n"
             f"{task_goal}\n\n"
+            "## 全历史锚点事实\n"
+            f"{self._format_anchor_facts(anchor_facts) or '- 暂无'}\n\n"
             "## 已完成/最近结论\n"
             f"{self._format_snippets(assistant_notes) or '- 暂无'}\n\n"
             "## 工具成功观察\n"
@@ -736,6 +750,109 @@ class BaseAgent(ABC):
         paths = re.findall(r"(?:[A-Za-z]:\\[^\s\"'<>|]+|[\w./-]+/[\w./-]+)", text)
         unique_paths = list(dict.fromkeys(paths))
         return "\n".join(f"- {path}" for path in unique_paths[-6:])
+
+    @staticmethod
+    def _collect_anchor_facts(messages: list[dict[str, Any]]) -> dict[str, list[str]]:
+        """从全历史提取低频但会影响后续执行的锚点事实。"""
+        text = "\n".join(BaseAgent._content_text(message.get("content")) for message in messages)
+        params = BaseAgent._extract_key_params(text)
+        paths = BaseAgent._extract_path_values(text)
+        failures = BaseAgent._extract_failure_facts(messages)
+        conclusions = BaseAgent._extract_conclusion_facts(text)
+        avoid = BaseAgent._extract_avoid_facts(messages)
+        return {
+            "params": params[-BaseAgent._COMPACTION_PARAM_LIMIT :],
+            "paths": paths[-BaseAgent._COMPACTION_PATH_LIMIT :],
+            "failures": failures[-BaseAgent._COMPACTION_FAILURE_LIMIT :],
+            "conclusions": conclusions[-BaseAgent._COMPACTION_PARAM_LIMIT :],
+            "avoid": avoid[-BaseAgent._COMPACTION_FAILURE_LIMIT :],
+        }
+
+    @staticmethod
+    def _extract_key_params(text: str) -> list[str]:
+        patterns = [
+            r"\b(?:threshold|limit|top_k|topK|temperature|max_tokens|timeout|score_threshold|batch_size|retry|port|seed)\s*[:=]\s*[\w.\-/%]+",
+            r"\b(?:goal|case|task|target|query|model|provider|workspace|collection|index|id)-[\w.\-]+",
+            r"\b[A-Za-z_][A-Za-z0-9_]{1,40}\s*[:=]\s*(?:\"[^\"]{1,120}\"|'[^']{1,120}'|[A-Za-z0-9_.:/\\-]{1,120})",
+        ]
+        items: list[str] = []
+        for pattern in patterns:
+            items.extend(match.group(0).strip().rstrip(".,;，。；") for match in re.finditer(pattern, text))
+        return BaseAgent._dedupe_preserve_order(items)
+
+    @staticmethod
+    def _extract_path_values(text: str) -> list[str]:
+        paths = re.findall(r"(?:[A-Za-z]:[\\/][^\s\"'<>|]+|(?:\.{1,2}/)?[\w.-]+(?:/[\w.-]+)+)", text)
+        cleaned = [path.strip().rstrip(".,;，。；)") for path in paths]
+        return BaseAgent._dedupe_preserve_order(cleaned)
+
+    @staticmethod
+    def _extract_failure_facts(messages: list[dict[str, Any]]) -> list[str]:
+        failures: list[str] = []
+        for message in messages:
+            content = BaseAgent._content_text(message.get("content"))
+            if not content:
+                continue
+            if message.get("role") == "tool" and (
+                content.startswith("错误：")
+                or content.startswith("Error:")
+                or content.startswith("ERROR:")
+                or "bad-args-" in content
+            ):
+                failures.append(content.strip()[: BaseAgent._COMPACTION_SNIPPET_CHARS])
+                continue
+            for line in content.splitlines():
+                if any(marker in line for marker in ("不要重复", "失败", "错误", "bad-args-", "invalid", "timeout")):
+                    failures.append(line.strip()[: BaseAgent._COMPACTION_SNIPPET_CHARS])
+        return BaseAgent._dedupe_preserve_order(failures)
+
+    @staticmethod
+    def _extract_conclusion_facts(text: str) -> list[str]:
+        patterns = [
+            r"(?:Current conclusion|Final conclusion|Conclusion|结论|最终结论)\s*[:：]\s*[^\n。；;]{1,160}",
+            r"\bfinal-fact-[\w.-]+",
+        ]
+        items: list[str] = []
+        for pattern in patterns:
+            items.extend(match.group(0).strip().rstrip(".,;，。；") for match in re.finditer(pattern, text, flags=re.IGNORECASE))
+        return BaseAgent._dedupe_preserve_order(items)
+
+    @staticmethod
+    def _extract_avoid_facts(messages: list[dict[str, Any]]) -> list[str]:
+        items: list[str] = []
+        for message in messages:
+            content = BaseAgent._content_text(message.get("content"))
+            for line in content.splitlines():
+                if "不要重复" in line or "do not repeat" in line.lower():
+                    items.append(line.strip()[: BaseAgent._COMPACTION_SNIPPET_CHARS])
+        return BaseAgent._dedupe_preserve_order(items)
+
+    @staticmethod
+    def _format_anchor_facts(anchor_facts: dict[str, list[str]]) -> str:
+        lines: list[str] = []
+        labels = {
+            "params": "关键参数",
+            "paths": "关键路径",
+            "failures": "失败约束",
+            "conclusions": "阶段结论",
+            "avoid": "不要重复",
+        }
+        for key in ("params", "paths", "failures", "conclusions", "avoid"):
+            for item in anchor_facts.get(key, []):
+                lines.append(f"- {labels[key]}：{item}")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _dedupe_preserve_order(items: list[str]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for item in items:
+            normalized = item.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            unique.append(normalized)
+        return unique
 
     @staticmethod
     def _content_for_budget(content: Any) -> str:

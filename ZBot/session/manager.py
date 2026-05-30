@@ -152,6 +152,114 @@ class SessionManager:
         self._cache[session.session_name] = session
 
 
+    async def list_sessions(self) -> list[dict[str, Any]]:
+            """列出所有会话的元数据（不加载消息内容）。
+
+            只读取每个 .jsonl 文件的第一行（元数据行），不加载消息，
+            这样即使有几百个会话也能快速返回。
+
+            Returns:
+                会话元数据列表，按更新时间倒序排列（最新的在前面）
+            """
+            sessions: list[dict[str, Any]] = []
+
+            def scan_files():
+                """在线程池中扫描会话文件。"""
+                for path in self.sessions_dir.glob("*.jsonl"):
+                    try:
+                        with path.open("r", encoding="utf-8") as f:
+                            first_line = f.readline().strip()
+                            if first_line:
+                                data = json.loads(first_line)
+                                if data.get("_type") == "metadata":
+                                    # 计算消息数量（总行数 - 1 行元数据）
+                                    line_count = sum(1 for _ in f)
+                                    data["message_count"] = line_count
+                                    sessions.append(data)
+                    except Exception:
+                        continue  # 跳过损坏的文件
+
+            await asyncio.to_thread(scan_files)
+
+            # 按更新时间倒序排列
+            sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
+            return sessions
+    
+    
+    async def rename(self, old_name: str, new_name: str) -> bool:
+        """重命名会话。
+
+        Args:
+            old_name: 原会话名称
+            new_name: 新会话名称
+
+        Returns:
+            True 表示重命名成功，False 表示原会话不存在或新名称已存在
+        """
+        old_path = self._session_path(old_name)
+        new_path = self._session_path(new_name)
+
+        if not old_path.exists():
+            return False
+        if new_path.exists():
+            return False
+
+        def rename_file():
+            old_path.rename(new_path)
+
+        await asyncio.to_thread(rename_file)
+
+        # 更新缓存
+        session = self._cache.pop(old_name, None)
+        if session:
+            session.session_name = new_name
+            session.updated_at = datetime.now()
+            self._cache[new_name] = session
+
+        # 更新文件内的元数据
+        await self._update_metadata_name(new_path, new_name)
+        return True
+
+    async def _update_metadata_name(self, path: Path, new_name: str) -> None:
+        """更新 JSONL 文件第一行的元数据名称。"""
+        def _rewrite():
+            lines = path.read_text(encoding="utf-8").splitlines()
+            if not lines:
+                return
+            try:
+                metadata = json.loads(lines[0])
+                if metadata.get("_type") == "metadata":
+                    metadata["name"] = new_name
+                    metadata["updated_at"] = datetime.now().isoformat()
+                    lines[0] = json.dumps(metadata, ensure_ascii=False)
+                    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            except Exception:
+                pass
+
+        await asyncio.to_thread(_rewrite)
+
+    async def delete(self, session_name: str) -> bool:
+        """删除指定会话。
+
+        Args:
+            session_name: 会话名称
+
+        Returns:
+            True 表示删除成功，False 表示会话不存在
+        """
+        path = self._session_path(session_name)
+        if not path.exists():
+            return False
+
+        def remove_file():
+            path.unlink()  # 删除文件
+
+        await asyncio.to_thread(remove_file)
+        # 同时从缓存中移除
+        self._cache.pop(session_name, None)
+        return True
+    
+
     async def _load(self, session_name: str) -> Session | None:
         """从磁盘加载会话。"""
         path = self._session_path(session_name)
@@ -194,8 +302,14 @@ class SessionManager:
                 last_consolidated=last_consolidated,
                 memory_snapshot=memory_snapshot,
             )
-        except Exception as exc:
-            logger.warning("加载会话失败 {}: {}", session_name, exc)
+        except json.JSONDecodeError as exc:
+            logger.error("加载会话失败 {}：JSON 解析错误（文件可能损坏）: {}", session_name, exc)
+            return None
+        except (PermissionError, OSError) as exc:
+            logger.error("加载会话失败 {}：文件读取错误: {}", session_name, exc)
+            return None
+        except (ValueError, KeyError, TypeError) as exc:
+            logger.error("加载会话失败 {}：数据格式错误: {}", session_name, exc)
             return None
 
     def _session_path(self, session_name: str) -> Path:

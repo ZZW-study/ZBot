@@ -5,9 +5,17 @@
 
 // 导入工具函数：把事件对象转为可读的消息文本
 import { eventMessage } from '../utils/format';
+import type { AgentEvent, ChatMessage } from '../types';
+
+interface MessageListProps {
+  messages: ChatMessage[];
+  isRunning: boolean;
+  latestEvent: AgentEvent | null;
+  streamingContent: string;
+}
 
 // 函数组件，接收 4 个 props
-export default function MessageList({ messages, isRunning, latestEvent, streamingContent }) {
+export default function MessageList({ messages, isRunning, latestEvent, streamingContent }: MessageListProps) {
   // 流式消息的显示文本
   // 优先级：streamingContent > 事件消息 > 默认文本
   // || 逻辑或：左边是假值时用右边

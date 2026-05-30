@@ -96,6 +96,7 @@ class AgentRuntimeConfig:
     # dict 是可变对象，同样必须用 default_factory，否则所有实例共享同一个空字典。
     mcp_servers: dict[str, Any] = field(default_factory=dict)
     score_threshold: float = 0.75
+    skill_review_complexity_threshold: float = 0.3
 
     @classmethod
     def from_app_config(cls, config: Config, *, model: str) -> "AgentRuntimeConfig":
@@ -136,4 +137,5 @@ class AgentRuntimeConfig:
             # 但 value 若是嵌套对象，仍然共享引用。比 web_search_config 稍安全，但未完全隔离。
             mcp_servers=dict(config.tools.mcp_servers),
             score_threshold=config.score_threshold,
+            skill_review_complexity_threshold=config.skill_review_complexity_threshold,
         )

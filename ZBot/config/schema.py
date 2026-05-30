@@ -148,6 +148,7 @@ class Config(BaseModel):
     obsolete_score_threshold : float = 0.5       # 记忆过时分数阈值
     decay_rate: float = 0.12                      # 记忆衰减率
     evolve_score_threshold: float = 1.3          # 记忆进化分数阈值
+    skill_review_complexity_threshold: float = 0.3  # 技能审查复杂度阈值
 
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)  # 所有 LLM 提供商
     tools: ToolsConfig = Field(default_factory=ToolsConfig)              # 所有工具配置

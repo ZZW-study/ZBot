@@ -4,25 +4,36 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AgentEvent, SocketState } from '../types';
 
 // 常量：最多保留 80 个事件
 const MAX_EVENTS = 80;
 
 // { onCompleted, onDelta, onFailed, onStarted } = {} — 解构第二个参数
 // = {} — 默认值：如果调用时不传第二个参数，用空对象（避免报错）
-export function useWebSocket(wsUrl, { onCompleted, onDelta, onFailed, onStarted } = {}) {
+interface UseWebSocketCallbacks {
+  onCompleted?: (_event: AgentEvent) => void;
+  onDelta?: (_event: AgentEvent) => void;
+  onFailed?: (_event: AgentEvent) => void;
+  onStarted?: (_event: AgentEvent) => void;
+}
+
+export function useWebSocket(
+  wsUrl: string,
+  { onCompleted, onDelta, onFailed, onStarted }: UseWebSocketCallbacks = {},
+) {
 
   // useRef — 创建一个"可变引用"，修改它不会触发重新渲染
   // 和 useState 的区别：useState 修改值会触发重新渲染，useRef 不会
   // 用途：保存 WebSocket 实例，需要在多个函数中访问
   // socketRef.current — 实际的值（初始为 null）
-  const socketRef = useRef(null);
+  const socketRef = useRef<WebSocket | null>(null);
 
   // WebSocket 连接状态
-  const [socketState, setSocketState] = useState('connecting');
+  const [socketState, setSocketState] = useState<SocketState>('connecting');
 
   // 事件列表（最新的在前面）
-  const [events, setEvents] = useState([]);
+  const [events, setEvents] = useState<AgentEvent[]>([]);
 
   // 是否正在运行任务
   const [isRunning, setIsRunning] = useState(false);
@@ -35,7 +46,7 @@ export function useWebSocket(wsUrl, { onCompleted, onDelta, onFailed, onStarted 
 
 
   // 添加事件到列表
-  const appendEvent = useCallback((event) => {
+  const appendEvent = useCallback((event: AgentEvent) => {
     // [event, ...prev] — 新事件放在数组最前面（最新的在前）
     // .slice(0, MAX_EVENTS) — 只保留前 80 个（防止列表无限增长）
     setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS));
@@ -54,7 +65,7 @@ export function useWebSocket(wsUrl, { onCompleted, onDelta, onFailed, onStarted 
   //   如果它重新创建 → useEffect 的依赖项变化 → 清理函数关闭旧 WebSocket → 重新连接
   //   所以用 useCallback 缓存，避免不必要的重连
   const handleAgentEvent = useCallback(
-    (event) => {
+    (event: AgentEvent) => {
       // 更新运行 ID
       if (event.run_id && event.run_id !== 'control') setActiveRunId(event.run_id);
 
@@ -124,7 +135,7 @@ export function useWebSocket(wsUrl, { onCompleted, onDelta, onFailed, onStarted 
     // 'message' — 收到消息
     // messageEvent.data — 消息内容（字符串）
     // JSON.parse() — 把 JSON 字符串转为 JS 对象
-    socket.addEventListener('message', (messageEvent) => {
+    socket.addEventListener('message', (messageEvent: MessageEvent<string>) => {
       try {
         handleAgentEvent(JSON.parse(messageEvent.data));
       } catch {
@@ -146,7 +157,7 @@ export function useWebSocket(wsUrl, { onCompleted, onDelta, onFailed, onStarted 
 
   // 发送消息给后端
   const sendMessage = useCallback(
-    (message, sessionName) => {
+    (message: string, sessionName: string) => {
       // 安全检查：socket 不存在、未连接、正在运行时，不发送
       if (!socketRef.current || socketState !== 'connected' || isRunning) return;
 

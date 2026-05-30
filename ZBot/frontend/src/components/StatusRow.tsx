@@ -8,9 +8,17 @@
  *   Run ID  -
  */
 
+type StatusTone = 'neutral' | 'connecting' | 'connected' | 'disconnected' | 'error' | 'running' | 'idle';
+
+interface StatusRowProps {
+  label: string;
+  value: string;
+  tone?: StatusTone;
+}
+
 // { label, value, tone = 'neutral' } — 解构 props
 // tone = 'neutral' — 默认值：如果父组件没传 tone，默认是 'neutral'
-export default function StatusRow({ label, value, tone = 'neutral' }) {
+export default function StatusRow({ label, value, tone = 'neutral' }: StatusRowProps) {
   return (
     <div className="status-row">
       {/* 标签文字 */}

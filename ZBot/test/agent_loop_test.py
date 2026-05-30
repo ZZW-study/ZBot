@@ -311,6 +311,7 @@ class FakeProvider(LLMProvider):
         max_tokens: int = 4096,
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
+        on_delta: Any = None,
     ) -> LLMResponse:
         """返回预设的下一个回复。
 

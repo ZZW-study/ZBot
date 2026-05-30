@@ -172,9 +172,18 @@ class AgentRunService:
             await self.bundle.agent.consolidate_all_session_memory(session_name=session_name)
             await self.bundle.agent.consolidate_daily_memory(session_name=session_name)
             try:
-                await self.bundle.agent.review_skills(session_name=session_name)
+                await asyncio.wait_for(
+                    self.bundle.agent.review_skills(session_name=session_name),
+                    timeout=300,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("技能进化回顾超时（300秒），跳过")
             except Exception:
                 logger.exception("技能进化回顾失败")
+            try:
+                await self.bundle.agent.run_curator()
+            except Exception:
+                logger.exception("技能 Curator 维护失败")
         except Exception:
             logger.exception("Agent 会话清理失败")
         finally:

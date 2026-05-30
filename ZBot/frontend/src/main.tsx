@@ -1,9 +1,9 @@
 /**
- * main.jsx — JavaScript 入口文件
+ * main.tsx — TypeScript React 入口文件
  *
  * 执行流程：
  * 1. 浏览器加载 index.html
- * 2. 发现 <script src="/src/main.jsx">，加载并执行此文件
+ * 2. 发现 <script src="/src/main.tsx">，加载并执行此文件
  * 3. ReactDOM.createRoot 找到 HTML 中的 <div id="root">
  * 4. .render(<App />) 把 App 组件渲染进去
  *
@@ -24,7 +24,13 @@ import './index.css';
 import App from './App';
 
 // 把 React 应用渲染到 index.html 的 #root div 里
-ReactDOM.createRoot(document.getElementById('root')).render(
+const root = document.getElementById('root');
+
+if (!root) {
+  throw new Error('Root element #root not found.');
+}
+
+ReactDOM.createRoot(root).render(
   // React.StrictMode — 开发模式额外检查（如重复渲染检测），生产环境自动移除
   <React.StrictMode>
     <App />
