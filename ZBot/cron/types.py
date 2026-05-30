@@ -30,8 +30,8 @@ class CronJob:
     - every/cron 类型：持续运行，手动删除才停止
     """
 
-    id: str                            # 短 ID（UUID 前 8 位）
-    name: str                          # 任务名称（截取消息前 30 字符）
-    message: str                       # 触发时的提醒内容
-    schedule: CronSchedule             # 调度规则
+    id: str  # 短 ID（UUID 前 8 位）
+    name: str  # 任务名称（截取消息前 30 字符）
+    message: str  # 触发时的提醒内容
+    schedule: CronSchedule  # 调度规则
     next_run_at_ms: int | None = None  # 下次执行的毫秒时间戳，None = 未安排

@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
 # 默认阈值：低于此分数的会话不触发技能审查
 DEFAULT_COMPLEXITY_THRESHOLD = 0.50
 
@@ -91,10 +90,7 @@ def compute_complexity(
         + error_rate_score * _WEIGHT_ERROR_RATE
     )
 
-    should_review = (
-        tool_call_count >= _MIN_TOOL_CALLS_FOR_REVIEW
-        and score >= threshold
-    )
+    should_review = tool_call_count >= _MIN_TOOL_CALLS_FOR_REVIEW and score >= threshold
 
     return TaskComplexity(
         score=round(score, 4),

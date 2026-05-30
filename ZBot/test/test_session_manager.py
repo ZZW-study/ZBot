@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
-import tempfile
 from pathlib import Path
 
 import pytest
 
-from ZBot.session.manager import Session, SessionManager
+from ZBot.session.manager import SessionManager
 
 
 @pytest.fixture

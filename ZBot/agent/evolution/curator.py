@@ -7,6 +7,7 @@
 
 Curator 是纯文件操作 + SQLite 查询，无 LLM 调用，轻量级。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -18,7 +19,6 @@ from loguru import logger
 from ZBot.agent.evolution.lifecycle import (
     check_staleness,
     find_overlaps,
-    read_lifecycle_info,
     update_lifecycle_status,
 )
 from ZBot.agent.evolution.metrics import record_evolution_event

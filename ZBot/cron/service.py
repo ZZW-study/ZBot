@@ -7,6 +7,7 @@
 """
 
 from __future__ import annotations
+
 import asyncio
 import json
 import time
@@ -19,7 +20,6 @@ from zoneinfo import ZoneInfo
 from loguru import logger
 
 from ZBot.cron.types import CronJob, CronSchedule
-
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -100,10 +100,10 @@ class CronService:
         on_job: Callable[[CronJob], Coroutine[Any, Any, Any]] | None = None,
     ):
         """初始化定时任务存储路径和到期回调。"""
-        self.store_path = store_path          # JSON 持久化文件路径
-        self.on_job = on_job                  # 任务到期时的业务回调
+        self.store_path = store_path  # JSON 持久化文件路径
+        self.on_job = on_job  # 任务到期时的业务回调
         self._timer_task: asyncio.Task | None = None  # 当前挂起的计时器
-        self._running = False                 # 服务是否在运行
+        self._running = False  # 服务是否在运行
 
     # ==================== 公开接口 ====================
 
@@ -137,7 +137,7 @@ class CronService:
 
         now = _now_ms()
         job = CronJob(
-            id=str(uuid.uuid4())[:8],       # 取 UUID 前 8 位做短 ID
+            id=str(uuid.uuid4())[:8],  # 取 UUID 前 8 位做短 ID
             name=name,
             message=message,
             schedule=schedule,
@@ -147,7 +147,7 @@ class CronService:
         jobs = self._load_jobs()
         jobs.append(job)
         self._save_jobs(jobs)
-        self._arm_timer()                   # 有新任务了，可能需要提前唤醒
+        self._arm_timer()  # 有新任务了，可能需要提前唤醒
         logger.info("定时任务已添加：'{}'（ID：{}）", job.name, job.id)
         return job
 
@@ -159,7 +159,7 @@ class CronService:
         removed = len(jobs) != before
         if removed:
             self._save_jobs(jobs)
-            self._arm_timer()               # 删掉的可能是最近要执行的，需要重新算唤醒时间
+            self._arm_timer()  # 删掉的可能是最近要执行的，需要重新算唤醒时间
             logger.info("定时任务已删除：{}", job_id)
         return removed
 
@@ -186,7 +186,7 @@ class CronService:
             try:
                 await asyncio.sleep(delay)
             except asyncio.CancelledError:
-                return                     # 被 cancel 了（比如添加了更早的任务），直接退出
+                return  # 被 cancel 了（比如添加了更早的任务），直接退出
             if self._running:
                 await self._on_timer()
 
@@ -218,7 +218,7 @@ class CronService:
         logger.info("开始执行定时任务：'{}'（ID：{}）", job.name, job.id)
         try:
             if self.on_job:
-                await self.on_job(job)     # 调用外部注入的业务逻辑
+                await self.on_job(job)  # 调用外部注入的业务逻辑
         except Exception as exc:
             logger.error("定时任务 '{}' 执行失败：{}", job.name, exc)
 

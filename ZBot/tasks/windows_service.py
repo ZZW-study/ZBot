@@ -1,10 +1,12 @@
-import win32serviceutil
-import win32service
-import win32event
 import subprocess
 import sys
 import time
 from pathlib import Path
+
+import win32event
+import win32service
+import win32serviceutil
+
 
 class CeleryWorkerService(win32serviceutil.ServiceFramework):
     # 服务基本信息
@@ -20,7 +22,7 @@ class CeleryWorkerService(win32serviceutil.ServiceFramework):
         # 进程句柄
         self.worker_process = None
         self.beat_process = None
-        
+
         # 使用 Path 类处理路径
         self.service_file_path = Path(__file__).resolve()
         # 从 ZBot/tasks/windows_service.py 往上找2层，到 ZBOT 根目录
@@ -32,7 +34,7 @@ class CeleryWorkerService(win32serviceutil.ServiceFramework):
     def SvcDoRun(self):
         """⚠️ Windows服务的启动入口（固定写法，不能改名！）"""
         self.ReportServiceStatus(win32service.SERVICE_START_PENDING)
-        
+
         # 关键：把项目根目录加入Python路径，确保能import ZBot包
         project_root_str = str(self.project_root)
         if project_root_str not in sys.path:
@@ -45,40 +47,51 @@ class CeleryWorkerService(win32serviceutil.ServiceFramework):
             # 1. 启动 Celery Worker（执行任务的进程）
             self.worker_process = subprocess.Popen(
                 [
-                    python_exe, "-m", "celery",
-                    "-A", "ZBot.tasks.celery_app",
+                    python_exe,
+                    "-m",
+                    "celery",
+                    "-A",
+                    "ZBot.tasks.celery_app",
                     "worker",
                     "--loglevel=info",
                     "--pool=solo",
-                    "--logfile", str(self.log_dir / "worker.log"),
-                    "--pidfile", str(self.log_dir / "worker.pid")
+                    "--logfile",
+                    str(self.log_dir / "worker.log"),
+                    "--pidfile",
+                    str(self.log_dir / "worker.pid"),
                 ],
                 cwd=str(self.project_root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
 
             # 2. 启动 Celery Beat（定时任务触发器）
             self.beat_process = subprocess.Popen(
                 [
-                    python_exe, "-m", "celery",
-                    "-A", "ZBot.tasks.celery_app",
+                    python_exe,
+                    "-m",
+                    "celery",
+                    "-A",
+                    "ZBot.tasks.celery_app",
                     "beat",
                     "--loglevel=info",
-                    "--logfile", str(self.log_dir / "beat.log"),
-                    "--pidfile", str(self.log_dir / "beat.pid"),
-                    "--schedule", str(self.log_dir / "beat-schedule.db")
+                    "--logfile",
+                    str(self.log_dir / "beat.log"),
+                    "--pidfile",
+                    str(self.log_dir / "beat.pid"),
+                    "--schedule",
+                    str(self.log_dir / "beat-schedule.db"),
                 ],
                 cwd=str(self.project_root),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW
+                creationflags=subprocess.CREATE_NO_WINDOW,
             )
 
             # 标记服务为运行中
             self.ReportServiceStatus(win32service.SERVICE_RUNNING)
-            
+
             # 循环等待停止信号，同时检查子进程是否异常退出
             while True:
                 wait_result = win32event.WaitForSingleObject(self.stop_event, 1000)
@@ -111,6 +124,7 @@ class CeleryWorkerService(win32serviceutil.ServiceFramework):
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     proc.kill()
+
 
 if __name__ == "__main__":
     win32serviceutil.HandleCommandLine(CeleryWorkerService)

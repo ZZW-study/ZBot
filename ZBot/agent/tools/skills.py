@@ -82,10 +82,7 @@ def _validate_name(name: str) -> Optional[str]:
     if len(name) > MAX_NAME_LENGTH:
         return f"技能名称超过 {MAX_NAME_LENGTH} 个字符。"
     if not VALID_NAME_RE.match(name):
-        return (
-            f"无效的技能名称 '{name}'。"
-            f"只能用小写字母、数字、连字符、下划线、点号，且必须以字母或数字开头。"
-        )
+        return f"无效的技能名称 '{name}'。只能用小写字母、数字、连字符、下划线、点号，且必须以字母或数字开头。"
     return None
 
 
@@ -194,9 +191,11 @@ def _fuzzy_find_and_replace(
         if not matches:
             continue
         if len(matches) > 1 and not replace_all:
-            return content, 0, None, (
-                f"找到 {len(matches)} 处匹配。请提供更多上下文使其唯一，"
-                f"或使用 replace_all=True 全部替换。"
+            return (
+                content,
+                0,
+                None,
+                (f"找到 {len(matches)} 处匹配。请提供更多上下文使其唯一，或使用 replace_all=True 全部替换。"),
             )
         new_content = _apply_replacements(content, matches, new_string)
         return new_content, len(matches), strategy_name, None
@@ -204,9 +203,7 @@ def _fuzzy_find_and_replace(
     return content, 0, None, "在文件中找不到 old_string 的匹配。"
 
 
-def _apply_replacements(
-    content: str, matches: list[tuple[int, int]], new_string: str
-) -> str:
+def _apply_replacements(content: str, matches: list[tuple[int, int]], new_string: str) -> str:
     """从后往前替换，避免位置偏移。"""
     sorted_matches = sorted(matches, key=lambda x: x[0], reverse=True)
     result = content
@@ -234,14 +231,10 @@ def _strategy_line_trimmed(content: str, pattern: str) -> list[tuple[int, int]]:
     pattern_normalized = "\n".join(pattern_lines)
     content_lines = content.split("\n")
     content_normalized_lines = [line.strip() for line in content_lines]
-    return _find_normalized_matches(
-        content, content_lines, content_normalized_lines, pattern, pattern_normalized
-    )
+    return _find_normalized_matches(content, content_lines, content_normalized_lines, pattern, pattern_normalized)
 
 
-def _strategy_whitespace_normalized(
-    content: str, pattern: str
-) -> list[tuple[int, int]]:
+def _strategy_whitespace_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 3：多空格/Tab 合并为单空格后匹配。"""
 
     def normalize(s: str) -> str:
@@ -255,21 +248,15 @@ def _strategy_whitespace_normalized(
     return _map_normalized_positions(content, content_normalized, matches_in_normalized)
 
 
-def _strategy_indentation_flexible(
-    content: str, pattern: str
-) -> list[tuple[int, int]]:
+def _strategy_indentation_flexible(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 4：忽略缩进差异。"""
     content_lines = content.split("\n")
     content_stripped = [line.lstrip() for line in content_lines]
     pattern_lines = [line.lstrip() for line in pattern.split("\n")]
-    return _find_normalized_matches(
-        content, content_lines, content_stripped, pattern, "\n".join(pattern_lines)
-    )
+    return _find_normalized_matches(content, content_lines, content_stripped, pattern, "\n".join(pattern_lines))
 
 
-def _strategy_escape_normalized(
-    content: str, pattern: str
-) -> list[tuple[int, int]]:
+def _strategy_escape_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 5：转义字符标准化（\\n → 真实换行）。"""
 
     def unescape(s: str) -> str:
@@ -281,9 +268,7 @@ def _strategy_escape_normalized(
     return _strategy_exact(content, pattern_unescaped)
 
 
-def _strategy_unicode_normalized(
-    content: str, pattern: str
-) -> list[tuple[int, int]]:
+def _strategy_unicode_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 6：Unicode 标准化（智能引号→ASCII）。"""
     unicode_map = {
         "“": '"',
@@ -328,10 +313,7 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
 
     potential = []
     for i in range(len(content_lines) - pattern_line_count + 1):
-        if (
-            content_lines[i].strip() == first_line
-            and content_lines[i + pattern_line_count - 1].strip() == last_line
-        ):
+        if content_lines[i].strip() == first_line and content_lines[i + pattern_line_count - 1].strip() == last_line:
             potential.append(i)
 
     matches = []
@@ -345,9 +327,7 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
             pattern_middle = "\n".join(pattern_lines[1:-1])
             similarity = SequenceMatcher(None, content_middle, pattern_middle).ratio()
         if similarity >= threshold:
-            start_pos, end_pos = _calculate_line_positions(
-                content_lines, i, i + pattern_line_count, len(content)
-            )
+            start_pos, end_pos = _calculate_line_positions(content_lines, i, i + pattern_line_count, len(content))
             matches.append((start_pos, end_pos))
 
     return matches
@@ -371,9 +351,7 @@ def _strategy_context_aware(content: str, pattern: str) -> list[tuple[int, int]]
             if sim >= 0.80:
                 high_sim_count += 1
         if high_sim_count >= len(pattern_lines) * 0.5:
-            start_pos, end_pos = _calculate_line_positions(
-                content_lines, i, i + pattern_line_count, len(content)
-            )
+            start_pos, end_pos = _calculate_line_positions(content_lines, i, i + pattern_line_count, len(content))
             matches.append((start_pos, end_pos))
 
     return matches
@@ -407,9 +385,7 @@ def _find_normalized_matches(
     for i in range(len(content_normalized_lines) - num_lines + 1):
         block = "\n".join(content_normalized_lines[i : i + num_lines])
         if block == pattern_normalized:
-            start_pos, end_pos = _calculate_line_positions(
-                content_lines, i, i + num_lines, len(content)
-            )
+            start_pos, end_pos = _calculate_line_positions(content_lines, i, i + num_lines, len(content))
             matches.append((start_pos, end_pos))
     return matches
 
@@ -426,9 +402,7 @@ def _build_orig_to_norm_map(original: str, unicode_map: dict) -> list[int]:
     return result
 
 
-def _map_positions_norm_to_orig(
-    orig_to_norm: list[int], norm_matches: list[tuple[int, int]]
-) -> list[tuple[int, int]]:
+def _map_positions_norm_to_orig(orig_to_norm: list[int], norm_matches: list[tuple[int, int]]) -> list[tuple[int, int]]:
     """标准化位置 → 原始位置。"""
     norm_to_orig_start: dict[int, int] = {}
     for orig_pos, norm_pos in enumerate(orig_to_norm[:-1]):
@@ -508,7 +482,7 @@ def _find_closest_lines(old_string: str, content: str) -> str:
 
     anchor = old_lines[0].strip()
     if not anchor:
-        candidates = [l.strip() for l in old_lines if l.strip()]
+        candidates = [line.strip() for line in old_lines if line.strip()]
         if not candidates:
             return ""
         anchor = candidates[0]
@@ -536,10 +510,7 @@ def _find_closest_lines(old_string: str, content: str) -> str:
         if (start, end) in seen:
             continue
         seen.add((start, end))
-        snippet = "\n".join(
-            f"{start + j + 1:4d}| {content_lines[start + j]}"
-            for j in range(end - start)
-        )
+        snippet = "\n".join(f"{start + j + 1:4d}| {content_lines[start + j]}" for j in range(end - start))
         parts.append(snippet)
 
     return "\n---\n".join(parts)
@@ -587,7 +558,9 @@ async def _normalize_manifest(skill_dir: Path) -> tuple[SkillManifest, str]:
     if name != skill_dir.name:
         logger.warning(
             "技能 {} 的 frontmatter name='{}' 与目录名 '{}' 不一致，使用目录名",
-            skill_dir, name, skill_dir.name,
+            skill_dir,
+            name,
+            skill_dir.name,
         )
         name = skill_dir.name
 
@@ -622,11 +595,7 @@ class NewSkillsListLoader(Tool):
 
     @property
     def description(self) -> str:
-        return (
-            "扫描技能目录，返回可用技能的名称和描述。"
-            "可传入已知技能名列表，只返回新增的技能。"
-            "不传参则返回全部技能。"
-        )
+        return "扫描技能目录，返回可用技能的名称和描述。可传入已知技能名列表，只返回新增的技能。不传参则返回全部技能。"
 
     @property
     def parameters(self) -> dict[str, Any]:
@@ -678,10 +647,7 @@ class NewSkillsListLoader(Tool):
         if known:
             all_skills = [s for s in all_skills if s.name not in known]
 
-        entries = [
-            {"name": s.name, "description": s.description, "path": str(s.skill_file)}
-            for s in all_skills
-        ]
+        entries = [{"name": s.name, "description": s.description, "path": str(s.skill_file)} for s in all_skills]
         return json.dumps(
             {"success": True, "skills": entries, "count": len(entries)},
             ensure_ascii=False,
@@ -751,12 +717,14 @@ class SkillReader(Tool):
                     continue
 
                 manifest, body = await _normalize_manifest(skill_dir)
-                results.append({
-                    "name": manifest.name,
-                    "description": manifest.description,
-                    "content": body,
-                    "success": True,
-                })
+                results.append(
+                    {
+                        "name": manifest.name,
+                        "description": manifest.description,
+                        "content": body,
+                        "success": True,
+                    }
+                )
             except Exception as e:
                 results.append({"name": name, "success": False, "error": str(e)})
 
@@ -805,10 +773,7 @@ class SkillsManager(Tool):
                 "action": {
                     "type": "string",
                     "enum": ["create", "patch", "delete"],
-                    "description": (
-                        "操作类型。"
-                        "create=创建新技能，patch=修补已有技能，delete=删除技能。"
-                    ),
+                    "description": ("操作类型。create=创建新技能，patch=修补已有技能，delete=删除技能。"),
                 },
                 "name": {
                     "type": "string",
@@ -827,8 +792,7 @@ class SkillsManager(Tool):
                 "old_string": {
                     "type": "string",
                     "description": (
-                        "patch 时必传。要查找替换的文字片段。"
-                        "支持模糊匹配（空格、缩进、转义差异自动处理）。"
+                        "patch 时必传。要查找替换的文字片段。支持模糊匹配（空格、缩进、转义差异自动处理）。"
                     ),
                 },
                 "new_string": {
@@ -889,7 +853,10 @@ class SkillsManager(Tool):
                     return json.dumps(
                         {
                             "success": False,
-                            "error": f"frontmatter 中的 name='{fm['name']}' 与传入的名称 '{name}' 不一致。请保持两者相同。",
+        "error": (
+            f"frontmatter 中的 name='{fm['name']}' 与传入的名称 '{name}' 不一致。"
+            "请保持两者相同。"
+        ),
                         },
                         ensure_ascii=False,
                     )
@@ -907,15 +874,13 @@ class SkillsManager(Tool):
             if new_desc:
                 similar = await self._find_similar_skills(new_desc, threshold=0.6)
                 if similar:
-                    similar_info = [
-                        {"name": s["name"], "similarity": f"{s['score']:.0%}"}
-                        for s in similar
-                    ]
+                    similar_info = [{"name": s["name"], "similarity": f"{s['score']:.0%}"} for s in similar]
                     return json.dumps(
                         {
                             "success": False,
                             "error": (
-                                f"发现与已有技能描述相似的技能：{similar[0]['name']}（相似度 {similar[0]['score']:.0%}）。"
+            f"发现与已有技能描述相似的技能：{similar[0]['name']}"
+            f"（相似度 {similar[0]['score']:.0%}）。"
                                 "请优先使用 patch 更新该技能，或传入 force=True 强制创建。"
                             ),
                             "similar_skills": similar_info,
@@ -972,9 +937,7 @@ class SkillsManager(Tool):
             pass
         return ""
 
-    async def _find_similar_skills(
-        self, description: str, threshold: float = 0.6
-    ) -> list[dict[str, Any]]:
+    async def _find_similar_skills(self, description: str, threshold: float = 0.6) -> list[dict[str, Any]]:
         """查找与给定 description 相似的已有技能。
 
         Returns:
@@ -997,11 +960,13 @@ class SkillsManager(Tool):
 
             score = SequenceMatcher(None, description.lower(), existing_desc.lower()).ratio()
             if score >= threshold:
-                matches.append({
-                    "name": manifest.name,
-                    "description": existing_desc[:200],
-                    "score": score,
-                })
+                matches.append(
+                    {
+                        "name": manifest.name,
+                        "description": existing_desc[:200],
+                        "score": score,
+                    }
+                )
 
         matches.sort(key=lambda x: x["score"], reverse=True)
         return matches[:3]

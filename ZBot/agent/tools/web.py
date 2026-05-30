@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
-import html                             # 导入 HTML 处理模块，用于转义、解析等操作
+import html  # 导入 HTML 处理模块，用于转义、解析等操作
 import json
 import re
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlparse       # 导入 URL 解析模块，用于分解、拼接、验证 URL 
-import httpx                            # 导入 httpx 库，一个功能强大的 HTTP 客户端，支持同步和异步请求
+from urllib.parse import urlparse  # 导入 URL 解析模块，用于分解、拼接、验证 URL
+
+import httpx  # 导入 httpx 库，一个功能强大的 HTTP 客户端，支持同步和异步请求
+
 from ZBot.agent.tools.base import Tool, format_tool_error
 
 # 类型检查块：仅在类型检查阶段导入 WebSearchConfig，避免运行时循环依赖
@@ -25,22 +27,23 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
 # 浏览器 / 程序就会自动跳过去，这就叫一次重定向。
 MAX_REDIRECTS = 5
 
+
 def _strip_tags(text: str) -> str:
     """去除 HTML 标签并解码 HTML 实体"""
     # 去 HTML 标签：把网页里的 <div><p><b> 这些排版代码删掉，只留纯文字内容。
     # 解码 HTML 实体：把网页里的 &nbsp; &lt; &gt; &amp
-    # 实体符号    真实字符    
-    # &lt;           <       
+    # 实体符号    真实字符
+    # &lt;           <
     # &gt;           >
     # 这类转义字符还原成正常符号。
     # 两个一起做，就是为了：
     # 拿到干净、可读、能直接用的文本！
     # 先删除 script 标签及其内容
-    text = re.sub(r'<script[\s\S]*?</script>', '', text, flags=re.I)
+    text = re.sub(r"<script[\s\S]*?</script>", "", text, flags=re.I)
     # 再删除 style 标签及其内容
-    text = re.sub(r'<style[\s\S]*?</style>', '', text, flags=re.I)
+    text = re.sub(r"<style[\s\S]*?</style>", "", text, flags=re.I)
     # 删除所有 HTML 标签
-    text = re.sub(r'<[^>]+>', '', text)
+    text = re.sub(r"<[^>]+>", "", text)
     # 解码 HTML 实体（如 &lt; 转为 <），并去除首尾空白
     return html.unescape(text).strip()
 
@@ -48,9 +51,9 @@ def _strip_tags(text: str) -> str:
 def _normalize(text: str) -> str:
     """规范化空白字符：合并连续空格，保留最多两个换行"""
     # 将多个空格/制表符合并为一个空格
-    text = re.sub(r'[ \t]+', ' ', text)
+    text = re.sub(r"[ \t]+", " ", text)
     # 将三个及以上换行合并为两个换行
-    return re.sub(r'\n{3,}', '\n\n', text).strip()
+    return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
 def _validate_url(url: str) -> tuple[bool, str]:
@@ -59,7 +62,7 @@ def _validate_url(url: str) -> tuple[bool, str]:
         # 解析 URL 结构
         p = urlparse(url)
         # 检查协议是否为 http 或 https
-        if p.scheme not in ('http', 'https'):
+        if p.scheme not in ("http", "https"):
             return False, "只允许http，https协议"
         # 检查是否包含域名
         if not p.netloc:
@@ -96,13 +99,13 @@ class WebSearchTool(Tool):
         from ZBot.config.schema import WebSearchConfig
 
         self.config = config if config is not None else WebSearchConfig()  # 使用传入配置或默认配置
-        self.proxy = proxy                                                 # HTTP 代理地址
-    
+        self.proxy = proxy  # HTTP 代理地址
+
     @property
     def name(self) -> str:
         """返回网页搜索工具名称。"""
         return "web_search"
-    
+
     @property
     def description(self) -> str:
         """返回网页搜索工具说明。"""
@@ -111,35 +114,41 @@ class WebSearchTool(Tool):
             "适合本地没有的信息、时效性事实、官方资料定位；不要替代本地代码阅读。"
             "需要引用具体页面时，搜索后再用 web_fetch 读取原文。"
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         """返回网页搜索工具参数 Schema。"""
         return {
             "type": "object",
             "properties": {
-                "query": {"type": "string", "description": "搜索查询语句。写清实体、版本、日期或站点限定，避免泛泛搜索。"},
-                "count": {"type": "integer", "minimum": 1, "maximum": 10, "description": "返回的结果数量，默认为配置中的 max_results。需要快速定位时用 3-5 条即可。"},
+                "query": {
+                    "type": "string",
+                    "description": "搜索查询语句。写清实体、版本、日期或站点限定，避免泛泛搜索。",
+                },
+                "count": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 10,
+                    "description": "返回的结果数量，默认为配置中的 max_results。需要快速定位时用 3-5 条即可。",
+                },
             },
             "required": ["query"],
         }
 
-
     async def execute(self, **kwargs: Any) -> str:
         """执行网页搜索并返回格式化结果。"""
 
-        query = kwargs.get("query","")
+        query = kwargs.get("query", "")
         query = str(query).strip()
         # 限制结果数量在 1-10 之间
         n = min(max(kwargs.get("count") or self.config.max_results, 1), 10)
-  
-        return await self._search_bocha(query, n)
 
+        return await self._search_bocha(query, n)
 
     async def _search_bocha(self, query: str, n: int) -> str:
         """使用bocha Search API"""
         # 从配置获取 API 密钥
-        api_key = self.config.api_key 
+        api_key = self.config.api_key
         if not api_key:
             return format_tool_error(
                 "未设置 BOCHA_API_KEY",
@@ -155,10 +164,7 @@ class WebSearchTool(Tool):
                 r = await client.post(
                     "https://api.bocha.cn/v1/web-search",
                     json={"query": query, "count": n, "summary": True},
-                    headers={
-                        "Content-Type": "application/json",
-                        "Authorization": f"Bearer {api_key}"
-                    },
+                    headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
                     timeout=30.0,
                 )
                 # 检查 HTTP 状态码，失败会抛出异常
@@ -166,7 +172,11 @@ class WebSearchTool(Tool):
             # 提取搜索结果列表
             data = r.json()
             items = [
-                {"title": x.get("title", ""), "url": x.get("url", ""), "content": x.get("summary", "") or x.get("snippet", "")}
+                {
+                    "title": x.get("title", ""),
+                    "url": x.get("url", ""),
+                    "content": x.get("summary", "") or x.get("snippet", ""),
+                }
                 for x in data.get("data", {}).get("webPages", {}).get("value", [])
             ]
             return _format_results(query, items, n)
@@ -178,7 +188,6 @@ class WebSearchTool(Tool):
                 next_action="换成更具体的关键词，减少 count，或改用已有 URL 直接 web_fetch",
             )
 
-    
 
 class WebFetchTool(Tool):
     """网页抓取工具"""
@@ -194,7 +203,7 @@ class WebFetchTool(Tool):
     def name(self) -> str:
         """返回网页抓取工具名称。"""
         return "web_fetch"
-    
+
     @property
     def description(self) -> str:
         """返回网页抓取工具说明。"""
@@ -202,7 +211,7 @@ class WebFetchTool(Tool):
             "抓取已知 URL 的页面内容，支持 HTML 正文提取和 JSON 格式化。"
             "用于读取 web_search 找到的候选页面或用户给出的链接；只有关键词时先用 web_search。"
         )
-    
+
     @property
     def parameters(self) -> dict[str, Any]:
         """返回网页抓取工具参数 Schema。"""
@@ -210,13 +219,27 @@ class WebFetchTool(Tool):
             "type": "object",
             "properties": {
                 "url": {"type": "string", "description": "要抓取的完整 http/https URL；不是搜索关键词。"},
-                "extractMode": {"type": "string", "enum": ["markdown", "text"], "default": "markdown", "description": "内容提取模式，markdown 提取正文并转换为 Markdown 格式，text 则提取纯文本。默认为 markdown。"},
-                "maxChars": {"type": "integer", "minimum": 1000, "maximum": 100000, "default": self.max_chars, "description": f"返回内容的最大字符数，超过部分将被截断。默认为 {self.max_chars}。"},
+                "extractMode": {
+                    "type": "string",
+                    "enum": ["markdown", "text"],
+                    "default": "markdown",
+                    "description": (
+                        "内容提取模式，markdown 提取正文并转换为 Markdown 格式，"
+                        "text 则提取纯文本。默认为 markdown。"
+                    ),
+                },
+                "maxChars": {
+                    "type": "integer",
+                    "minimum": 1000,
+                    "maximum": 100000,
+                    "default": self.max_chars,
+                    "description": f"返回内容的最大字符数，超过部分将被截断。默认为 {self.max_chars}。",
+                },
             },
             "required": ["url"],
         }
 
-    async def execute(self,  **kwargs: Any) -> str:
+    async def execute(self, **kwargs: Any) -> str:
         """校验 URL 后抓取网页内容。"""
         # 使用参数或默认值
         max_chars = kwargs.get("maxChars") or self.max_chars
@@ -239,10 +262,10 @@ class WebFetchTool(Tool):
         try:
             # 创建 HTTP 客户端，配置跟随重定向、超时、代理
             async with httpx.AsyncClient(
-                follow_redirects=True,          # 自动跟随重定向
-                max_redirects=MAX_REDIRECTS,    # 最多重定向次数
-                timeout=30.0,                   # 超时时间
-                proxy=self.proxy,               # 代理设置
+                follow_redirects=True,  # 自动跟随重定向
+                max_redirects=MAX_REDIRECTS,  # 最多重定向次数
+                timeout=30.0,  # 超时时间
+                proxy=self.proxy,  # 代理设置
             ) as client:
                 # 发送 GET 请求
                 r = await client.get(url, headers={"User-Agent": USER_AGENT})
@@ -340,20 +363,29 @@ class WebFetchTool(Tool):
         text = re.sub(
             r'<a\s+[^>]*href=["\']([^"\']+)["\'][^>]*>([\s\S]*?)</a>',
             # 匹配到超链接时，提取 href 和标签内容，转为 Markdown 链接格式
-            lambda m: f'[{_strip_tags(m[2])}]({m[1]})', html_content, flags=re.I)
+            lambda m: f"[{_strip_tags(m[2])}]({m[1]})",
+            html_content,
+            flags=re.I,
+        )
         # 第2步：转换标题 <h1>~<h6> → 对应数量的 # + 标题文本
         text = re.sub(
-            r'<h([1-6])[^>]*>([\s\S]*?)</h\1>',
+            r"<h([1-6])[^>]*>([\s\S]*?)</h\1>",
             # m[1] 是标题级别（1-6），m[2] 是标题内容
-            lambda m: f'\n{"#" * int(m[1])} {_strip_tags(m[2])}\n', text, flags=re.I)
+            lambda m: f"\n{'#' * int(m[1])} {_strip_tags(m[2])}\n",
+            text,
+            flags=re.I,
+        )
         # 第3步：转换列表项 <li> → - 项
         text = re.sub(
-            r'<li[^>]*>([\s\S]*?)</li>',
+            r"<li[^>]*>([\s\S]*?)</li>",
             # 将每个列表项转为减号前缀的 Markdown 列表项
-            lambda m: f'\n- {_strip_tags(m[1])}', text, flags=re.I)
+            lambda m: f"\n- {_strip_tags(m[1])}",
+            text,
+            flags=re.I,
+        )
         # 第4步：段落/区块闭合标签 → 双换行（分段）
-        text = re.sub(r'</(p|div|section|article)>', '\n\n', text, flags=re.I)
+        text = re.sub(r"</(p|div|section|article)>", "\n\n", text, flags=re.I)
         # 第5步：换行符和水平线 → 单换行
-        text = re.sub(r'<(br|hr)\s*/?>', '\n', text, flags=re.I)
+        text = re.sub(r"<(br|hr)\s*/?>", "\n", text, flags=re.I)
         # 最后：去除剩余 HTML 标签，规范化空白并返回
         return _normalize(_strip_tags(text))
