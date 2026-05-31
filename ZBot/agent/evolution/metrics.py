@@ -3,11 +3,10 @@
 记录技能进化事件（created/patched/stale/archived/merged），为用户提供进化历史查询。
 存储使用 SQLite（与 usage_tracker 共用 SKILL_USAGE.db）。
 """
+
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 

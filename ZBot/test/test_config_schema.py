@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from ZBot.config.schema import Config, MCPServerConfig, ProviderConfig, ProvidersConfig
+from ZBot.config.schema import Config, MCPServerConfig
 
 
 class TestConfigDefaults:

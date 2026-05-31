@@ -27,11 +27,9 @@ class SkillCatalog:
         self.workspace_skills_dir: Path | None = workspace / "skills" if workspace else None
         self._registry_cache: dict[str, SkillManifest] | None = None
 
-
     def invalidate_cache(self) -> None:
         """清空技能注册表缓存，下次调用时重新扫描。"""
         self._registry_cache = None
-
 
     async def build_catalog_for_prompt(self) -> str:
         """构建技能目录摘要，注入到 system prompt。
@@ -59,9 +57,7 @@ class SkillCatalog:
 
             # stale 技能标注
             stale_tag = " (stale)" if lifecycle.status == "stale" else ""
-            lines.append(
-                f"- `{manifest.name}`{stale_tag}：{manifest.description}（路径：{manifest.skill_file}）"
-            )
+            lines.append(f"- `{manifest.name}`{stale_tag}：{manifest.description}（路径：{manifest.skill_file}）")
 
         return "\n".join(lines)
 

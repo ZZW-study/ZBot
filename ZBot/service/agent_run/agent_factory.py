@@ -65,11 +65,7 @@ def create_agent_bundle(
 def create_provider(config: Config) -> LiteLLMProvider:
     """根据配置创建 LLM Provider。"""
     provider_config, provider_name, is_gateway, model = resolve_provider_config(config)
-    provider_model = (
-        model.split("/", 1)[1]
-        if is_gateway and model.startswith(f"{provider_name}/")
-        else model
-    )
+    provider_model = model.split("/", 1)[1] if is_gateway and model.startswith(f"{provider_name}/") else model
     return LiteLLMProvider(
         api_key=provider_config.api_key,
         api_base=provider_config.api_base,
@@ -87,9 +83,7 @@ def resolve_provider_config(config: Config) -> tuple[ProviderConfig, str, bool, 
 
     provider_config, provider_name, is_gateway = config.get_provider(model)
     if not provider_name or provider_config is None:
-        raise AgentSetupError(
-            f"无法为模型 {model} 自动匹配提供商，请检查 provider 配置和模型名称前缀。"
-        )
+        raise AgentSetupError(f"无法为模型 {model} 自动匹配提供商，请检查 provider 配置和模型名称前缀。")
     if not provider_config.api_key:
         raise AgentSetupError(f"尚未配置 {provider_name} 的 API 密钥，请检查 {config_path}。")
     if not provider_config.api_base:

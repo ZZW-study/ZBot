@@ -17,12 +17,14 @@
 """
 
 from __future__ import annotations
+
 import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
 from loguru import logger
 
 from ZBot.service.utils.helpers import ensure_dir, safe_filename
@@ -36,13 +38,13 @@ _HISTORY_FIELDS = ("tool_calls", "tool_call_id", "name")
 class Session:
     """单个会话对象。"""
 
-    session_name: str                                               # 会话名称
-    messages: list[dict[str, Any]] = field(default_factory=list)    # 消息列表
-    created_at: datetime = field(default_factory=datetime.now)      # 创建时间，打印才是年-月-日-时-分-秒，不然就是datatime对象，如果要保存不能用这个，必须在后面加isoformat（），变成字符串对象，保存
-    updated_at: datetime = field(default_factory=datetime.now)      # 更新时间
-    last_consolidated: int = 0                                      # 已归档的消息索引（用于会话记忆）
-    memory_snapshot: str | None = None                              # 记忆快照（归档时保存的摘要信息）
-
+    session_name: str  # 会话名称
+    messages: list[dict[str, Any]] = field(default_factory=list)  # 消息列表
+    # 保存时需要通过 isoformat 转为字符串。
+    created_at: datetime = field(default_factory=datetime.now)
+    updated_at: datetime = field(default_factory=datetime.now)  # 更新时间
+    last_consolidated: int = 0  # 已归档的消息索引（用于会话记忆）
+    memory_snapshot: str | None = None  # 记忆快照（归档时保存的摘要信息）
 
     def get_history_by_token_budget(self, token_budget: int) -> list[dict[str, Any]]:
         """按 token 预算返回最近历史，避免固定消息条数误判上下文大小。"""
@@ -64,7 +66,6 @@ class Session:
         selected = self._drop_unpaired_tool_prefix(selected)
         return [self._history_entry(message) for message in selected]
 
-
     def clear(self) -> None:
         """清空会话。"""
         self.messages = []
@@ -82,13 +83,11 @@ class Session:
             total_chars += len(str(message["tool_call_id"]))
         return max(1, total_chars // 2)
 
-
     @staticmethod
     def _trim_to_first_user(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """历史上下文从第一条 user 消息开始，避免 assistant/tool 无来源地开头。"""
         first_user = next((index for index, message in enumerate(messages) if message.get("role") == "user"), None)
         return messages[first_user:] if first_user is not None else messages
-
 
     @staticmethod
     def _drop_unpaired_tool_prefix(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -96,7 +95,6 @@ class Session:
         while messages and messages[0].get("role") == "tool":
             messages = messages[1:]
         return messages
-
 
     @staticmethod
     def _history_entry(message: dict[str, Any]) -> dict[str, Any]:
@@ -106,7 +104,6 @@ class Session:
             if field_name in message:
                 entry[field_name] = message[field_name]
         return entry
-
 
 
 class SessionManager:
@@ -120,24 +117,23 @@ class SessionManager:
         # 内存缓存：key -> Session 映射，用于加速频繁访问
         self._cache: dict[str, Session] = {}
 
-
     async def get_or_create(self, session_name: str) -> tuple[Session, bool]:
         """获取或创建会话。先从缓存查找，如果没有则从磁盘加载；如果磁盘上也没有，则创建一个新的空会话。"""
         session = self._cache.get(session_name)
         if session is None:
             session = await self._load(session_name)
             if session:
-                return session,True  #加载成功，返回会话和标记
+                return session, True  # 加载成功，返回会话和标记
             session = Session(session_name=session_name)  # 创建新会话
             self._cache[session_name] = session
-        return session,False  #返回会话和标记，标记为False表示新创建的会话
-
+        return session, False  # 返回会话和标记，标记为False表示新创建的会话
 
     async def save(self, session: Session) -> None:
         """保存会话到磁盘,同一会话名字，都是追加写入。"""
         path: Path = self._session_path(session.session_name)
         lines: list[str] = [json.dumps(self._metadata_line(session), ensure_ascii=False)]
         lines.extend(json.dumps(message, ensure_ascii=False) for message in session.messages)
+
         # asyncio.to_thread：将同步 IO 操作放到线程池执行，避免阻塞事件循环
         # 原理：
         #   1. Python 事件循环自带默认线程池，首次使用时自动创建
@@ -148,44 +144,43 @@ class SessionManager:
             """在线程池中把会话内容追加写入磁盘。"""
             with path.open("w", encoding="utf-8") as f:
                 f.write("\n".join(lines) + "\n")
+
         await asyncio.to_thread(write_file)
         self._cache[session.session_name] = session
 
-
     async def list_sessions(self) -> list[dict[str, Any]]:
-            """列出所有会话的元数据（不加载消息内容）。
+        """列出所有会话的元数据（不加载消息内容）。
 
-            只读取每个 .jsonl 文件的第一行（元数据行），不加载消息，
-            这样即使有几百个会话也能快速返回。
+        只读取每个 .jsonl 文件的第一行（元数据行），不加载消息，
+        这样即使有几百个会话也能快速返回。
 
-            Returns:
-                会话元数据列表，按更新时间倒序排列（最新的在前面）
-            """
-            sessions: list[dict[str, Any]] = []
+        Returns:
+            会话元数据列表，按更新时间倒序排列（最新的在前面）
+        """
+        sessions: list[dict[str, Any]] = []
 
-            def scan_files():
-                """在线程池中扫描会话文件。"""
-                for path in self.sessions_dir.glob("*.jsonl"):
-                    try:
-                        with path.open("r", encoding="utf-8") as f:
-                            first_line = f.readline().strip()
-                            if first_line:
-                                data = json.loads(first_line)
-                                if data.get("_type") == "metadata":
-                                    # 计算消息数量（总行数 - 1 行元数据）
-                                    line_count = sum(1 for _ in f)
-                                    data["message_count"] = line_count
-                                    sessions.append(data)
-                    except Exception:
-                        continue  # 跳过损坏的文件
+        def scan_files():
+            """在线程池中扫描会话文件。"""
+            for path in self.sessions_dir.glob("*.jsonl"):
+                try:
+                    with path.open("r", encoding="utf-8") as f:
+                        first_line = f.readline().strip()
+                        if first_line:
+                            data = json.loads(first_line)
+                            if data.get("_type") == "metadata":
+                                # 计算消息数量（总行数 - 1 行元数据）
+                                line_count = sum(1 for _ in f)
+                                data["message_count"] = line_count
+                                sessions.append(data)
+                except Exception:
+                    continue  # 跳过损坏的文件
 
-            await asyncio.to_thread(scan_files)
+        await asyncio.to_thread(scan_files)
 
-            # 按更新时间倒序排列
-            sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
-            return sessions
-    
-    
+        # 按更新时间倒序排列
+        sessions.sort(key=lambda s: s.get("updated_at", ""), reverse=True)
+        return sessions
+
     async def rename(self, old_name: str, new_name: str) -> bool:
         """重命名会话。
 
@@ -222,6 +217,7 @@ class SessionManager:
 
     async def _update_metadata_name(self, path: Path, new_name: str) -> None:
         """更新 JSONL 文件第一行的元数据名称。"""
+
         def _rewrite():
             lines = path.read_text(encoding="utf-8").splitlines()
             if not lines:
@@ -258,7 +254,6 @@ class SessionManager:
         # 同时从缓存中移除
         self._cache.pop(session_name, None)
         return True
-    
 
     async def _load(self, session_name: str) -> Session | None:
         """从磁盘加载会话。"""
@@ -323,8 +318,8 @@ class SessionManager:
         生成元数据行的字典。元数据包含会话的基本信息，但不包含大量消息内容，便于快速读取和使用。
         """
         return {
-            "_type": "metadata",          # 标记这是元数据行
-            "name": session.session_name, # 会话名称
+            "_type": "metadata",  # 标记这是元数据行
+            "name": session.session_name,  # 会话名称
             "created_at": session.created_at.isoformat(),  # 创建时间
             "updated_at": session.updated_at.isoformat(),  # 更新时间
             "last_consolidated": session.last_consolidated,  # 归档索引

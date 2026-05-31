@@ -40,23 +40,26 @@
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
+
 import json
-import secrets                                  # 安全随机，random伪随机
+import secrets  # 安全随机，random伪随机
 import string
 from typing import Any, Optional
+
 import litellm
-from litellm import acompletion                 # async，调用大模型，返回回答
-from loguru import logger 
+from litellm import acompletion  # async，调用大模型，返回回答
+from loguru import logger
 
 from ZBot.providers.base import DEFAULT_CONTEXT_WINDOW, LLMProvider, LLMResponse, StreamCallback, ToolCallRequest
-from ZBot.providers.registry import context_window_for_model, find_by_model, find_gateway
-from ZBot.providers.registry import ProviderSpec
+from ZBot.providers.registry import ProviderSpec, context_window_for_model, find_by_model, find_gateway
 
-_ALLOWED_MSG_KEYS = frozenset({"role","content","tool_calls","tool_call_id", "name", "reasoning_content"}) # 允许的消息标准字段（所有厂商通用）
+_ALLOWED_MSG_KEYS = frozenset(
+    {"role", "content", "tool_calls", "tool_call_id", "name", "reasoning_content"}
+)  # 允许的消息标准字段（所有厂商通用）
 _ALNUM = string.ascii_letters + string.digits  # 字母数字字符集（生成工具ID）
 
 
-def _short_tool_id() ->str:
+def _short_tool_id() -> str:
     """
     生成9位字母数字工具ID,只在厂商没有返回 tool_call id 时兜底使用。
     """
@@ -86,7 +89,6 @@ class LiteLLMProvider(LLMProvider):
         litellm.suppress_debug_info = True
         litellm.drop_params = True
 
-
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -100,7 +102,7 @@ class LiteLLMProvider(LLMProvider):
         """【核心方法】异步发送聊天请求给 LiteLLM，并返回标准化响应。"""
         if model is None:
             model = self.default_model
-            
+
         model = self._resolve_model(model)
 
         # 确保 max_tokens 至少为1，避免传入0导致SDK报错
@@ -113,15 +115,14 @@ class LiteLLMProvider(LLMProvider):
         }
         kwargs["api_key"] = self.api_key
         kwargs["api_base"] = self.api_base
-        
+
         # 推理强度参数
         if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
             kwargs["drop_params"] = True
-        
 
         if tools:
-            kwargs["tools"] = tools   # 工具列表（JSON Schema 格式）
+            kwargs["tools"] = tools  # 工具列表（JSON Schema 格式）
             kwargs["tool_choice"] = "auto"
 
         try:
@@ -160,8 +161,6 @@ class LiteLLMProvider(LLMProvider):
             return local_window
         return DEFAULT_CONTEXT_WINDOW
 
-
-
     def _resolve_model(self, model: str) -> str:
         """
         模型名称标准化：根据注册表自动添加前缀，便于litellm使用。
@@ -177,10 +176,11 @@ class LiteLLMProvider(LLMProvider):
             return model
 
         raise ValueError(f"无法解析模型名称 '{model}'，请检查配置是否正确，或模型名称是否包含已注册的关键词。")
-    
 
     @staticmethod
-    def _sanitize_messages(messages: list[dict[str, Any]], extra_keys: frozenset[str] = frozenset()) -> list[dict[str, Any]]:
+    def _sanitize_messages(
+        messages: list[dict[str, Any]], extra_keys: frozenset[str] = frozenset()
+    ) -> list[dict[str, Any]]:
         """
         消息最终清洗：
         1. 保留标准+厂商专属字段
@@ -194,8 +194,6 @@ class LiteLLMProvider(LLMProvider):
             if clean.get("role") == "tool":
                 clean.pop("name", None)
         return sanitized
-
-
 
     def _parse_response(self, response: Any) -> LLMResponse:
         """
@@ -216,11 +214,13 @@ class LiteLLMProvider(LLMProvider):
                         args = json.loads(args)
                     except json.JSONDecodeError:
                         args = {}
-                tool_calls.append(ToolCallRequest(
-                    id=getattr(tc, "id", None) or _short_tool_id(),
-                    name=tc.function.name,
-                    arguments=args if isinstance(args, dict) else {},
-                ))
+                tool_calls.append(
+                    ToolCallRequest(
+                        id=getattr(tc, "id", None) or _short_tool_id(),
+                        name=tc.function.name,
+                        arguments=args if isinstance(args, dict) else {},
+                    )
+                )
 
         # Token统计
         usage = {}

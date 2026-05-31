@@ -3,9 +3,6 @@
 from __future__ import annotations
 
 import time
-from unittest.mock import patch
-
-import pytest
 
 from ZBot.config.schema import Config
 from ZBot.service.config_service import ConfigCache, merge_config_patch, resolved_provider_status
@@ -26,7 +23,7 @@ class TestConfigCache:
     def test_get_reloads_after_ttl_expires(self):
         """缓存过期后应重新加载。"""
         cache = ConfigCache(ttl_seconds=0.1)  # 很短的 TTL
-        config1 = cache.get()
+        cache.get()
 
         # 等待 TTL 过期
         time.sleep(0.15)
@@ -39,7 +36,7 @@ class TestConfigCache:
     def test_invalidate_clears_cache(self):
         """invalidate 后应清除缓存。"""
         cache = ConfigCache()
-        config1 = cache.get()
+        cache.get()
         cache.invalidate()
         assert cache._cached is None
         assert cache._cached_at == 0.0
@@ -66,11 +63,7 @@ class TestMergeConfigPatch:
         """合并 patch 应更新 provider 的 API key。"""
         current = Config()
         current.providers.deepseek.api_key = "old_key"
-        patched = merge_config_patch(current, {
-            "providers": {
-                "deepseek": {"apiKey": "new_key"}
-            }
-        })
+        patched = merge_config_patch(current, {"providers": {"deepseek": {"apiKey": "new_key"}}})
         assert patched.providers.deepseek.api_key == "new_key"
 
     def test_merge_preserves_masked_api_key(self):
@@ -80,11 +73,7 @@ class TestMergeConfigPatch:
         masked = mask_key("secret_key_123")  # 掩码后的值
 
         # 前端提交掩码的 key，应被忽略（保留原值）
-        patched = merge_config_patch(current, {
-            "providers": {
-                "deepseek": {"apiKey": masked}
-            }
-        })
+        patched = merge_config_patch(current, {"providers": {"deepseek": {"apiKey": masked}}})
         # 应保留原值，不被掩码值覆盖
         assert patched.providers.deepseek.api_key == "secret_key_123"
 
@@ -94,11 +83,7 @@ class TestMergeConfigPatch:
         current.providers.deepseek.api_key = ""
 
         # 前端提交空字符串，应被忽略
-        patched = merge_config_patch(current, {
-            "providers": {
-                "deepseek": {"apiKey": ""}
-            }
-        })
+        patched = merge_config_patch(current, {"providers": {"deepseek": {"apiKey": ""}}})
         # 应保留原值（空字符串）
         assert patched.providers.deepseek.api_key == ""
 

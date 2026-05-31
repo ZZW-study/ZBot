@@ -266,7 +266,6 @@ from ZBot.agent.base_agent import BaseAgent
 from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.providers.base import LLMProvider, LLMResponse, ToolCallRequest
 
-
 # =============================================================================
 # 测试用的假数据结构
 #
@@ -299,7 +298,7 @@ class FakeProvider(LLMProvider):
         """
         # 不调用 super().__init__()，因为我们不需要 api_key 和 api_base
         self._responses = list(responses)  # 复制一份，避免修改原始数据
-        self._call_index = 0               # 记录当前调用到第几次
+        self._call_index = 0  # 记录当前调用到第几次
         self.call_history: list[list[dict[str, Any]]] = []  # 记录每次调用时传入的 messages
         self._delay = delay
 
@@ -367,12 +366,12 @@ def runtime_config(tmp_path: Path) -> AgentRuntimeConfig:
     """
     # 位置参数构造（Pyright 对 @dataclass(slots=True) 有误报，运行时完全正常）
     config = AgentRuntimeConfig(
-        tmp_path,           # workspace: Path
-        "test-model",       # model: str
-        0.1,                # temperature: float
-        4096,               # max_tokens: int
-        None,               # reasoning_effort: str | None
-        30,                 # agent_timeout_seconds: int
+        tmp_path,  # workspace: Path
+        "test-model",  # model: str
+        0.1,  # temperature: float
+        4096,  # max_tokens: int
+        None,  # reasoning_effort: str | None
+        30,  # agent_timeout_seconds: int
     )
     return config
 
@@ -384,8 +383,10 @@ def noop_progress():
     run_agent_loop 要求传入 on_progress 回调，用于向前端推送进度。
     测试时我们不需要真正的进度展示，所以用一个什么都不做的函数。
     """
+
     async def _noop(*args: Any, **kwargs: Any) -> None:
         pass
+
     return _noop
 
 
@@ -459,9 +460,11 @@ class TestAgentLoopBasic:
             - messages 应该包含完整的对话链
         """
         # Arrange（准备）：创建假的 LLM 回复
-        fake_provider = FakeProvider(responses=[
-            make_text_response("你好！我是 ZBot，有什么可以帮你的？"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                make_text_response("你好！我是 ZBot，有什么可以帮你的？"),
+            ]
+        )
 
         # 创建测试 Agent
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
@@ -509,21 +512,23 @@ class TestAgentLoopBasic:
         # Arrange：模拟两轮回复
         # 第一轮：模型决定调用 write_file 工具
         # 第二轮：模型根据工具结果给出最终回复
-        fake_provider = FakeProvider(responses=[
-            # 第一轮：模型请求调用 write_file
-            make_tool_call_response(
-                content="我来帮你创建文件。",
-                tool_calls=[
-                    make_tool_call(
-                        id="call_001",
-                        name="write_file",
-                        arguments={"path": "hello.txt", "content": "Hello World"},
-                    ),
-                ],
-            ),
-            # 第二轮：模型根据工具结果回复
-            make_text_response("文件 hello.txt 已创建，内容为 Hello World。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                # 第一轮：模型请求调用 write_file
+                make_tool_call_response(
+                    content="我来帮你创建文件。",
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_001",
+                            name="write_file",
+                            arguments={"path": "hello.txt", "content": "Hello World"},
+                        ),
+                    ],
+                ),
+                # 第二轮：模型根据工具结果回复
+                make_text_response("文件 hello.txt 已创建，内容为 Hello World。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -568,26 +573,28 @@ class TestAgentLoopBasic:
             - tools_used 应该包含两次 "write_file"
             - messages 应该包含两条工具结果
         """
-        fake_provider = FakeProvider(responses=[
-            # 第一轮：模型同时请求调用两个工具
-            make_tool_call_response(
-                content="我来创建两个文件。",
-                tool_calls=[
-                    make_tool_call(
-                        id="call_001",
-                        name="write_file",
-                        arguments={"path": "a.txt", "content": "文件A"},
-                    ),
-                    make_tool_call(
-                        id="call_002",
-                        name="write_file",
-                        arguments={"path": "b.txt", "content": "文件B"},
-                    ),
-                ],
-            ),
-            # 第二轮：模型根据两个工具的结果回复
-            make_text_response("文件 a.txt 和 b.txt 都已创建完成。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                # 第一轮：模型同时请求调用两个工具
+                make_tool_call_response(
+                    content="我来创建两个文件。",
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_001",
+                            name="write_file",
+                            arguments={"path": "a.txt", "content": "文件A"},
+                        ),
+                        make_tool_call(
+                            id="call_002",
+                            name="write_file",
+                            arguments={"path": "b.txt", "content": "文件B"},
+                        ),
+                    ],
+                ),
+                # 第二轮：模型根据两个工具的结果回复
+                make_text_response("文件 a.txt 和 b.txt 都已创建完成。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -628,32 +635,34 @@ class TestAgentLoopBasic:
             - agent loop 应该执行多轮
             - 每轮的工具结果都正确追加到消息链
         """
-        fake_provider = FakeProvider(responses=[
-            # 第一轮：读取文件
-            make_tool_call_response(
-                content="先读取文件内容。",
-                tool_calls=[
-                    make_tool_call(
-                        id="call_001",
-                        name="read_file",
-                        arguments={"path": "config.json"},
-                    ),
-                ],
-            ),
-            # 第二轮：根据读取结果编辑文件
-            make_tool_call_response(
-                content="内容已读取，现在修改。",
-                tool_calls=[
-                    make_tool_call(
-                        id="call_002",
-                        name="edit_file",
-                        arguments={"path": "config.json", "old_text": "old", "new_text": "new"},
-                    ),
-                ],
-            ),
-            # 第三轮：最终回复
-            make_text_response("config.json 已修改完成。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                # 第一轮：读取文件
+                make_tool_call_response(
+                    content="先读取文件内容。",
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_001",
+                            name="read_file",
+                            arguments={"path": "config.json"},
+                        ),
+                    ],
+                ),
+                # 第二轮：根据读取结果编辑文件
+                make_tool_call_response(
+                    content="内容已读取，现在修改。",
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_002",
+                            name="edit_file",
+                            arguments={"path": "config.json", "old_text": "old", "new_text": "new"},
+                        ),
+                    ],
+                ),
+                # 第三轮：最终回复
+                make_text_response("config.json 已修改完成。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -690,9 +699,11 @@ class TestAgentLoopError:
             - agent loop 应该立即停止（不再继续调用模型）
             - final_content 应该包含错误提示
         """
-        fake_provider = FakeProvider(responses=[
-            make_error_response("模型服务暂时不可用"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                make_error_response("模型服务暂时不可用"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -731,21 +742,23 @@ class TestAgentLoopError:
             - 错误信息应该被追加到消息链
             - 模型应该能看到错误信息并给出合理回复
         """
-        fake_provider = FakeProvider(responses=[
-            # 第一轮：模型请求读取文件
-            make_tool_call_response(
-                content="我来读取文件。",
-                tool_calls=[
-                    make_tool_call(
-                        id="call_001",
-                        name="read_file",
-                        arguments={"path": "nonexistent.txt"},
-                    ),
-                ],
-            ),
-            # 第二轮：模型看到错误后回复
-            make_text_response("抱歉，文件 nonexistent.txt 不存在，请检查路径是否正确。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                # 第一轮：模型请求读取文件
+                make_tool_call_response(
+                    content="我来读取文件。",
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_001",
+                            name="read_file",
+                            arguments={"path": "nonexistent.txt"},
+                        ),
+                    ],
+                ),
+                # 第二轮：模型看到错误后回复
+                make_text_response("抱歉，文件 nonexistent.txt 不存在，请检查路径是否正确。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -844,11 +857,11 @@ class TestAgentLoopThinkBlock:
             - final_content 不应该包含</think>标签
             - final_content 应该只包含实际回复内容
         """
-        fake_provider = FakeProvider(responses=[
-            make_text_response(
-                "<think>用户在打招呼，我应该礼貌回应。</think>你好！有什么可以帮你的？"
-            ),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                make_text_response("<think>用户在打招呼，我应该礼貌回应。</think>你好！有什么可以帮你的？"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -881,21 +894,23 @@ class TestAgentLoopThinkBlock:
             - 思考内容通过 on_progress 回调传出（不影响最终结果）
             - final_content 不包含思考块
         """
-        fake_provider = FakeProvider(responses=[
-            # 第一轮：带思考块的工具调用
-            make_tool_call_response(
-                content="<think>用户要创建文件，我需要用 write_file 工具。</think>",
-                tool_calls=[
-                    make_tool_call(
-                        id="call_001",
-                        name="write_file",
-                        arguments={"path": "test.txt", "content": "hello"},
-                    ),
-                ],
-            ),
-            # 第二轮：最终回复
-            make_text_response("文件已创建。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                # 第一轮：带思考块的工具调用
+                make_tool_call_response(
+                    content="<think>用户要创建文件，我需要用 write_file 工具。</think>",
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_001",
+                            name="write_file",
+                            arguments={"path": "test.txt", "content": "hello"},
+                        ),
+                    ],
+                ),
+                # 第二轮：最终回复
+                make_text_response("文件已创建。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -971,11 +986,7 @@ class TestAgentLoopNoProgress:
         )
 
         # 检查消息链中是否包含"进展判断"提示
-        all_content = " ".join(
-            str(msg.get("content", ""))
-            for msg in messages
-            if msg.get("role") == "tool"
-        )
+        all_content = " ".join(str(msg.get("content", "")) for msg in messages if msg.get("role") == "tool")
         assert "进展判断" in all_content or "换策略" in all_content or final_content is not None
 
 
@@ -999,19 +1010,21 @@ class TestAgentLoopMessageStructure:
             - tool 消息包含 tool_call_id 和 name
             - 最终 assistant 消息不包含 tool_calls
         """
-        fake_provider = FakeProvider(responses=[
-            make_tool_call_response(
-                content=None,
-                tool_calls=[
-                    make_tool_call(
-                        id="call_001",
-                        name="write_file",
-                        arguments={"path": "test.txt", "content": "hello"},
-                    ),
-                ],
-            ),
-            make_text_response("完成。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                make_tool_call_response(
+                    content=None,
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_001",
+                            name="write_file",
+                            arguments={"path": "test.txt", "content": "hello"},
+                        ),
+                    ],
+                ),
+                make_text_response("完成。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -1038,10 +1051,7 @@ class TestAgentLoopMessageStructure:
         assert roles[-1] == "assistant"
 
         # 验证 tool_call 消息的结构
-        assistant_with_tool = [
-            msg for msg in messages
-            if msg["role"] == "assistant" and "tool_calls" in msg
-        ]
+        assistant_with_tool = [msg for msg in messages if msg["role"] == "assistant" and "tool_calls" in msg]
         assert len(assistant_with_tool) >= 1
         assert assistant_with_tool[0]["tool_calls"][0]["id"] == "call_001"
 
@@ -1067,17 +1077,19 @@ class TestAgentLoopMessageStructure:
         即使同一个工具被调用多次，tools_used 也应该记录每一次。
         （注意：不是去重，而是完整记录，方便后续分析。）
         """
-        fake_provider = FakeProvider(responses=[
-            make_tool_call_response(
-                content=None,
-                tool_calls=[
-                    make_tool_call(id="c1", name="read_file", arguments={"path": "a.txt"}),
-                    make_tool_call(id="c2", name="read_file", arguments={"path": "b.txt"}),
-                    make_tool_call(id="c3", name="write_file", arguments={"path": "c.txt", "content": "x"}),
-                ],
-            ),
-            make_text_response("完成。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                make_tool_call_response(
+                    content=None,
+                    tool_calls=[
+                        make_tool_call(id="c1", name="read_file", arguments={"path": "a.txt"}),
+                        make_tool_call(id="c2", name="read_file", arguments={"path": "b.txt"}),
+                        make_tool_call(id="c3", name="write_file", arguments={"path": "c.txt", "content": "x"}),
+                    ],
+                ),
+                make_text_response("完成。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -1111,9 +1123,11 @@ class TestAgentLoopEdgeCases:
         这是一个边界情况。agent loop 不应该崩溃，
         而是应该把空列表传给 LLM，让 LLM 处理。
         """
-        fake_provider = FakeProvider(responses=[
-            make_text_response("我没有收到任何消息。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                make_text_response("我没有收到任何消息。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -1136,21 +1150,23 @@ class TestAgentLoopEdgeCases:
         某些情况下模型可能不返回文本，只返回工具调用。
         agent loop 应该正常处理这种情况。
         """
-        fake_provider = FakeProvider(responses=[
-            # 第一轮：content=None，只有工具调用
-            make_tool_call_response(
-                content=None,
-                tool_calls=[
-                    make_tool_call(
-                        id="call_001",
-                        name="write_file",
-                        arguments={"path": "test.txt", "content": "hello"},
-                    ),
-                ],
-            ),
-            # 第二轮：最终回复
-            make_text_response("完成。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                # 第一轮：content=None，只有工具调用
+                make_tool_call_response(
+                    content=None,
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_001",
+                            name="write_file",
+                            arguments={"path": "test.txt", "content": "hello"},
+                        ),
+                    ],
+                ),
+                # 第二轮：最终回复
+                make_text_response("完成。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 
@@ -1180,19 +1196,21 @@ class TestAgentLoopEdgeCases:
         # 用 AsyncMock 记录回调调用
         progress_callback = AsyncMock()
 
-        fake_provider = FakeProvider(responses=[
-            make_tool_call_response(
-                content="让我思考一下...",
-                tool_calls=[
-                    make_tool_call(
-                        id="call_001",
-                        name="write_file",
-                        arguments={"path": "test.txt", "content": "hello"},
-                    ),
-                ],
-            ),
-            make_text_response("完成。"),
-        ])
+        fake_provider = FakeProvider(
+            responses=[
+                make_tool_call_response(
+                    content="让我思考一下...",
+                    tool_calls=[
+                        make_tool_call(
+                            id="call_001",
+                            name="write_file",
+                            arguments={"path": "test.txt", "content": "hello"},
+                        ),
+                    ],
+                ),
+                make_text_response("完成。"),
+            ]
+        )
 
         agent = StubAgent(provider=fake_provider, runtime_config=runtime_config)
 

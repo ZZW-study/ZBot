@@ -9,7 +9,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from loguru import logger
 
 from ZBot.service.agent_run.agent_factory import AgentSetupError
-from ZBot.service.agent_run.agent_run_service import AgentEvent, AgentRunService
+from ZBot.service.agent_run.agent_run_service import AgentEvent
 from ZBot.service.agent_run.agent_runner import create_agent_run_service
 from ZBot.service.config_service import config_cache
 from ZBot.service.utils.file_utils import (
@@ -64,8 +64,7 @@ async def ask_with_files(
             )
         elif mime in TEXT_MIME_TYPES:
             content_blocks[0]["text"] += (
-                f"\n\n---\n\n上传文本文件：{file.filename or 'unknown'}\n"
-                f"{decode_text(raw_bytes)}"
+                f"\n\n---\n\n上传文本文件：{file.filename or 'unknown'}\n{decode_text(raw_bytes)}"
             )
         elif mime in UNSUPPORTED_FILE_MIME_TYPES:
             raise HTTPException(

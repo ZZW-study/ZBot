@@ -5,19 +5,19 @@
 
 from __future__ import annotations
 
-import copy
 import asyncio
+import copy
 import json
 import re
 import time
-from abc import ABC, abstractmethod
-from contextlib import AsyncExitStack    # 感觉这个像函数一样，创建的时候有各种资源，当结束的时候，就把这些资源释放掉
+from abc import ABC
+from contextlib import AsyncExitStack  # 感觉这个像函数一样，创建的时候有各种资源，当结束的时候，就把这些资源释放掉
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-from ZBot.agent.tools.cron import CronTool
 from ZBot.agent.tools.base import format_tool_error
+from ZBot.agent.tools.cron import CronTool
 from ZBot.agent.tools.filesystem import ListDirTool, ReadFileTool
 from ZBot.agent.tools.registry import ToolRegistry
 from ZBot.agent.tools.search import glob_search, grep_search
@@ -27,10 +27,11 @@ from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
 from ZBot.providers.base import LLMProvider, ToolCallRequest
 
-
 # ==================== 模块级常量 ====================
-# 正则表达式：用于匹配大模型输出中的思考块（）<think><think>aaa</think>bbb</think>，它会匹配第一个 </think> 就停止，而不是一直匹配到最后一个。
-_THINK_BLOCK_RE = re.compile(r"<think>[\s\S]*?</think>", re.IGNORECASE)  # 方括号 [ ] 表示字符类（character class），用来匹配方括号内列出的任意一个字符。
+# 匹配模型输出中的 <think>...</think> 思考块，非贪婪地停在第一个闭合标签。
+_THINK_BLOCK_RE = re.compile(
+    r"<think>[\s\S]*?</think>", re.IGNORECASE
+)
 
 
 class BaseAgent(ABC):
@@ -70,10 +71,10 @@ class BaseAgent(ABC):
         """
 
         # ==================== 大模型配置（后续可以改为子类的属性） ====================
-        self.provider = provider      # 可能后续改为子类的属性，毕竟不同的agent可以调用不同的大模型
+        self.provider = provider  # 可能后续改为子类的属性，毕竟不同的agent可以调用不同的大模型
         self.runtime_config = runtime_config
-        self.workspace = runtime_config.workspace    # 可能后续改成子类的属性，毕竟不同的agent有不同的工作区
-        self.model = runtime_config.model            # 可能后续改为子类的属性，毕竟可以调用不同的大模型
+        self.workspace = runtime_config.workspace  # 可能后续改成子类的属性，毕竟不同的agent有不同的工作区
+        self.model = runtime_config.model  # 可能后续改为子类的属性，毕竟可以调用不同的大模型
         self.temperature = runtime_config.temperature
         self.max_tokens = runtime_config.max_tokens
         self.reasoning_effort = runtime_config.reasoning_effort
@@ -105,7 +106,6 @@ class BaseAgent(ABC):
         # ==================== 注册默认工具 ====================
         self._register_default_tools()
 
-
     async def connect_mcp(self) -> None:
         """连接 MCP 服务器，注册 MCP 工具。
 
@@ -133,7 +133,6 @@ class BaseAgent(ABC):
         finally:
             self._mcp_connecting = False
 
-
     # 公共 Agent Loop：CoreAgent 和 SubAgent 都复用这段模型-工具循环。
     async def run_agent_loop(
         self,
@@ -158,7 +157,7 @@ class BaseAgent(ABC):
         messages: list[dict[str, Any]] = initial_messages
         tools_used: list[str] = []
         final_content: str | None = None
-        loop_started_at: float = time.monotonic() # 获取系统单调时钟的时间戳（浮点秒数），核心特点：只递增、不会被系统时间校准 / 时区修改 / 手动改系统时间影响，记录 Agent loop 开始时间用于超时判断
+        loop_started_at: float = time.monotonic()
         turn_index: int = 0
         consecutive_no_progress_failures: int = 0
         mixed_subagent_call_count: int = 0
@@ -264,7 +263,6 @@ class BaseAgent(ABC):
                         for tool_call in response.tool_calls
                     ]
 
-                    
                     # 将 assistant 的工具调用意图写入消息链
                     self._add_assistant_message(
                         messages,
@@ -320,8 +318,7 @@ class BaseAgent(ABC):
 
                         if consecutive_no_progress_failures >= self._NO_PROGRESS_FAILURE_LIMIT:
                             result = (
-                                result
-                                + "\n\n[进展判断：连续多次工具结果都是失败，且没有提供新的可用观察信息。"
+                                result + "\n\n[进展判断：连续多次工具结果都是失败，且没有提供新的可用观察信息。"
                                 "请停止重复当前路径，改用不同工具/参数；如果没有新路径，请总结已知信息并给出最终回复。]"
                             )
                             consecutive_no_progress_failures = 0
@@ -399,11 +396,9 @@ class BaseAgent(ABC):
 
         logger.info("默认工具注册完成")
 
-
     async def approve_tool_call(self, tool_call: ToolCallRequest) -> str | None:
         """工具执行前的审批钩子；返回错误文本表示拒绝执行，返回 None 表示允许。"""
         return None
-
 
     @staticmethod
     def _has_mixed_create_sub_agent_calls(tool_calls: list[ToolCallRequest]) -> bool:
@@ -451,7 +446,7 @@ class BaseAgent(ABC):
         previous_visible = BaseAgent._strip_incomplete_think(previous_text)
         if len(current_visible) <= len(previous_visible):
             return ""
-        return current_visible[len(previous_visible):]
+        return current_visible[len(previous_visible) :]
 
     @staticmethod
     def _strip_incomplete_think(text: str) -> str:
@@ -552,9 +547,7 @@ class BaseAgent(ABC):
             event_type="compaction.started",
         )
 
-        artifact_path = await self._save_task_progress_artifact(
-            self._build_task_progress_artifact(messages)
-        )
+        artifact_path = await self._save_task_progress_artifact(self._build_task_progress_artifact(messages))
         compacted = self._compact_messages(messages, artifact_path=artifact_path)
         if self._estimate_messages_tokens(compacted) >= estimated_tokens:
             compacted = self._minimal_compacted_messages(messages, artifact_path=artifact_path)
@@ -590,12 +583,16 @@ class BaseAgent(ABC):
             if message.get("role") == "system"
             and not str(message.get("content", "")).startswith(self._COMPACTION_MARKER)
         ]
-        recent_user_messages = [
-            message for message in messages if message.get("role") == "user"
-        ][-self._RECENT_USER_MESSAGES_AFTER_COMPACTION :]
+        recent_user_messages = [message for message in messages if message.get("role") == "user"][
+            -self._RECENT_USER_MESSAGES_AFTER_COMPACTION :
+        ]
 
         summary = self._build_compaction_summary(messages, artifact_path=artifact_path)
-        return [*copy.deepcopy(system_messages), {"role": "system", "content": summary}, *copy.deepcopy(recent_user_messages)]
+        return [
+            *copy.deepcopy(system_messages),
+            {"role": "system", "content": summary},
+            *copy.deepcopy(recent_user_messages),
+        ]
 
     def _minimal_compacted_messages(
         self,
@@ -642,6 +639,21 @@ class BaseAgent(ABC):
         tool_successes, tool_failures = self._collect_tool_snippets(messages)
         anchor_facts = self._collect_anchor_facts(messages)
         latest_assistant = self._latest_content(messages, "assistant")
+        anchor_summary = (
+            self._format_anchor_facts(anchor_facts)
+            or self._format_snippets(tool_successes)
+            or "暂无可保留事实"
+        )
+        failure_summary = (
+            self._format_snippets(anchor_facts.get("failures", []))
+            or self._format_snippets(tool_failures)
+            or "暂无"
+        )
+        avoid_summary = (
+            self._format_snippets(anchor_facts.get("avoid", []))
+            or self._collect_do_not_repeat(messages)
+            or "暂无"
+        )
 
         return (
             f"{self._COMPACTION_MARKER}\n"
@@ -651,15 +663,15 @@ class BaseAgent(ABC):
             "最近结论：\n"
             f"{latest_assistant[: self._COMPACTION_SNIPPET_CHARS] if latest_assistant else '暂无'}\n\n"
             "关键事实：\n"
-            f"{self._format_anchor_facts(anchor_facts) or self._format_snippets(tool_successes) or '暂无可保留事实'}\n\n"
+            f"{anchor_summary}\n\n"
             "重要文件/路径：\n"
             f"{self._format_snippets(anchor_facts.get('paths', [])) or self._extract_paths(messages) or '暂无'}\n\n"
             "工具调用结论：\n"
             f"{self._format_snippets(tool_successes) or '暂无'}\n\n"
             "失败尝试：\n"
-            f"{self._format_snippets(anchor_facts.get('failures', [])) or self._format_snippets(tool_failures) or '暂无'}\n\n"
+            f"{failure_summary}\n\n"
             "不要重复：\n"
-            f"{self._format_snippets(anchor_facts.get('avoid', [])) or self._collect_do_not_repeat(messages) or '暂无'}\n\n"
+            f"{avoid_summary}\n\n"
             "任务进度 artifact：\n"
             f"{artifact_path or '未写入'}\n\n"
             "剩余待办：\n根据当前摘要继续完成用户任务；如信息不足，优先获取新的有效观察，不要重复失败路径。"
@@ -814,7 +826,9 @@ class BaseAgent(ABC):
         ]
         items: list[str] = []
         for pattern in patterns:
-            items.extend(match.group(0).strip().rstrip(".,;，。；") for match in re.finditer(pattern, text, flags=re.IGNORECASE))
+            items.extend(
+                match.group(0).strip().rstrip(".,;，。；") for match in re.finditer(pattern, text, flags=re.IGNORECASE)
+            )
         return BaseAgent._dedupe_preserve_order(items)
 
     @staticmethod

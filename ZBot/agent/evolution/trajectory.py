@@ -3,11 +3,12 @@
 从会话消息中提取结构化的工具调用轨迹，替代原始 transcript 注入 review prompt。
 原始 transcript ~8K tokens → 结构化轨迹 ~1K tokens，节省 ~87% token。
 """
+
 from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 # 轨迹最大步骤数（防止超长会话撑爆 review prompt）
@@ -229,7 +230,9 @@ def _detect_error_pattern(steps: list[ToolCallStep]) -> str | None:
     if len(steps) >= 3:
         for i in range(len(steps) - 2):
             if (
-                not steps[i].success and not steps[i + 1].success and not steps[i + 2].success
+                not steps[i].success
+                and not steps[i + 1].success
+                and not steps[i + 2].success
                 and steps[i].tool_name == steps[i + 1].tool_name == steps[i + 2].tool_name
                 and steps[i].arguments_summary == steps[i + 1].arguments_summary == steps[i + 2].arguments_summary
             ):

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from ZBot.agent.subagent.subagent_pool import SUBAGENT_POLICY
@@ -82,7 +81,6 @@ class CreateSubAgentTool(Tool):
             "required": ["subtasks"],
         }
 
-
     async def execute(self, **kwargs: Any) -> str:
         """并行执行多个已拆解的子 Agent 任务并汇总结果。"""
         # 参数合法性已经由 ToolRegistry 统一调用 Tool.validate_params() 完成。
@@ -112,7 +110,7 @@ class CreateSubAgentTool(Tool):
                 next_action="由主 Agent 在正常 run_agent_loop 工具调用阶段重新发起",
             )
 
-        # getattr 安全取属性(方法也是属性字典的属性)：如果父 Agent 没有 ensure_subagent_pool 方法，返回 None 而不是报错。
+        # getattr 安全取属性：父 Agent 没有 ensure_subagent_pool 时返回 None。
         # 这样可以兼容不支持子 Agent 的父 Agent 类型。
         subagent_pool = getattr(parent, "subagent_pool", None)
         if subagent_pool is None:
@@ -125,7 +123,7 @@ class CreateSubAgentTool(Tool):
             )
         # asyncio.gather 并发执行所有子任务，不需要等第一个完成再执行第二个。
         # _run_one_subagent 内部会把普通异常转成失败结果，因此这里不再重复处理异常对象。
-        results: list[dict[str, Any]] = await asyncio.gather(  
+        results: list[dict[str, Any]] = await asyncio.gather(
             *(
                 self._run_one_subagent(
                     subagent_pool,
@@ -156,7 +154,6 @@ class CreateSubAgentTool(Tool):
                     "或在最终结果中标记该部分缺失。"
                 )
         return "\n".join(response)
-
 
     async def _run_one_subagent(
         self,
@@ -190,7 +187,7 @@ class CreateSubAgentTool(Tool):
             return self._failed_result(
                 subtask,
                 error=f"子 Agent 执行超过 {timeout_seconds} 秒",
-                )
+            )
         except Exception as exc:
             return self._failed_result(
                 subtask,
@@ -206,9 +203,9 @@ class CreateSubAgentTool(Tool):
             "result": result,
         }
 
-
     def _make_subagent_progress(self, agent_id: str):
         """为指定子 Agent 创建进度转发回调。"""
+
         # 工厂函数：为每个子 Agent 生成一个专属的进度回调函数，
         # 闭包捕获 agent_id，让回调知道自己属于哪个子 Agent。
         async def _progress(content: str, *, tool_hint: bool = False, **kwargs: Any) -> None:
@@ -227,7 +224,6 @@ class CreateSubAgentTool(Tool):
             await progress(content, tool_hint=tool_hint, agent_label=label, **kwargs)
 
         return _progress
-
 
     @staticmethod
     def _failed_result(

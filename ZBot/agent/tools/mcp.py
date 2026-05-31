@@ -10,6 +10,7 @@
        - 适用于大多数现代 MCP 服务
        - 更灵活的数据传输方式
 """
+
 import asyncio
 from contextlib import AsyncExitStack
 from typing import Any
@@ -21,11 +22,11 @@ from typing import Any
 # 这里主要使用其异步功能 (httpx.AsyncClient) 来发起网络请求
 # 作用：SSE 和流式 HTTP 模式都需要创建 HTTP 客户端连接服务器
 import httpx
-
 from loguru import logger
+from mcp import ClientSession
+
 from ZBot.agent.tools.base import Tool, format_tool_error
 from ZBot.agent.tools.registry import ToolRegistry
-from mcp import ClientSession
 
 
 def _cfg_value(cfg: Any, key: str, default: Any = None) -> Any:
@@ -53,18 +54,22 @@ class MCPToolWrapper(Tool):
         自己定义的 Tool 接口。此类的责任就是做"翻译"——把 MCP 工具转换成
         框架能识别的原生工具。
     """
+
     def __init__(self, session: ClientSession, server_name: str, tool_def, tool_timeout: int = 30):
         """
         初始化 MCP 工具包装器实例。
         """
-        self._session = session                                                         # MCP 会话引用，后续通过它向服务器发送工具调用请求
-        self._original_name = tool_def.name                                             # 原始工具名，调用时需要使用这个名字
+        self._session = session  # MCP 会话引用，后续通过它向服务器发送工具调用请求
+        self._original_name = tool_def.name  # 原始工具名，调用时需要使用这个名字
         # 构建包装后的唯一名称，格式为 mcp_{服务器名}_{原工具名}
         # 这样做的好处：即使两个不同服务器都有叫"get_info"的工具，也不会冲突
         self._name = f"mcp_{server_name}_{tool_def.name}"
-        self._description = tool_def.description or tool_def.name                       # 工具的功能描述
-        self._parameters = tool_def.inputSchema or {"type": "object", "properties": {}} # MCP 工具的输入参数 Schema(JSON Schema 格式)
-        self._tool_timeout = tool_timeout                                               # 超时配置，用于控制工具调用的最长等待时间
+        self._description = tool_def.description or tool_def.name  # 工具的功能描述
+        self._parameters = tool_def.inputSchema or {
+            "type": "object",
+            "properties": {},
+        }  # MCP 工具的输入参数 Schema(JSON Schema 格式)
+        self._tool_timeout = tool_timeout  # 超时配置，用于控制工具调用的最长等待时间
 
     @property
     def name(self) -> str:
@@ -125,7 +130,7 @@ class MCPToolWrapper(Tool):
                 "MCP 工具 '{}' 执行失败:{}:{}",
                 self._name,
                 type(exc).__name__,  # 异常类型，如 ValueError、ConnectionError 等
-                exc,                 # 异常消息
+                exc,  # 异常消息
             )
             return format_tool_error(
                 f"MCP 工具调用失败：{type(exc).__name__}",
@@ -149,12 +154,11 @@ class MCPToolWrapper(Tool):
         return "\n".join(parts) or "（工具没有返回内容）"
 
 
-
 # 连接所有 MCP 服务器并注册它们的工具
 async def connect_mcp_servers(
-    mcp_servers: dict,      # 服务器配置字典 {服务器名：配置对象}
-    registry: ToolRegistry, # 工具注册表实例，用于登记新发现的工具
-    stack: AsyncExitStack   # 异步资源栈，用于自动清理连接
+    mcp_servers: dict,  # 服务器配置字典 {服务器名：配置对象}
+    registry: ToolRegistry,  # 工具注册表实例，用于登记新发现的工具
+    stack: AsyncExitStack,  # 异步资源栈，用于自动清理连接
 ) -> None:
     """
     批量连接配置的 MCP 服务器并将工具注册到框架。
@@ -183,8 +187,8 @@ async def connect_mcp_servers(
                 # 构建 stdio 服务器参数对象
                 params = StdioServerParameters(
                     command=cfg.command,  # 要执行的命令，如 "npx"
-                    args=cfg.args,        # 命令参数，如 ["-y", "@modelcontextprotocol/server-filesystem"]
-                    env=cfg.env or None   # 环境变量，None 表示使用系统环境
+                    args=cfg.args,  # 命令参数，如 ["-y", "@modelcontextprotocol/server-filesystem"]
+                    env=cfg.env or None,  # 环境变量，None 表示使用系统环境
                 )
                 read, write = await stack.enter_async_context(stdio_client(params))  # 启动本地子进程
 
@@ -203,9 +207,9 @@ async def connect_mcp_servers(
                     # 创建异步 HTTP 客户端实例
                     return httpx.AsyncClient(
                         headers=merged_headers or None,  # HTTP 请求头
-                        follow_redirects=True,           # 自动跟随重定向
-                        timeout=timeout,                 # 网络超时设置
-                        auth=auth,                       # 认证对象（如有）
+                        follow_redirects=True,  # 自动跟随重定向
+                        timeout=timeout,  # 网络超时设置
+                        auth=auth,  # 认证对象（如有）
                     )
 
                 # 建立 SSE 连接
@@ -224,8 +228,8 @@ async def connect_mcp_servers(
                 http_client = await stack.enter_async_context(
                     httpx.AsyncClient(
                         headers=cfg.headers or None,  # 请求头
-                        follow_redirects=True,        # 自动跟随重定向
-                        timeout=None,                 # 无连接级超时
+                        follow_redirects=True,  # 自动跟随重定向
+                        timeout=None,  # 无连接级超时
                     )
                 )
                 # 建立流式 HTTP 连接

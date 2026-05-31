@@ -186,7 +186,15 @@ async def _cli_event_sink(event: Any) -> None:
     if event.type == "cron.reminder":
         console.print(f"\n[yellow]提醒：{event.message}[/yellow]")
         return
-    if event.type in {"run.started", "run.completed", "turn.started", "turn.completed", "model.started", "model.completed", "run.closed"}:
+    if event.type in {
+        "run.started",
+        "run.completed",
+        "turn.started",
+        "turn.completed",
+        "model.started",
+        "model.completed",
+        "run.closed",
+    }:
         return
 
     if event.type in {"tool.progress", "tool.started"}:
