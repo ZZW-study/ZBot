@@ -1,4 +1,5 @@
 """主 Agent 会话处理模块。"""
+
 from __future__ import annotations
 
 import asyncio
@@ -22,10 +23,8 @@ from ZBot.agent.tools.skills import NewSkillsListLoader, SkillReader, SkillsMana
 from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
 from ZBot.providers.base import LLMProvider
-from ZBot.session.manager import Session, SessionManager
-from ZBot.service.utils.helpers import format_messages
 from ZBot.service.utils.hooks import validate_before_task_complete_hook
-
+from ZBot.session.manager import Session, SessionManager
 
 _SKILL_REVIEW_SYSTEM = (
     "你是技能进化助手，负责回顾对话并判断是否应该保存或更新某个技能。\n\n"
@@ -89,7 +88,6 @@ class CoreAgent(BaseAgent):
         )
         self._register_core_tools()
 
-
     async def process_message(
         self,
         message: str | list[dict[str, Any]],
@@ -121,7 +119,6 @@ class CoreAgent(BaseAgent):
         logger.info("回复：{}", preview)
         return final_content
 
-
     async def close_mcp(self) -> None:
         """关闭子 Agent 池、MCP 连接栈和使用追踪器。"""
         await self._cancel_consolidation_task()
@@ -140,7 +137,6 @@ class CoreAgent(BaseAgent):
             self._mcp_stack = None
             self._mcp_connected = False
 
-
     async def consolidate_all_session_memory(self, session_name: str) -> None:
         """对指定会话执行完整会话记忆归档。"""
         session, _ = await self.sessions.get_or_create(session_name)
@@ -152,7 +148,6 @@ class CoreAgent(BaseAgent):
             consolidate_all=True,
         )
         await self.sessions.save(session)
-
 
     async def consolidate_daily_memory(self, session_name: str) -> None:
         """把指定会话整理进日常记忆。"""
@@ -167,11 +162,10 @@ class CoreAgent(BaseAgent):
         else:
             logger.info("日常记忆归档成功")
 
-
     async def review_skills(self, session_name: str) -> None:
         """会话结束时回顾对话，进化技能库。"""
         session, _ = await self.sessions.get_or_create(session_name)
-        messages = session.messages[session.last_consolidated:]
+        messages = session.messages[session.last_consolidated :]
         if not messages:
             return
 
@@ -184,8 +178,10 @@ class CoreAgent(BaseAgent):
         if not complexity.should_review:
             logger.info(
                 "任务复杂度 {} 低于阈值 {}，跳过技能进化（工具调用: {}, 唯一工具: {}）",
-                complexity.score, self.skill_review_complexity_threshold,
-                complexity.tool_call_count, complexity.unique_tools
+                complexity.score,
+                self.skill_review_complexity_threshold,
+                complexity.tool_call_count,
+                complexity.unique_tools,
             )
             return
 
@@ -202,16 +198,11 @@ class CoreAgent(BaseAgent):
         except Exception:
             logger.warning("跨会话模式查询失败，跳过")
 
-        prompt = self._build_skill_review_prompt(
-            trajectory, session.memory_snapshot or "", cross_session_patterns
-        )
+        prompt = self._build_skill_review_prompt(trajectory, session.memory_snapshot or "", cross_session_patterns)
 
         # 只保留技能相关工具
         skill_tool_names = {"load_new_skills_list", "read_skill", "skills_manager"}
-        skill_tools = [
-            d for d in self.tools.get_definitions()
-            if d.get("function", {}).get("name") in skill_tool_names
-        ]
+        skill_tools = [d for d in self.tools.get_definitions() if d.get("function", {}).get("name") in skill_tool_names]
 
         chat_messages: list[dict[str, Any]] = [
             {"role": "system", "content": _SKILL_REVIEW_SYSTEM},
@@ -267,12 +258,9 @@ class CoreAgent(BaseAgent):
                     skill_name = tc.arguments.get("name", "")
                     if action in ("create", "patch") and skill_name:
                         await self.usage_tracker.record(skill_name, session_name, action)
-                        await record_evolution_event(
-                            self.workspace, action, skill_name, session_name
-                        )
+                        await record_evolution_event(self.workspace, action, skill_name, session_name)
 
         logger.warning("技能进化审查达到最大轮次（10），强制结束")
-
 
     async def run_curator(self) -> None:
         """运行技能 Curator：健康检查 + 自动生命周期转换。"""
@@ -281,9 +269,7 @@ class CoreAgent(BaseAgent):
 
             # 记录生命周期转换事件
             for skill_name, new_status in report.transitions_made:
-                await record_evolution_event(
-                    self.workspace, new_status, skill_name
-                )
+                await record_evolution_event(self.workspace, new_status, skill_name)
 
             if report.transitions_made:
                 logger.info(
@@ -294,7 +280,6 @@ class CoreAgent(BaseAgent):
                 logger.debug("Curator 维护完成：无需转换")
         except Exception:
             logger.exception("Curator 维护失败")
-
 
     def _build_skill_review_prompt(
         self,
@@ -328,13 +313,11 @@ class CoreAgent(BaseAgent):
             f"{cross_session_section}"
         )
 
-
     def ensure_subagent_pool(self) -> SubAgentPool:
         """确保子 Agent 池已创建，并返回池实例。"""
         if self.subagent_pool is None:
             self.subagent_pool = SubAgentPool(self)
         return self.subagent_pool
-
 
     async def _save_task_progress_artifact(self, content: str) -> str | None:
         """上下文压缩前保存任务进度文件，避免长期状态只塞进 system 摘要。"""
@@ -348,7 +331,6 @@ class CoreAgent(BaseAgent):
             logger.exception("写入任务进度 artifact 失败")
             return None
         return str(artifact_path)
-
 
     def _register_core_tools(self) -> None:
         """注册只有主 Agent 才能使用的工具。"""
@@ -370,7 +352,6 @@ class CoreAgent(BaseAgent):
             )
         )
         self.tools.register(SkillsManager(skills_dir=skills_dir, catalog=self.context.skills))
-
 
     async def _run_turn(
         self,
@@ -397,14 +378,16 @@ class CoreAgent(BaseAgent):
 
         # 任务完成验证：最多重试3次，验证通过则保存并返回
         final_content, all_messages, retry_tools_used = await self._complete_unfinished_task(
-            self._message_preview(content), final_content, all_messages, on_progress,
+            self._message_preview(content),
+            final_content,
+            all_messages,
+            on_progress,
         )
         tools_used.extend(retry_tools_used)
         final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
         self._save_turn(session, all_messages, 1 + len(history), tools_used)
         await self.sessions.save(session)
         return final_content
-
 
     def _schedule_consolidation(self, session: Session) -> None:
         """当未归档消息达到阈值时，安排后台会话记忆归档任务。"""
@@ -428,7 +411,6 @@ class CoreAgent(BaseAgent):
         self._consolidation_task = asyncio.create_task(_run_consolidation())
         self._consolidation_task.add_done_callback(self._on_consolidation_done)
 
-
     def _on_consolidation_done(self, task: asyncio.Task[None]) -> None:
         """回收后台会话归档任务，记录异常，避免 create_task 静默泄漏。"""
         if self._consolidation_task is task:
@@ -439,7 +421,6 @@ class CoreAgent(BaseAgent):
             task.result()
         except Exception:
             logger.exception("后台会话记忆归档失败")
-
 
     async def _cancel_consolidation_task(self) -> None:
         """关闭 Agent 时取消仍在运行的后台归档任务。"""
@@ -456,12 +437,10 @@ class CoreAgent(BaseAgent):
                 self._consolidation_task = None
             self._is_consolidating = False
 
-
     def _recent_history_token_budget(self) -> int:
         """按模型上下文窗口计算短期历史预算，并设置 64K 默认硬上限。"""
         ratio_budget = int(self.context_window * self.recent_history_token_budget_ratio)
         return max(1, min(ratio_budget, self.recent_history_max_tokens))
-
 
     def _save_turn(
         self,
@@ -498,7 +477,6 @@ class CoreAgent(BaseAgent):
 
         session.updated_at = datetime.now()
 
-
     @staticmethod
     def _latest_user_message_index(messages: list[dict[str, Any]], *, fallback: int) -> int:
         """定位本轮用户消息，避免把内部 system 摘要或验收反馈写入会话历史。"""
@@ -506,7 +484,6 @@ class CoreAgent(BaseAgent):
             if messages[index].get("role") == "user":
                 return index
         return max(0, min(fallback, len(messages)))
-
 
     @staticmethod
     def _strip_runtime_context(content: str | list[dict[str, Any]] | None) -> str | None | list[dict[str, Any]]:
@@ -525,7 +502,6 @@ class CoreAgent(BaseAgent):
             return ""
 
         return content
-
 
     @staticmethod
     def _sanitize_content_blocks(blocks: list[dict[str, Any]]) -> str:
@@ -548,14 +524,12 @@ class CoreAgent(BaseAgent):
                 texts.append(f"[已上传内容块，type={block_copy.get('type', 'unknown')}，原始内容未写入会话历史]")
         return "\n\n".join(texts)
 
-
     @staticmethod
     def _data_url_mime(url: str | None) -> str | None:
         """从 data URL 中提取 MIME 类型。"""
         if not isinstance(url, str) or not url.startswith("data:") or ";base64," not in url:
             return None
         return url[5:].split(";base64,", 1)[0] or None
-
 
     @staticmethod
     def _message_preview(message: str | list[dict[str, Any]]) -> str:
@@ -572,7 +546,6 @@ class CoreAgent(BaseAgent):
         suffix = f"\n[包含 {media_count} 个多模态内容块]" if media_count else ""
         return "\n".join(texts).strip() + suffix
 
-
     @staticmethod
     def _annotate_tools_used(messages: list[dict[str, Any]], tools_used: list[str]) -> None:
         """把本轮使用过的工具名挂到最后一条 assistant 消息上。"""
@@ -585,16 +558,14 @@ class CoreAgent(BaseAgent):
                 message["tools_used"] = unique_tools
                 return
 
-
-
     async def _complete_unfinished_task(
-            self,
-            user_message: str,
-            final_content: str,
-            all_messages: list[dict[str, Any]],
-            on_progress: Callable[..., Awaitable[None]],
-            max_retries: int = 3,
-        ) -> tuple[str, list[dict[str, Any]], list[str]]:
+        self,
+        user_message: str,
+        final_content: str,
+        all_messages: list[dict[str, Any]],
+        on_progress: Callable[..., Awaitable[None]],
+        max_retries: int = 3,
+    ) -> tuple[str, list[dict[str, Any]], list[str]]:
         """验证任务完成度，未完成则重试，直到通过或达到重试上限。"""
 
         retry_tools_used: list[str] = []
@@ -665,7 +636,6 @@ class CoreAgent(BaseAgent):
                 entry["tool_calls"] = message["tool_calls"]
             evidence.append(entry)
         return evidence
-
 
     @staticmethod
     def _evidence_content(content: Any) -> str:

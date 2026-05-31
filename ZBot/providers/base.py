@@ -30,9 +30,11 @@ class LLMResponse:
     """大模型返回的标准化响应。"""
 
     content: str | None
-    tool_calls: list[ToolCallRequest] = field(default_factory=list)  # 专门用来为数据类字段生成可变类型的默认值,每次都生成全新的
-    finish_reason: str = "stop"                                      # 表示模型停止生成的原因
-    usage: dict[str, int] = field(default_factory=dict)              # 记录本次请求消耗的 Token 数量
+    tool_calls: list[ToolCallRequest] = field(
+        default_factory=list
+    )  # 专门用来为数据类字段生成可变类型的默认值,每次都生成全新的
+    finish_reason: str = "stop"  # 表示模型停止生成的原因
+    usage: dict[str, int] = field(default_factory=dict)  # 记录本次请求消耗的 Token 数量
     reasoning_content: str | None = None
 
     @property
@@ -63,11 +65,9 @@ class LLMProvider(ABC):
         """发送聊天请求并返回标准化响应。"""
         raise NotImplementedError
 
-
     def get_context_window(self, model: str | None = None) -> int:
         """返回模型上下文窗口大小，查不到时使用现代模型的保守默认值。"""
         return DEFAULT_CONTEXT_WINDOW
-
 
     @staticmethod
     def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:

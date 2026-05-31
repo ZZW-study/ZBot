@@ -59,24 +59,21 @@ pytest 用法提醒
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 from ZBot.agent.tools.base import Tool, format_tool_error
-from ZBot.agent.tools.registry import ToolRegistry
 from ZBot.agent.tools.filesystem import (
-    ReadFileTool,
-    WriteFileTool,
     EditFileTool,
     ListDirTool,
+    ReadFileTool,
+    WriteFileTool,
     _find_match,
 )
-from ZBot.service.utils.helpers import resolve_path
+from ZBot.agent.tools.registry import ToolRegistry
 from ZBot.agent.tools.shell import ExecTool
-
 
 # =============================================================================
 # 测试用的假工具
@@ -1562,7 +1559,7 @@ class TestExecTool:
         # Act: 生成大量输出（Windows 用 dir /s，Linux 用 find /）
         # 用 Python 生成大量输出更跨平台
         result = await tool.execute(
-            command='python -c "print(\'x\' * 20000)"',
+            command="python -c \"print('x' * 20000)\"",
         )
 
         # Assert

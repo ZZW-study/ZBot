@@ -6,23 +6,26 @@
 2. 会话记忆与技能摘要。
 3. 当前会话历史与用户消息。
 """
+
 import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo   # 用于时区处理（北京时间）
+from zoneinfo import ZoneInfo  # 用于时区处理（北京时间）
 
-from ZBot.memory.session_memory import SessionMemoryStore
+from ZBot.agent.skills_load import SkillCatalog
 from ZBot.memory.daily_memory import daily_memory_store
 from ZBot.memory.long_term_memory import long_term_memory_store
-from ZBot.agent.skills_load import SkillCatalog
+from ZBot.memory.session_memory import SessionMemoryStore
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
+
 
 class ContextBuilder:
     """
     负责构建 system prompt 与当前轮消息列表。
     """
+
     # 模板文件列表：这些文件从包内 templates 目录读取，拼进 system prompt
     BOOTSTRAP_FILES = ["SOUL.md", "AGENTS.md", "TOOLS.md", "MEMORY.md", "USER.md"]
 
@@ -43,7 +46,6 @@ class ContextBuilder:
         self.long_term_memory = long_term_memory_store
         self.skills = SkillCatalog(workspace=workspace)
 
-
     def add_assistant_message(
         self,
         messages: list[dict[str, Any]],
@@ -62,14 +64,13 @@ class ContextBuilder:
 
         messages.append(message)
 
-
     async def build_messages(
         self,
         history: list[dict[str, Any]],
         user_message: str | list[dict[str, Any]],
         score_threshold: float = 0.75,
     ) -> list[dict[str, Any]]:
-        """构造一轮完整请求消息。 """
+        """构造一轮完整请求消息。"""
 
         # 构建本轮运行时上下文（包含时间），仅供本轮推理使用
         # 这个上下文会在保存历史时被剥离，避免污染会话记忆
@@ -81,9 +82,12 @@ class ContextBuilder:
 
         # 返回完整的 messages 列表：system + history + user
         return [
-            {"role": "system", "content": await self._build_system_prompt(user_text_for_memory,score_threshold)},  # system 消息
-            *history,                                                                                               # 历史消息（user/assistant/tool 的对话记录）
-            {"role": "user", "content": user_complete_content},                                                     # 当前用户消息
+            {
+                "role": "system",
+                "content": await self._build_system_prompt(user_text_for_memory, score_threshold),
+            },  # system 消息
+            *history,  # 历史消息（user/assistant/tool 的对话记录）
+            {"role": "user", "content": user_complete_content},  # 当前用户消息
         ]
 
     def add_tool_result(
@@ -103,11 +107,10 @@ class ContextBuilder:
             }
         )
 
-
     @classmethod
     def _runtime_context(cls) -> str:
         """
-        生成当前轮专属的运行时上下文。 """
+        生成当前轮专属的运行时上下文。"""
         # 获取当前时间并格式化为易读的格式
         # 格式：2024-01-15 14:30（星期一）
         timestamp = datetime.now(BEIJING_TZ).strftime("%Y-%m-%d %H:%M（%A）")
@@ -118,7 +121,6 @@ class ContextBuilder:
         # 将运行时上下文用特定标签包裹，便于落盘时剥离
         # 标签格式："[运行时上下文 - 仅供元数据参考，不是用户指令]"
         return cls._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
-
 
     @classmethod
     def _with_runtime_context(
@@ -139,7 +141,6 @@ class ContextBuilder:
         first["text"] = f"{runtime_context}\n\n{text}"
         return [first, *blocks[1:]]
 
-
     @staticmethod
     def _content_text(content: str | list[dict[str, Any]]) -> str:
         """从普通文本或多模态 content blocks 中提取可用于记忆召回的文本。"""
@@ -152,8 +153,7 @@ class ContextBuilder:
                 texts.append(str(block.get("text") or ""))
         return "\n".join(texts)
 
-
-    async def _build_system_prompt(self,user_content: str,score_threshold: float = 0.75) -> str:
+    async def _build_system_prompt(self, user_content: str, score_threshold: float = 0.75) -> str:
         """构建完整的 system prompt。"""
 
         parts: list = [self._identity_prompt()]
@@ -192,7 +192,7 @@ class ContextBuilder:
         #
         # 假设 parts 列表包含以下 4 个部分：
         #
-        #   parts[0] = "# ZBot\n你是 ZBot，一名可靠、直接、善于执行的 AI 助手。\n\n## 运行环境\nmacOS arm64，Python 3.11"
+        #   parts[0] = "# ZBot\n你是 ZBot，一名可靠、直接、善于执行的 AI 助手。..."
         #   parts[1] = "## AGENTS.md\n\n本项目使用 Python 3.11，代码风格遵循 PEP 8。"
         #   parts[2] = "# 会话记忆\n\n用户偏好使用简体中文回复。"
         #   parts[3] = "# 技能\n\n## /search\n搜索代码库中的文件。"
@@ -315,18 +315,18 @@ class ContextBuilder:
         # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         return "\n\n---\n\n".join(parts)
 
-    
-
     def _identity_prompt(self) -> str:
         """
-        生成与运行环境相关的固定 system prompt 前缀，可以让大模型用shell命令时候知道你的运行环境，更好的使用对应的shell命令。
+        生成与运行环境相关的固定 system prompt 前缀。
         """
         # 获取操作系统名称
         system = platform.system()
 
         # 构建运行环境描述字符串
         # 包含 CPU 架构（如 arm64、x86_64）和 Python 版本
-        runtime = f"{'macOS' if system == 'Darwin' else system} {platform.machine()}，Python {platform.python_version()}"
+        runtime = (
+            f"{'macOS' if system == 'Darwin' else system} {platform.machine()}，Python {platform.python_version()}"
+        )
 
         return (
             "# 运行环境\n"
@@ -405,4 +405,3 @@ class ContextBuilder:
             if path.exists():
                 sections.append(f"## {filename}\n\n{path.read_text(encoding='utf-8')}")
         return "\n\n".join(sections)
-

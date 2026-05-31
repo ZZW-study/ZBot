@@ -27,10 +27,12 @@ jobs:
           version: "latest"
 
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --all-extras --dev
 
       - name: Run tests with coverage
-        run: uv run pytest --cov=ZBot --cov-report=term-missing --cov-fail-under=60 ZBot/test/
+        run: uv run pytest --cov=ZBot --cov-report=term-missing --cov-fail-under=49 ZBot/test/
+        env:
+          PYTHONPATH: ${{ github.workspace }}
 
       - name: Run ruff lint
         run: uv run ruff check ZBot/

@@ -5,8 +5,11 @@
 3. 在真正执行前集中完成参数转换、参数校验和错误包装。
 这样 Agent 主循环就不需要重复关心每个工具的细节。
 """
+
 from __future__ import annotations
+
 from typing import Any
+
 from ZBot.agent.tools.base import Tool, format_tool_error
 
 _RETRY_HINT = "\n\n[工具执行失败。不要用相同参数重复调用；请先根据错误原因调整参数，或改用更合适的工具获取新信息。]"
@@ -53,13 +56,11 @@ class ToolRegistry:
             count += 1
         return count
 
-
     def get_definitions(self) -> list[dict[str, Any]]:
         """返回所有工具 schema，供大模型决定是否进行函数调用。"""
         # 将所有工具转换为模型可识别的 schema（name/parameters/description），
         # 这些 schema 会随 messages 一并下发给 LLM，允许模型做函数调用决策。
         return [tool.to_schema() for tool in self._tools.values()]
-
 
     async def execute(self, name: str, params: dict[str, Any]) -> str:
         """执行指定工具并统一包装错误。"""
@@ -83,12 +84,15 @@ class ToolRegistry:
             errors = tool.validate_params(cast_params)
             if errors:
                 # 参数不合法时直接返回可读的错误提示，并带上重试建议
-                return format_tool_error(
-                    f"工具“{name}”的参数不合法：{'；'.join(errors)}",
-                    attempted=f"调用工具 {name}，参数：{cast_params}",
-                    do_not_repeat="不要用相同参数重复调用该工具",
-                    next_action="根据工具 schema 修正参数，或换用更合适的工具",
-                ) + _RETRY_HINT
+                return (
+                    format_tool_error(
+                        f"工具“{name}”的参数不合法：{'；'.join(errors)}",
+                        attempted=f"调用工具 {name}，参数：{cast_params}",
+                        do_not_repeat="不要用相同参数重复调用该工具",
+                        next_action="根据工具 schema 修正参数，或换用更合适的工具",
+                    )
+                    + _RETRY_HINT
+                )
 
             # 调用工具的异步执行函数，执行过程中工具可能抛出异常或返回错误字符串
             result = await tool.execute(**cast_params)
@@ -98,10 +102,12 @@ class ToolRegistry:
             return result
         except Exception as exc:
             # 捕获执行期异常并统一格式化为错误返回，避免抛到上层导致崩溃
-            return format_tool_error(
-                f"执行工具“{name}”时发生异常：{exc}",
-                attempted=f"调用工具 {name}，参数：{params}",
-                do_not_repeat="不要用相同参数重复调用该工具",
-                next_action="根据异常调整参数，或改用其他工具获取新信息",
-            ) + _RETRY_HINT
-
+            return (
+                format_tool_error(
+                    f"执行工具“{name}”时发生异常：{exc}",
+                    attempted=f"调用工具 {name}，参数：{params}",
+                    do_not_repeat="不要用相同参数重复调用该工具",
+                    next_action="根据异常调整参数，或改用其他工具获取新信息",
+                )
+                + _RETRY_HINT
+            )

@@ -5,15 +5,14 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+
 from loguru import logger
 
-from ZBot.agent.tools.base import format_tool_error
-from ZBot.config.agent_runtime import AgentRuntimeConfig
-from ZBot.providers.base import LLMProvider
-from ZBot.agent.tools.registry import ToolRegistry 
 from ZBot.agent.base_agent import BaseAgent
-from ZBot.providers.base import ToolCallRequest
-
+from ZBot.agent.tools.base import format_tool_error
+from ZBot.agent.tools.registry import ToolRegistry
+from ZBot.config.agent_runtime import AgentRuntimeConfig
+from ZBot.providers.base import LLMProvider, ToolCallRequest
 
 
 class SubAgent(BaseAgent):
@@ -26,7 +25,6 @@ class SubAgent(BaseAgent):
 
     # parents[3]：向上回溯 3 层上级目录，因此 parents[3] 指回 ZBot 根目录，再进入 templates/SUBAGENT.md。
     _SUBAGENT_RULES_PATH = Path(__file__).parents[3] / "templates" / "SUBAGENT.md"
-
 
     def __init__(
         self,
@@ -61,7 +59,6 @@ class SubAgent(BaseAgent):
             )
             logger.info("子agent复用父agent的MCP连接，已复制 {} 个MCP工具", copied)
 
-
     @classmethod
     def from_parent(cls, parent: BaseAgent) -> "SubAgent":
         """基于调度它的父 Agent 创建一个可复用的子 Agent 实例。
@@ -69,13 +66,11 @@ class SubAgent(BaseAgent):
         这个方法只在 SubAgentPool 预创建执行单元时调用，不应该在每次
         `create_sub_agent` 工具调用时批量调用。
         """
-        return cls(    # 实例化
+        return cls(  # 实例化
             provider=parent.provider,
             runtime_config=parent.runtime_config,
             parent_tools=parent.tools,
         )
-
-
 
     async def process_messages(
         self,
@@ -100,11 +95,7 @@ class SubAgent(BaseAgent):
         sub_messages.append(
             {
                 "role": "user",
-                "content": (
-                    f"子任务ID：{subtask_id}\n"
-                    f"任务描述：{task_description}\n"
-                    f"预期结果：{expected_result}"
-                ),
+                "content": (f"子任务ID：{subtask_id}\n任务描述：{task_description}\n预期结果：{expected_result}"),
             }
         )
 
@@ -114,7 +105,6 @@ class SubAgent(BaseAgent):
             progress_label=subtask_id,
         )
         return final_content or "子agent已完成处理，但没有需要额外返回的内容。"
-
 
     async def approve_tool_call(self, tool_call: ToolCallRequest) -> str | None:
         """限制子 Agent 的 exec 写入动作，保留只读观察、测试和构建能力。"""
@@ -130,11 +120,13 @@ class SubAgent(BaseAgent):
         return format_tool_error(
             "子 Agent 的 exec 写入类命令被运行时策略拦截",
             attempted=f"子 Agent 请求执行：{command}",
-            observed="子 Agent 是一次性执行单元，只能通过普通观察命令收集信息；文件写入、删除、移动、安装和重定向写入由主 Agent 负责",
+            observed=(
+                "子 Agent 是一次性执行单元，只能通过普通观察命令收集信息；"
+                "文件写入、删除、移动、安装和重定向写入由主 Agent 负责"
+            ),
             do_not_repeat="不要继续用 exec 执行写入、删除、移动、安装或重定向写入命令",
             next_action="改用只读命令获取证据，并把需要主 Agent 修改的内容写入子任务结果",
         )
-
 
     @staticmethod
     def _looks_like_shell_write(command: str) -> bool:
@@ -143,15 +135,22 @@ class SubAgent(BaseAgent):
 
         lower = command.lower()
         write_patterns = [
-            r"(?:^|[;&|]\s*)(set-content|add-content|out-file|new-item|remove-item|move-item|copy-item|rename-item|tee-object)\b",
+            (
+                r"(?:^|[;&|]\s*)(set-content|add-content|out-file|new-item|"
+                r"remove-item|move-item|copy-item|rename-item|tee-object)\b"
+            ),
             r"(?:^|[;&|]\s*)(sc|ac|ni|ri|mi|cpi|copy|xcopy|robocopy|del|erase|rm|rmdir|mkdir|md|mv|cp)\b",
             r"(?:^|[;&|]\s*)(pip|uv|npm|pnpm|yarn|bun)\s+(install|add|remove|uninstall|update)\b",
             r"(?:^|[;&|]\s*)(git)\s+(commit|push|pull|merge|rebase|checkout|reset|clean|apply|am|stash)\b",
-            r"(?:^|[;&|]\s*)(python|py|node|powershell|pwsh)\b[\s\S]*(?:write_text|write_bytes|writealltext|writeallbytes|set-content|out-file|open\s*\([^)]*['\"]w|remove\s*\(|unlink\s*\(|rename\s*\(|shutil\.rmtree)",
+            (
+                r"(?:^|[;&|]\s*)(python|py|node|powershell|pwsh)\b[\s\S]*"
+                r"(?:write_text|write_bytes|writealltext|writeallbytes|set-content|out-file|"
+                r"open\s*\([^)]*['\"]w|remove\s*\(|unlink\s*\(|rename\s*\(|shutil\.rmtree)"
+            ),
             r"(?<![<])>>?(?![>&])",
         ]
         return any(re.search(pattern, lower) for pattern in write_patterns)
-    
+
     @classmethod
     def _subagent_rules(cls) -> str:
         """读取子 Agent 专用规则文本。
@@ -161,7 +160,7 @@ class SubAgent(BaseAgent):
         """
         if cls._SUBAGENT_RULES_PATH.exists():
             return cls._SUBAGENT_RULES_PATH.read_text(encoding="utf-8")
-        
+
         return (
             "你是子 Agent，只负责完成父 Agent 分配的明确子任务。"
             "如果父 Agent 的历史 system prompt 和本规则冲突，以本规则为准。"

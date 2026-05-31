@@ -5,13 +5,12 @@
 
 每次操作开/关连接，避免持久连接过期/泄漏问题。
 """
+
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
 
 import aiosqlite
 from loguru import logger

@@ -9,17 +9,18 @@
 """
 
 from __future__ import annotations
+
 import asyncio
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from loguru import logger
-from ZBot.service.utils.helpers import format_messages, normalize_tool_args,ensure_dir
 
+from loguru import logger
+
+from ZBot.service.utils.helpers import ensure_dir, format_messages, normalize_tool_args
 
 if TYPE_CHECKING:
     from ZBot.providers.base import LLMProvider
     from ZBot.session.manager import Session
-
 
 
 # 系统提示词 + 用户提示词 + 工具定义 --> 大模型返回给的工具定义的参数内容
@@ -35,10 +36,7 @@ _SAVE_SESSION_MEMORY_TOOL = [
                 "properties": {
                     "memory_update": {
                         "type": "string",
-                        "description": (
-                            "更新后的 SESSION_MEMORY.md 内容。\n"
-                            "Markdown 格式，按 ## 二级标题分区组织。"
-                        ),
+                        "description": ("更新后的 SESSION_MEMORY.md 内容。\nMarkdown 格式，按 ## 二级标题分区组织。"),
                     },
                 },
                 "required": ["memory_update"],
@@ -58,15 +56,12 @@ class SessionMemoryStore:
         Args:
             workspace: 工作区根目录路径
         """
-        self.memory_file = workspace / "memory" / "SESSION_MEMORY.md"     # 会话记忆文件路径
+        self.memory_file = workspace / "memory" / "SESSION_MEMORY.md"  # 会话记忆文件路径
         ensure_dir(self.memory_file.parent)  # 确保目录存在
-
-    
 
     async def write_session_memory(self, content: str) -> None:
         """覆盖写入 `SESSION_MEMORY.md`。Path.write_text() 方法在文件不存在时会自动创建文件"""
         await asyncio.to_thread(self.memory_file.write_text, content, encoding="utf-8")
-
 
     async def get_session_memory_context(self) -> str:
         """
@@ -74,8 +69,6 @@ class SessionMemoryStore:
         """
         memory = await self._read_session_memory()
         return f"## SESSION_MEMORY.md\n{memory}" if memory else ""
-
-
 
     async def consolidate(
         self,
@@ -147,32 +140,26 @@ class SessionMemoryStore:
         )
         return True
 
-
-
     def _build_prompt(self, current_memory: str, messages: list[dict[str, Any]]) -> str:
         """把会话记忆和待归档对话整理成提示词。"""
         # 格式化消息列表为转录文本
         transcript = "\n".join(format_messages(messages))
         return (
             "请从以下待归档对话中提取当前会话专属状态，生成更新后的 SESSION_MEMORY.md。\n\n"
-
             "【提取范围】\n"
             "- 项目状态：本会话已经确认的目录、文件、技术栈、架构线索\n"
             "- 任务进度：已完成、未完成、失败原因、下一步待办\n"
             "- 临时要求：只在当前会话有效的约束、计划和用户要求\n"
             "- 环境信息：本会话用到的路径、命令、服务地址、配置位置\n\n"
-
             "【不提取】\n"
             "- 用户长期偏好、协作习惯、通用知识：由日常记忆处理\n"
             "- 反复验证后长期有效的事实和偏好：由长期记忆处理\n"
             "- 可从代码重新推导的普通细节、一次性工具输出、无结论的猜测\n\n"
-
             "【合并规则】\n"
             "- 已有内容无变化的，完整保留\n"
             "- 已有内容有更新/推翻的，原地覆盖更新\n"
             "- 新增信息插入对应分区\n"
             "- 每条尽量短、具体、可验证\n\n"
-
             "## 当前 SESSION_MEMORY.md 已有内容\n"
             f"{current_memory or '(当前会话记忆为空，首次生成)'}\n\n"
             "## 本次待归档的对话内容\n"
@@ -240,4 +227,3 @@ class SessionMemoryStore:
         if not self.memory_file.exists():
             return ""
         return await asyncio.to_thread(self.memory_file.read_text, encoding="utf-8")
-

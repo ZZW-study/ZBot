@@ -3,6 +3,7 @@
 这个模块不替代全局配置文件，只把全局 Config 中和 Agent 实例化有关的字段
 整理成一份更适合传给 Agent 构造器的快照。
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -129,9 +130,9 @@ class AgentRuntimeConfig:
             recent_history_max_tokens=config.recent_history_max_tokens,
             memory_consolidation_interval=config.memory_consolidation_interval,
             session_memory_keep_recent_tokens=config.session_memory_keep_recent_tokens,
-            web_search_config=config.tools.web.search,   # 共享引用，只读安全
+            web_search_config=config.tools.web.search,  # 共享引用，只读安全
             web_proxy=config.tools.web.proxy or None,
-            exec_config=config.tools.exec,               # 共享引用，只读安全
+            exec_config=config.tools.exec,  # 共享引用，只读安全
             restrict_to_workspace=config.tools.restrict_to_workspace,
             # dict() 创建浅拷贝：顶层 key/value 独立（各实例的 mcp_servers 不是同一个字典），
             # 但 value 若是嵌套对象，仍然共享引用。比 web_search_config 稍安全，但未完全隔离。

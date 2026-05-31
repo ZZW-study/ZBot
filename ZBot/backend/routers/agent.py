@@ -6,8 +6,9 @@ import asyncio
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import BaseModel
 from loguru import logger
+from pydantic import BaseModel
+
 from ZBot.config.schema import Config
 from ZBot.service.agent_run.agent_factory import AgentSetupError
 from ZBot.service.agent_run.agent_run_service import AgentEvent, AgentRunService
@@ -93,6 +94,8 @@ async def list_sessions():
         return {"sessions": sessions}
     else:
         return {"ok": False, "error": "未配置"}
+
+
 @router.get("/api/sessions/{session_name}")
 async def get_session_detail(session_name: str):
     config = config_cache.get()
@@ -144,7 +147,6 @@ async def delete_session(session_name: str):
     return {"ok": deleted}
 
 
-
 @router.websocket("/api/agent/ws")
 async def agent_websocket(websocket: WebSocket) -> None:
     """Agent WebSocket 通道：接收控制命令，推送结构化运行事件。"""
@@ -162,7 +164,9 @@ async def agent_websocket(websocket: WebSocket) -> None:
 
             if command_type == "run.start":
                 if active_task and not active_task.done():
-                    await queue.put(AgentEvent.control_event("run.failed", "default", "已有任务正在运行，请先停止当前任务。"))
+                    await queue.put(
+                        AgentEvent.control_event("run.failed", "default", "已有任务正在运行，请先停止当前任务。")
+                    )
                     continue
 
                 message = str(command.get("message") or "").strip()
@@ -175,12 +179,20 @@ async def agent_websocket(websocket: WebSocket) -> None:
                 if service is None:
                     config = config_cache.get()
                     if config is None:
-                        await queue.put(AgentEvent.control_event("run.failed", session_name, "无法加载配置文件，请先完成 ZBot 配置。"))
+                        await queue.put(
+                            AgentEvent.control_event(
+                                "run.failed", session_name, "无法加载配置文件，请先完成 ZBot 配置。"
+                            )
+                        )
                         continue
                     try:
                         service = create_agent_run_service(config)
                     except AgentSetupError as exc:
-                        await queue.put(AgentEvent.control_event("run.failed", session_name, exc.message, payload={"code": exc.code}))
+                        await queue.put(
+                            AgentEvent.control_event(
+                                "run.failed", session_name, exc.message, payload={"code": exc.code}
+                            )
+                        )
                         continue
                     await service.start(session_name, event_sink=_queue_event_sink(queue))
 

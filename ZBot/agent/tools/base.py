@@ -3,6 +3,7 @@
 的工具来完成 I/O、文件操作、网络请求等行为。对参数的解析、类型
 转换与校验逻辑也封装在此基类中，方便各工具统一处理输入。
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -41,7 +42,7 @@ class Tool(ABC):
 
     # JSON Schema 的基础类型到 Python 类型的映射，用于快速判断与 isinstance
     # ClassVar[...]
-    # 标注这是类变量（定义在类体内部、方法外部，属于整个类，所有实例共享同一份。），不属于实例属性，只在类层面定义，实例不能覆盖 / 单独赋值（实例对象不能动他）。
+    # 标注这是类变量，只在类层面定义，所有实例共享同一份。
     # 外层容器：dict[str, ...]
     # 字典：key 是字符串，value 是后面的联合类型。
     # value 联合类型：type[Any] | tuple[type[Any], ...]
@@ -71,13 +72,11 @@ class Tool(ABC):
         """工具名称（唯一标识）。"""
         pass
 
-
     @property
     @abstractmethod
     def description(self) -> str:
         """工具的简短描述，用于在调用方生成帮助或提示。"""
         pass
-
 
     @property
     @abstractmethod
@@ -85,12 +84,10 @@ class Tool(ABC):
         """工具参数的 JSON Schema 定义（根类型通常为 object）。"""
         pass
 
-
     @abstractmethod
     async def execute(self, **kwargs: Any) -> str:
         """执行工具的主入口，子类实现具体业务逻辑并返回字符串结果。"""
         pass
-
 
     def cast_params(self, params: dict[str, Any]) -> dict[str, Any]:
         """根据工具的 `parameters` schema 对传入的参数进行类型转换。
@@ -104,7 +101,6 @@ class Tool(ABC):
             return params
         return self._cast_object(params, schema)
 
-
     def validate_params(self, params: dict[str, Any]) -> list[str]:
         """验证参数是否符合 `parameters` schema，返回错误消息列表（空表示通过）。
 
@@ -115,9 +111,8 @@ class Tool(ABC):
             return [f"参数必须是对象类型，当前收到的是 {type(params).__name__}"]
         schema = self.parameters or {}
         if schema.get("type", "object") != "object":
-            raise ValueError(f"工具参数的 Schema 根类型必须是 object")
+            raise ValueError("工具参数的 Schema 根类型必须是 object")
         return self._validate(params, {**schema, "type": "object"}, "")
-
 
     def to_schema(self) -> dict[str, Any]:
         """把工具元信息转换为类似 OpenAI 函数调用所需的描述字典。"""
@@ -129,7 +124,6 @@ class Tool(ABC):
                 "parameters": self.parameters,
             },
         }
-
 
     def _cast_object(self, obj: Any, schema: dict[str, Any]) -> dict[str, Any]:
         """按对象 schema 转换字典参数值。"""
@@ -148,7 +142,6 @@ class Tool(ABC):
                 result[key] = value
 
         return result
-
 
     def _cast_value(self, val: Any, schema: dict[str, Any]) -> Any:
         """根据子 schema 的 type 字段把单个值转换为目标类型。
@@ -210,7 +203,6 @@ class Tool(ABC):
         # 其它情况保持原值
         return val
 
-
     def _validate(self, val: Any, schema: dict[str, Any], path: str) -> list[str]:
         """递归校验单个值或对象是否满足 schema，返回错误列表。
 
@@ -226,9 +218,7 @@ class Tool(ABC):
             base_schema = dict(schema)
             base_schema.pop("anyOf", None)
             branch_errors = [
-                self._validate(val, {**base_schema, **branch}, path)
-                for branch in any_of
-                if isinstance(branch, dict)
+                self._validate(val, {**base_schema, **branch}, path) for branch in any_of if isinstance(branch, dict)
             ]
             if any(not errors for errors in branch_errors):
                 return []
