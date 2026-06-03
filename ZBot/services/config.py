@@ -7,7 +7,7 @@ from typing import Any
 
 from ZBot.config.loader import load_config
 from ZBot.config.schema import Config
-from ZBot.service.utils.config_utils import is_masked_or_empty_key
+from ZBot.services.formatting.config_masking import is_masked_or_empty_key
 
 # 各 provider 的默认 API Base，方便前端预填
 PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
@@ -31,9 +31,17 @@ PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
 
 
 class ConfigCache:
-    """TTL 缓存的配置加载器，避免每次 HTTP 请求都读磁盘。"""
+    """TTL 缓存的配置加载器，避免每次 HTTP 请求都读磁盘，因为你的每次请求都是独立的，
+    如果配置文件发生变化或者说配置没了，那么肯定运行不了或者运行的不一样，你的配置，就是ZBot 是一个个人 Agent，不是普通 CRUD 系统。很多能力都依赖“当前用户的运行环境”。
+    比如 workspace、model、provider、API key、MCP、工具限制、记忆目录，本质上都来自同一份个人配置。
+    因为 Agent 系统最怕的是“运行上下文不确定”。如果路由不先确认配置，后面会出现很多隐性错误：
+    Session 不知道存哪里
+    Agent 不知道用哪个 model
+    Provider 不知道 api_key/api_base
+    MCP 不知道启哪些 server
+    工具不知道 workspace 边界"""
 
-    def __init__(self, ttl_seconds: float = 30.0) -> None:
+    def __init__(self, ttl_seconds: float = 3600.0) -> None:
         self._ttl_seconds = ttl_seconds
         self._cached: Config | None = None
         self._cached_at: float = 0.0
