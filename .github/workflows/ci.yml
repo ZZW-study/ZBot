@@ -32,10 +32,10 @@ jobs:
       - name: Run tests with coverage
         shell: bash
         run: |
-          if find ZBot/test -type f \( -name "test_*.py" -o -name "*_test.py" \) | grep -q .; then
+          if [ -d ZBot/test ] && grep -R -E '^[[:space:]]*(async[[:space:]]+def|def)[[:space:]]+test_|^[[:space:]]*class[[:space:]]+Test' ZBot/test --include='test_*.py' --include='*_test.py' >/dev/null; then
             uv run pytest --cov=ZBot --cov-report=term-missing --cov-fail-under=49 ZBot/test/
           else
-            echo "No test files found, skipping pytest."
+            echo "No pytest tests found, skipping pytest."
           fi
         env:
           PYTHONPATH: ${{ github.workspace }}
