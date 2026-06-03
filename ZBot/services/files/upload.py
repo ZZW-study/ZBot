@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from ZBot.backend.parse import detect_by_magic
+from ZBot.services.files.mime import detect_by_magic
 
 IMAGE_MIME_TYPES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/tiff"}
 UNSUPPORTED_FILE_MIME_TYPES = {

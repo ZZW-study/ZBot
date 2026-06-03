@@ -15,7 +15,7 @@ from pathlib import Path
 import aiosqlite
 from loguru import logger
 
-from ZBot.service.utils.helpers import ensure_dir
+from ZBot.services.formatting import ensure_dir
 
 # 数据库文件路径
 _DB_NAME = "SKILL_USAGE.db"

@@ -18,7 +18,7 @@ from loguru import logger
 from ZBot.cron.types import CronJob
 
 if TYPE_CHECKING:
-    from ZBot.service.agent_run.agent_factory import AgentBundle
+    from ZBot.services.agent_run.agent_factory import AgentBundle
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
@@ -63,7 +63,7 @@ class AgentEvent:
 
 
 from ZBot.config.schema import Config
-from ZBot.service.agent_run.agent_factory import create_agent_bundle
+from ZBot.services.agent_run.agent_factory import create_agent_bundle
 def create_agent_run_service(config: Config) -> AgentRunService:
     """从 Config 创建 AgentRunService。
 

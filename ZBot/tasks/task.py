@@ -5,7 +5,7 @@ from loguru import logger
 from ZBot.config.schema import Config
 from ZBot.memory.daily_memory import daily_memory_store
 from ZBot.memory.long_term_memory import long_term_memory_store
-from ZBot.service.agent_run.agent_factory import create_provider
+from ZBot.services.agent_run.agent_factory import create_provider
 from ZBot.tasks.celery_app import app
 
 

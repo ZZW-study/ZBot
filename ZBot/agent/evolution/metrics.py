@@ -13,7 +13,7 @@ from typing import Any
 import aiosqlite
 from loguru import logger
 
-from ZBot.service.utils.helpers import ensure_dir
+from ZBot.services.formatting import ensure_dir
 
 _DB_NAME = "SKILL_USAGE.db"
 

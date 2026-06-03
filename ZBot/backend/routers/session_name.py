@@ -1,78 +1,16 @@
 from fastapi import APIRouter
-from pydantic import BaseModel
-from ZBot.session.manager import Session, SessionManager
+
+from ZBot.backend.handlers.sessions import session_detail
+from ZBot.backend.schemas.session import SessionCreateRequest, SessionRenameRequest
 from ZBot.config.schema import Config
-from typing import Any
-from ZBot.service.config_service import config_cache
-
-class SessionCreateRequest(BaseModel):
-    name: str
-
-
-class SessionRenameRequest(BaseModel):
-    name: str
+from ZBot.services.config import config_cache
+from ZBot.session.manager import SessionManager
 
 
 router = APIRouter(
     prefix="/api/sessions",
     tags=["sessions"],
 )
-
-
-def _display_content(content: Any) -> str:
-    if isinstance(content, str):
-        return content
-    if not isinstance(content, list):
-        return "" if content is None else str(content)
-
-    parts: list[str] = []
-    for block in content:
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "text":
-            text = block.get("text")
-            if isinstance(text, str) and text:
-                parts.append(text)
-        elif block.get("type") == "image_url":
-            parts.append("[image]")
-    return "\n".join(parts)
-
-
-def _session_message_detail(session: Session) -> list[dict[str, Any]]:
-    messages: list[dict[str, Any]] = []
-    for index, message in enumerate(session.messages):
-        role = message.get("role")
-        if role not in {"user", "assistant"}:
-            continue
-
-        content = _display_content(message.get("content"))
-        if role == "assistant" and not content and message.get("tool_calls"):
-            continue
-        if not content:
-            continue
-
-        item: dict[str, Any] = {
-            "id": f"{session.session_name}-{index}",
-            "role": role,
-            "content": content,
-            "timestamp": message.get("timestamp"),
-        }
-        tools_used = message.get("tools_used")
-        if isinstance(tools_used, list) and tools_used:
-            item["tools_used"] = tools_used
-        messages.append(item)
-    return messages
-
-
-def _session_detail(session: Session) -> dict[str, Any]:
-    messages = _session_message_detail(session)
-    return {
-        "name": session.session_name,
-        "created_at": session.created_at.isoformat(),
-        "updated_at": session.updated_at.isoformat(),
-        "message_count": len(messages),
-        "messages": messages,
-    }
 
 
 @router.get("/list_sessions")
@@ -96,7 +34,7 @@ async def get_session_detail(session_name: str):
 
     manager = SessionManager(config.workspace_path)
     session, _ = await manager.get_or_create(session_name)
-    return _session_detail(session)
+    return session_detail(session)
 
 
 @router.post("/create_session")

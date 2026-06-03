@@ -7,7 +7,7 @@ from typing import Any
 
 from ZBot.config.loader import load_config
 from ZBot.config.schema import Config
-from ZBot.service.utils.config_utils import is_masked_or_empty_key
+from ZBot.services.formatting.config_masking import is_masked_or_empty_key
 
 # 各 provider 的默认 API Base，方便前端预填
 PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
