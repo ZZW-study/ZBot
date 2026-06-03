@@ -27,12 +27,9 @@ from typing import Any
 
 from loguru import logger
 
-from ZBot.service.utils.helpers import ensure_dir, safe_filename
-
-# 历史消息中需要特别保留的字段
-# 这些字段在转换历史记录时需要特殊处理
-_HISTORY_FIELDS = ("tool_calls", "tool_call_id", "name")
-
+from ZBot.prompts.agent import SESSION_COMPRESSION_SYSTEM_PROMPT, build_session_compression_user_prompt
+from ZBot.services.formatting import ensure_dir, safe_filename
+from ZBot.providers.base import LLMProvider
 
 @dataclass
 class Session:
@@ -46,25 +43,64 @@ class Session:
     last_consolidated: int = 0  # 已归档的消息索引（用于会话记忆）
     memory_snapshot: str | None = None  # 记忆快照（归档时保存的摘要信息）
 
-    def get_history_by_token_budget(self, token_budget: int) -> list[dict[str, Any]]:
-        """按 token 预算返回最近历史，避免固定消息条数误判上下文大小。"""
-        messages = self.messages[self.last_consolidated :]
+    async def get_history_by_token_budget(
+        self,
+        token_budget: int,
+        provider: LLMProvider,
+        model: str
+    ) -> list[dict[str, Any]]:
+        """按 token 预算返回最近历史，超出部分压缩后补充到当前上下文中。"""
+        messages = self.messages[self.last_consolidated:]
         if not messages:
             return []
 
         selected: list[dict[str, Any]] = []
         used_tokens = 0
+        is_exceed: bool = False
+        message_count: int = 0
+
         for message in reversed(messages):
             cost = self._estimate_message_tokens(message)
             if selected and used_tokens + cost > token_budget:
+                is_exceed = True
                 break
-            selected.append(message)
+
+            selected.append(message.copy())
+            message_count += 1
             used_tokens += cost
 
         selected.reverse()
-        selected = self._trim_to_first_user(selected)
-        selected = self._drop_unpaired_tool_prefix(selected)
-        return [self._history_entry(message) for message in selected]
+
+        if is_exceed:
+            # 如果截取后的第一条不是 user，则继续删除前面的 assistant/tool 消息，
+            # 保证上下文从一条完整的用户消息开始。
+            selected = self.find_first_user(selected)
+
+            if not selected:
+                return []
+
+            # selected 之前的所有消息都属于本次被裁掉、需要压缩的信息。
+            first_selected_index = messages.index(selected[0])
+            not_selected = messages[:first_selected_index]
+
+            if not_selected:
+                prompt: list[dict[str, Any]] = self.build_prompt(not_selected)
+
+                response = await provider.chat(
+                    messages=prompt,
+                    model=model
+                )
+
+                summary = response.content
+
+                if summary:
+                    original_content = selected[0].get("content", "")
+                    selected[0]["content"] = (
+                        f"【前置对话摘要】\n{summary}\n\n"
+                        f"【当前用户消息】\n{original_content}"
+                    )
+                    
+        return selected
 
     def clear(self) -> None:
         """清空会话。"""
@@ -84,26 +120,36 @@ class Session:
         return max(1, total_chars // 2)
 
     @staticmethod
-    def _trim_to_first_user(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """历史上下文从第一条 user 消息开始，避免 assistant/tool 无来源地开头。"""
-        first_user = next((index for index, message in enumerate(messages) if message.get("role") == "user"), None)
-        return messages[first_user:] if first_user is not None else messages
+    def build_prompt(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """构建提示词，用来压缩之前的对话，避免上下文过大，又防止信息丢失。"""
+
+        history_text = json.dumps(
+            messages,
+            ensure_ascii=False,
+            indent=2,
+            default=str
+        )
+
+        return [
+            {
+                "role": "system",
+                "content": SESSION_COMPRESSION_SYSTEM_PROMPT
+            },
+            {
+                "role": "user",
+                "content": build_session_compression_user_prompt(history_text)
+            }
+        ]
+
 
     @staticmethod
-    def _drop_unpaired_tool_prefix(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """去掉开头没有 assistant tool_call 配对的 tool 消息，保持协议合法。"""
-        while messages and messages[0].get("role") == "tool":
-            messages = messages[1:]
-        return messages
+    def find_first_user(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """返回从第一条 user 消息开始的后续全部消息。"""
+        for index, message in enumerate(messages):
+            if message.get("role") == "user":
+                return messages[index:]
 
-    @staticmethod
-    def _history_entry(message: dict[str, Any]) -> dict[str, Any]:
-        """构造发给模型的历史消息，只保留标准字段和必要工具链字段。"""
-        entry = {"role": message["role"], "content": message.get("content", "")}
-        for field_name in _HISTORY_FIELDS:
-            if field_name in message:
-                entry[field_name] = message[field_name]
-        return entry
+        return []
 
 
 class SessionManager:
@@ -191,8 +237,8 @@ class SessionManager:
         Returns:
             True 表示重命名成功，False 表示原会话不存在或新名称已存在
         """
-        old_path = self._session_path(old_name)
-        new_path = self._session_path(new_name)
+        old_path: Path = self._session_path(old_name)
+        new_path: Path = self._session_path(new_name)
 
         if not old_path.exists():
             return False
@@ -315,16 +361,21 @@ class SessionManager:
     @staticmethod
     def _metadata_line(session: Session) -> dict[str, Any]:
         """
-        生成元数据行的字典。元数据包含会话的基本信息，但不包含大量消息内容，便于快速读取和使用。
+        构造会话导出元数据。
+
+        导出文件仅保留记忆快照及尚未归档的消息，因此导入后消息索引将
+        从 0 重新开始，`last_consolidated` 必须重置为 0；否则会误将
+        部分未归档消息视为已处理消息并跳过。
         """
         return {
-            "_type": "metadata",  # 标记这是元数据行
-            "name": session.session_name,  # 会话名称
-            "created_at": session.created_at.isoformat(),  # 创建时间
-            "updated_at": session.updated_at.isoformat(),  # 更新时间
-            "last_consolidated": session.last_consolidated,  # 归档索引
-            "memory_snapshot": session.memory_snapshot,  # 记忆快照
+            "_type": "metadata",
+            "name": session.session_name,
+            "created_at": session.created_at.isoformat(),
+            "updated_at": session.updated_at.isoformat(),
+            "last_consolidated": 0,
+            "memory_snapshot": session.memory_snapshot,
         }
+
 
     @staticmethod
     def _parse_datetime(value: str | None) -> datetime | None:

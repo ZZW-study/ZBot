@@ -7,7 +7,7 @@ from typing import Any
 import aiofiles
 
 from ZBot.agent.tools.base import Tool, format_tool_error
-from ZBot.service.utils.helpers import path_failure_hint, resolve_path
+from ZBot.services.formatting import path_failure_hint, resolve_path
 
 
 class ReadFileTool(Tool):

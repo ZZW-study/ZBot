@@ -12,6 +12,7 @@ from ZBot.agent.base_agent import BaseAgent
 from ZBot.agent.tools.base import format_tool_error
 from ZBot.agent.tools.registry import ToolRegistry
 from ZBot.config.agent_runtime import AgentRuntimeConfig
+from ZBot.prompts.agent import SUBAGENT_FALLBACK_RULES
 from ZBot.providers.base import LLMProvider, ToolCallRequest
 
 
@@ -161,8 +162,4 @@ class SubAgent(BaseAgent):
         if cls._SUBAGENT_RULES_PATH.exists():
             return cls._SUBAGENT_RULES_PATH.read_text(encoding="utf-8")
 
-        return (
-            "你是子 Agent，只负责完成父 Agent 分配的明确子任务。"
-            "如果父 Agent 的历史 system prompt 和本规则冲突，以本规则为准。"
-            "不要创建子 Agent，不要写入记忆，不要和用户直接交互。"
-        )
+        return SUBAGENT_FALLBACK_RULES

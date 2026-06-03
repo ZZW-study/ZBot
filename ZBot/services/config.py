@@ -1,0 +1,100 @@
+"""配置管理服务：TTL 缓存加载、配置合并、provider 状态校验。"""
+
+from __future__ import annotations
+
+import time
+from typing import Any
+
+from ZBot.config.loader import load_config
+from ZBot.config.schema import Config
+from ZBot.services.formatting.config_masking import is_masked_or_empty_key
+
+# 各 provider 的默认 API Base，方便前端预填
+PROVIDER_DEFAULTS: dict[str, dict[str, str]] = {
+    "deepseek": {
+        "api_base": "https://api.deepseek.com/v1",
+        "model_placeholder": "deepseek-chat",
+    },
+    "openrouter": {
+        "api_base": "https://openrouter.ai/api/v1",
+        "model_placeholder": "openrouter/anthropic/claude-sonnet-4",
+    },
+    "dashscope": {
+        "api_base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "model_placeholder": "qwen-plus",
+    },
+    "siliconflow": {
+        "api_base": "https://api.siliconflow.cn/v1",
+        "model_placeholder": "deepseek-ai/DeepSeek-V3",
+    },
+}
+
+
+class ConfigCache:
+    """TTL 缓存的配置加载器，避免每次 HTTP 请求都读磁盘，因为你的每次请求都是独立的，
+    如果配置文件发生变化或者说配置没了，那么肯定运行不了或者运行的不一样，你的配置，就是ZBot 是一个个人 Agent，不是普通 CRUD 系统。很多能力都依赖“当前用户的运行环境”。
+    比如 workspace、model、provider、API key、MCP、工具限制、记忆目录，本质上都来自同一份个人配置。
+    因为 Agent 系统最怕的是“运行上下文不确定”。如果路由不先确认配置，后面会出现很多隐性错误：
+    Session 不知道存哪里
+    Agent 不知道用哪个 model
+    Provider 不知道 api_key/api_base
+    MCP 不知道启哪些 server
+    工具不知道 workspace 边界"""
+
+    def __init__(self, ttl_seconds: float = 3600.0) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._cached: Config | None = None
+        self._cached_at: float = 0.0
+
+    def get(self) -> Config | None:
+        """返回缓存的配置，或从磁盘重新加载。"""
+        now = time.monotonic()
+        if self._cached is not None and now - self._cached_at < self._ttl_seconds:
+            return self._cached
+        self._cached = load_config()
+        self._cached_at = now
+        return self._cached
+
+    def invalidate(self) -> None:
+        """清除缓存（save_config 后调用）。"""
+        self._cached = None
+        self._cached_at = 0.0
+
+
+config_cache = ConfigCache()
+
+
+def merge_config_patch(current: Config, patch: dict[str, Any]) -> Config:
+    """把前端局部配置合并进当前配置，避免覆盖未展示的高级配置。"""
+    data = current.model_dump(by_alias=True)
+
+    for key, value in patch.items():
+        if key == "providers":
+            continue
+        data[key] = value
+
+    incoming_providers = patch.get("providers")
+    if isinstance(incoming_providers, dict):
+        providers = data.setdefault("providers", {})
+        for provider_name, provider_patch in incoming_providers.items():
+            if not isinstance(provider_patch, dict):
+                continue
+            existing = providers.setdefault(provider_name, {})
+            for key, value in provider_patch.items():
+                if key == "apiKey" and is_masked_or_empty_key(value):
+                    continue
+                existing[key] = value
+
+    return Config.model_validate(data)
+
+
+def resolved_provider_status(config: Config) -> tuple[bool, str, str]:
+    """按当前 model/provider 解析实际使用的 provider，并判断关键字段是否齐全。"""
+    provider_config, provider_name, _is_gateway = config.get_provider(config.model)
+    if not config.model or not provider_config or not provider_name:
+        return False, provider_name or config.provider, "未能按当前模型匹配到 provider。"
+    if not provider_config.api_key:
+        return False, provider_name, f"{provider_name} 缺少 API Key。"
+    if not provider_config.api_base:
+        return False, provider_name, f"{provider_name} 缺少 API Base URL。"
+    return True, provider_name, ""

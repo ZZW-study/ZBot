@@ -71,10 +71,10 @@ class AgentRuntimeConfig:
     agent_timeout_seconds: int = 3600
     subagent_timeout_seconds: int = 600
     context_compaction_threshold: float = 0.8
-    recent_history_token_budget_ratio: float = 0.25
-    recent_history_max_tokens: int = 64_000
-    memory_consolidation_interval: int = 40
-    session_memory_keep_recent_tokens: int = 16_000
+    recent_history_token_budget_ratio: float = 0.25    # 历史上下文 token 占总配额的比例阈值
+    recent_history_max_tokens: int = 64_000            # 最大历史上下文 token 配额
+    memory_consolidation_interval: int = 40            # 每累计 40 轮会话，触发一次会话记忆整理/压缩
+    session_memory_keep_recent_tokens: int = 16_000    # 整理会话记忆时，保留最近 16000 个 token 的原始对话内容；更早的历史内容可被摘要或压缩进长期记忆
 
     # field(default_factory=WebSearchConfig) 的作用：
     #   实例化时若没有显式传入 web_search_config，则自动调用 WebSearchConfig() 新建一个默认值。

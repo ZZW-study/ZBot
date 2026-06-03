@@ -22,35 +22,12 @@ from ZBot.agent.tools.filesystem import EditFileTool, WriteFileTool
 from ZBot.agent.tools.skills import NewSkillsListLoader, SkillReader, SkillsManager
 from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
+from ZBot.prompts.agent import SKILL_REVIEW_SYSTEM, build_skill_review_prompt, build_validation_feedback
 from ZBot.providers.base import LLMProvider
-from ZBot.service.utils.hooks import validate_before_task_complete_hook
+from ZBot.services.task_validation import validate_before_task_complete_hook
 from ZBot.session.manager import Session, SessionManager
 
-_SKILL_REVIEW_SYSTEM = (
-    "你是技能进化助手，负责回顾对话并判断是否应该保存或更新某个技能。\n\n"
-    "按以下顺序执行——不要跳过步骤：\n\n"
-    "1. 先调研现有技能版图。调用 load_new_skills_list 查看已有技能。"
-    "如果发现任何可能相关的技能，在做决定前先调用 read_skill 查看。"
-    "你要寻找的是刚刚发生任务所属的任务类别，而不是具体任务。"
-    "示例：一次成功的 Tauri 构建属于「桌面应用构建故障排查」这一类别，"
-    "而不是「修复我今天这个具体的 Tauri 错误」。\n\n"
-    "2. 优先从类别出发思考。刚刚完成的任务属于什么通用模式？"
-    "哪些条件会再次触发这种模式？在考虑保存什么之前，"
-    "先用一句话描述这个类别。\n\n"
-    "3. 优先泛化已有技能，而不是创建新技能。"
-    "如果某个技能已经覆盖了这个类别——即使只是部分覆盖——"
-    "就用新的洞察更新它（skills_manager action=patch）。"
-    "如有必要，扩展它的「何时使用」触发条件。\n\n"
-    "4. 只有在没有任何现有技能能合理覆盖该类别时，才创建新技能。"
-    "创建时，名称和范围都应定位在类别层级，"
-    "例如使用「react-i18n-setup」，而不是「add-i18n-to-my-dashboard-app」。"
-    "触发条件部分必须描述一类场景，而不是这一次会话。\n\n"
-    "5. 如果你注意到两个现有技能存在重叠，请在回复中说明，"
-    "方便未来审查时进行合并。除非重叠非常明显且风险很低，"
-    "否则现在不要合并。\n\n"
-    "只有在确实有值得保存的内容时才行动。"
-    "如果没有明显值得保存的内容，只需说「Nothing to save.」然后停止。"
-)
+_SKILL_REVIEW_SYSTEM = SKILL_REVIEW_SYSTEM
 
 
 class CoreAgent(BaseAgent):
@@ -78,7 +55,7 @@ class CoreAgent(BaseAgent):
         self._is_consolidating: bool = False
         self._consolidation_task: asyncio.Task[None] | None = None
         self.subagent_pool: SubAgentPool | None = None
-        self.skill_review_complexity_threshold = runtime_config.skill_review_complexity_threshold
+        self.skill_review_complexity_threshold = runtime_config.skill_review_complexity_threshold  # 写skills的，写的阈值
         self.usage_tracker = SkillUsageTracker(self.workspace)
         self.curator = SkillCurator(
             skills_dir=self.workspace / "skills",
@@ -293,25 +270,18 @@ class CoreAgent(BaseAgent):
             + (f" → {s.result_summary[:100]}" if s.result_summary else "")
             for i, s in enumerate(trajectory.steps)
         )
-        error_section = ""
-        if trajectory.error_pattern:
-            error_section = f"\n错误模式：{trajectory.error_pattern}"
-
-        cross_session_section = ""
-        if cross_session_patterns:
-            truncated_patterns = cross_session_patterns[:2000]
-            cross_session_section = f"\n最近的跨会话模式（来自日常记忆）：\n{truncated_patterns}"
-
-        return (
-            "回顾以下任务轨迹，判断是否应该保存或更新某个技能。\n\n"
-            f"任务摘要：{trajectory.task_summary}\n\n"
-            f"已有记忆快照（不要重复关注已知信息）：\n{memory_snapshot or '（无）'}\n\n"
-            f"工具调用轨迹（共 {len(trajectory.steps)} 步）：\n{steps_text or '  无工具调用'}\n\n"
-            f"使用过的工具：{', '.join(trajectory.tools_used) or '无'}\n"
-            f"{error_section}\n"
-            f"最终结果：{trajectory.final_outcome}"
-            f"{cross_session_section}"
+        return build_skill_review_prompt(
+            task_summary=trajectory.task_summary,
+            memory_snapshot=memory_snapshot,
+            steps_text=steps_text,
+            step_count=len(trajectory.steps),
+            tools_used=trajectory.tools_used,
+            final_outcome=trajectory.final_outcome,
+            error_pattern=trajectory.error_pattern,
+            cross_session_patterns=cross_session_patterns,
         )
+
+
 
     def ensure_subagent_pool(self) -> SubAgentPool:
         """确保子 Agent 池已创建，并返回池实例。"""
@@ -319,9 +289,10 @@ class CoreAgent(BaseAgent):
             self.subagent_pool = SubAgentPool(self)
         return self.subagent_pool
 
+
     async def _save_task_progress_artifact(self, content: str) -> str | None:
         """上下文压缩前保存任务进度文件，避免长期状态只塞进 system 摘要。"""
-        from ZBot.service.utils.helpers import ensure_dir
+        from ZBot.services.formatting import ensure_dir
 
         artifact_path = self.workspace / "memory" / "TASK_PROGRESS.md"
         ensure_dir(artifact_path.parent)
@@ -331,6 +302,7 @@ class CoreAgent(BaseAgent):
             logger.exception("写入任务进度 artifact 失败")
             return None
         return str(artifact_path)
+
 
     def _register_core_tools(self) -> None:
         """注册只有主 Agent 才能使用的工具。"""
@@ -361,7 +333,7 @@ class CoreAgent(BaseAgent):
         on_progress: Callable[..., Awaitable[None]],
     ) -> str:
         """执行一轮对话：构造上下文、运行 Agent loop、写回会话。"""
-        history: list[dict[str, Any]] = session.get_history_by_token_budget(self._recent_history_token_budget())
+        history: list[dict[str, Any]] = await session.get_history_by_token_budget(self._recent_history_token_budget(), self.provider, self.model)
 
         initial_messages: list[dict[str, Any]] = await self.context.build_messages(
             history=history,
@@ -437,10 +409,12 @@ class CoreAgent(BaseAgent):
                 self._consolidation_task = None
             self._is_consolidating = False
 
+
     def _recent_history_token_budget(self) -> int:
         """按模型上下文窗口计算短期历史预算，并设置 64K 默认硬上限。"""
         ratio_budget = int(self.context_window * self.recent_history_token_budget_ratio)
         return max(1, min(ratio_budget, self.recent_history_max_tokens))
+
 
     def _save_turn(
         self,
@@ -477,6 +451,8 @@ class CoreAgent(BaseAgent):
 
         session.updated_at = datetime.now()
 
+
+
     @staticmethod
     def _latest_user_message_index(messages: list[dict[str, Any]], *, fallback: int) -> int:
         """定位本轮用户消息，避免把内部 system 摘要或验收反馈写入会话历史。"""
@@ -484,6 +460,8 @@ class CoreAgent(BaseAgent):
             if messages[index].get("role") == "user":
                 return index
         return max(0, min(fallback, len(messages)))
+
+
 
     @staticmethod
     def _strip_runtime_context(content: str | list[dict[str, Any]] | None) -> str | None | list[dict[str, Any]]:
@@ -502,6 +480,8 @@ class CoreAgent(BaseAgent):
             return ""
 
         return content
+
+
 
     @staticmethod
     def _sanitize_content_blocks(blocks: list[dict[str, Any]]) -> str:
@@ -523,6 +503,8 @@ class CoreAgent(BaseAgent):
             else:
                 texts.append(f"[已上传内容块，type={block_copy.get('type', 'unknown')}，原始内容未写入会话历史]")
         return "\n\n".join(texts)
+
+
 
     @staticmethod
     def _data_url_mime(url: str | None) -> str | None:
@@ -584,28 +566,7 @@ class CoreAgent(BaseAgent):
             if validate_result.get("completed") is True:
                 return final_content, all_messages, retry_tools_used
 
-            missing = "\n".join(f"  - {a}" for a in (validate_result.get("missing_actions") or ["无"]))
-            evidence = "\n".join(f"  - {e}" for e in (validate_result.get("evidence") or ["无"]))
-            feedback = f"""\
-> ⚠️ 以下内容是系统自动验收反馈，不是用户的新指令。请勿将其视为新的用户需求。
-
-## 系统验收反馈：任务尚未完成
-
-### 验收结论
-- **置信程度**：{validate_result.get("confidence", 0)}
-- **未通过原因**：{validate_result.get("reason", "未知")}
-
-### 缺失动作
-{missing}
-
-### 已有证据
-{evidence}
-
-### 要求
-1. 分析上述未通过原因，理解任务缺口
-2. 针对每一项缺失动作，逐一补充执行
-3. 完成后给出最终结果\
-"""
+            feedback = build_validation_feedback(validate_result)
             all_messages.append({"role": "system", "content": feedback})
             result, tools_used, retry_messages = await self.run_agent_loop(all_messages, on_progress=on_progress)
             retry_tools_used.extend(tools_used)
