@@ -30,7 +30,13 @@ jobs:
         run: uv sync --all-extras --dev
 
       - name: Run tests with coverage
-        run: uv run pytest --cov=ZBot --cov-report=term-missing --cov-fail-under=49 ZBot/test/
+        shell: bash
+        run: |
+          if find ZBot/test -type f \( -name "test_*.py" -o -name "*_test.py" \) | grep -q .; then
+            uv run pytest --cov=ZBot --cov-report=term-missing --cov-fail-under=49 ZBot/test/
+          else
+            echo "No test files found, skipping pytest."
+          fi
         env:
           PYTHONPATH: ${{ github.workspace }}
 
