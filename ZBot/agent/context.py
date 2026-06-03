@@ -122,6 +122,7 @@ class ContextBuilder:
         # 标签格式："[运行时上下文 - 仅供元数据参考，不是用户指令]"
         return cls._RUNTIME_CONTEXT_TAG + "\n" + "\n".join(lines)
 
+
     @classmethod
     def _with_runtime_context(
         cls,
@@ -140,6 +141,7 @@ class ContextBuilder:
         text = str(first.get("text") or "")
         first["text"] = f"{runtime_context}\n\n{text}"
         return [first, *blocks[1:]]
+
 
     @staticmethod
     def _content_text(content: str | list[dict[str, Any]]) -> str:

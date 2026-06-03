@@ -80,7 +80,7 @@ class SessionMemoryStore:
         consolidate_all: bool = False,
     ) -> bool:
         """
-        每次对话的时候进行归档，把会话中的旧消息归档进会话记忆。
+        每次对话的时候进行归档，把会话中的旧消息归档进会话记忆，在一次对话的内存里面，有完整的消息，只是取的时候按照last_consolidated来取
         """
         # 确定本次要归档的消息区间和需要保留的尾部消息数量
         messages, keep_count = self._messages_to_archive(session, keep_recent_tokens, consolidate_all)

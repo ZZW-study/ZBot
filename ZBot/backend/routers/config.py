@@ -44,7 +44,7 @@ async def config_status() -> dict[str, Any]:
 
 @router.get("")
 async def get_config() -> dict[str, Any]:
-    """返回当前配置（API Key 脱敏）。"""
+    """返回当前配置（API Key 脱敏),设置里面的页面或者是如果前面没有配置，第一次进入也返回这个"""
     config = config_cache.get()
     if config is None:
         raise HTTPException(status_code=404, detail="配置文件不存在或无法解析。")

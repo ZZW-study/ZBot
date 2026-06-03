@@ -82,7 +82,7 @@ class BaseAgent(ABC):
         self.context_compaction_threshold = runtime_config.context_compaction_threshold
         self.context_window = provider.get_context_window(self.model)
 
-        # ==================== 工具配置（后续可以考虑不同的agent，有不同的工具配置） ====================
+        # ==================== 工具配置 ====================
         self.web_search_config = runtime_config.web_search_config
         self.web_proxy = runtime_config.web_proxy
         self.exec_config = runtime_config.exec_config
@@ -482,7 +482,7 @@ class BaseAgent(ABC):
         tool_calls: list[dict[str, Any]] | None = None,
         reasoning_content: str | None = None,
     ) -> None:
-        """向消息链追加 assistant 消息。
+        """向消息链追加 assistant 消息，所以说工具的role就是tool_calls，然后可以包含很多个
 
         统一封装这个格式，避免 CoreAgent/SubAgent 各自手写 tool_calls、
         reasoning_content 等字段时格式不一致。
@@ -525,6 +525,7 @@ class BaseAgent(ABC):
         stripped = result.lstrip()
         return stripped.startswith(("错误：", "错误:", "Error:", "ERROR:"))
 
+
     async def _compact_messages_if_needed(
         self,
         messages: list[dict[str, Any]],
@@ -542,6 +543,7 @@ class BaseAgent(ABC):
             threshold_tokens,
             self.context_window,
         )
+
         await on_progress(
             "上下文接近模型窗口，正在压缩历史工具链和中间过程。",
             event_type="compaction.started",
@@ -558,6 +560,7 @@ class BaseAgent(ABC):
             estimated_tokens,
             self._estimate_messages_tokens(compacted),
         )
+
         await on_progress(
             "上下文压缩完成，继续执行当前任务。",
             event_type="compaction.completed",
@@ -565,6 +568,7 @@ class BaseAgent(ABC):
             after_message_count=len(compacted),
         )
         return compacted
+
 
     async def _save_task_progress_artifact(self, content: str) -> str | None:
         """保存任务进度 artifact；BaseAgent 默认不落盘，CoreAgent 可覆盖实现。"""
@@ -702,40 +706,43 @@ class BaseAgent(ABC):
             "- 根据当前任务目标继续推进；如信息不足，获取新的有效观察。\n"
         )
 
-    @staticmethod
-    def _estimate_messages_tokens(messages: list[dict[str, Any]]) -> int:
-        """粗略估算 token：第一版不引入 tokenizer，用字符数做保守近似。"""
-        total_chars = 0
+
+
+    def _estimate_messages_tokens(self, messages: list[dict[str, Any]]) -> int | float:
+        """粗略估算 token,用字符数做保守近似, 一百个字符，保守估计105个token。"""
+        total_chars: float = 0
         for message in messages:
             total_chars += len(str(message.get("role", "")))
-            total_chars += len(BaseAgent._content_for_budget(message.get("content", "")))
+            total_chars += len(self._content_for_budget(message.get("content", "")))
             if "tool_calls" in message:
-                total_chars += len(json.dumps(message["tool_calls"], ensure_ascii=False))
-        return max(1, total_chars // 2)
+                total_chars += len(json.dumps(message["tool_calls"], ensure_ascii=False))  # 直接转化成字符串，用len
+        return max(1, total_chars*1.05)
 
-    @staticmethod
-    def _latest_content(messages: list[dict[str, Any]], role: str) -> str | None:
+
+    def _latest_content(self, messages: list[dict[str, Any]], role: str) -> str | None:
         """从消息链中倒序查找指定角色的最新一条消息，截断后返回。"""
         for message in reversed(messages):
             if message.get("role") == role:
-                content = BaseAgent._content_text(message.get("content")).strip()
+                content = self._content_text(message.get("content")).strip()
                 if content:
                     return content[:1200]
         return None
 
-    @staticmethod
-    def _collect_role_snippets(messages: list[dict[str, Any]], role: str, *, limit: int) -> list[str]:
+
+
+    def _collect_role_snippets(self, messages: list[dict[str, Any]], role: str, *, limit: int) -> list[str]:
         """收集指定角色的最新若干条消息片段，用于压缩摘要。"""
         snippets: list[str] = []
         for message in messages:
-            content = BaseAgent._content_text(message.get("content"))
+            content = self._content_text(message.get("content"))
             if message.get("role") != role or not content.strip():
                 continue
-            snippets.append(content.strip()[: BaseAgent._COMPACTION_SNIPPET_CHARS])
+            snippets.append(content.strip()[: self._COMPACTION_SNIPPET_CHARS])
         return snippets[-limit:]
 
-    @staticmethod
-    def _collect_tool_snippets(messages: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+
+
+    def _collect_tool_snippets(self, messages: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
         """从消息链中提取工具调用的成功与失败片段，分别返回。"""
         successes: list[str] = []
         failures: list[str] = []
@@ -743,41 +750,43 @@ class BaseAgent(ABC):
             content = message.get("content")
             if message.get("role") != "tool" or not isinstance(content, str):
                 continue
-            snippet = f"{message.get('name', 'tool')}: {content.strip()[: BaseAgent._COMPACTION_SNIPPET_CHARS]}"
+            snippet = f"{message.get('name', 'tool')}: {content.strip()[: self._COMPACTION_SNIPPET_CHARS]}"
             if content.startswith("错误："):
                 failures.append(snippet)
             elif content.strip():
                 successes.append(snippet)
         return successes[-5:], failures[-5:]
 
+
     @staticmethod
     def _format_snippets(snippets: list[str]) -> str:
         """将片段列表格式化为 Markdown 无序列表。"""
         return "\n".join(f"- {snippet}" for snippet in snippets)
 
-    @staticmethod
-    def _extract_paths(messages: list[dict[str, Any]]) -> str:
+
+
+    def _extract_paths(self, messages: list[dict[str, Any]]) -> str:
         """从消息链中提取出现过的文件路径，去重后返回最近若干条。"""
-        text = "\n".join(BaseAgent._content_text(message.get("content")) for message in messages)
+        text = "\n".join(self._content_text(message.get("content")) for message in messages)
         paths = re.findall(r"(?:[A-Za-z]:\\[^\s\"'<>|]+|[\w./-]+/[\w./-]+)", text)
         unique_paths = list(dict.fromkeys(paths))
         return "\n".join(f"- {path}" for path in unique_paths[-6:])
 
-    @staticmethod
-    def _collect_anchor_facts(messages: list[dict[str, Any]]) -> dict[str, list[str]]:
+
+    def _collect_anchor_facts(self, messages: list[dict[str, Any]]) -> dict[str, list[str]]:
         """从全历史提取低频但会影响后续执行的锚点事实。"""
-        text = "\n".join(BaseAgent._content_text(message.get("content")) for message in messages)
-        params = BaseAgent._extract_key_params(text)
-        paths = BaseAgent._extract_path_values(text)
-        failures = BaseAgent._extract_failure_facts(messages)
-        conclusions = BaseAgent._extract_conclusion_facts(text)
-        avoid = BaseAgent._extract_avoid_facts(messages)
+        text = "\n".join(self._content_text(message.get("content")) for message in messages)
+        params = self._extract_key_params(text)
+        paths = self._extract_path_values(text)
+        failures = self._extract_failure_facts(messages)
+        conclusions = self._extract_conclusion_facts(text)
+        avoid = self._extract_avoid_facts(messages)
         return {
-            "params": params[-BaseAgent._COMPACTION_PARAM_LIMIT :],
-            "paths": paths[-BaseAgent._COMPACTION_PATH_LIMIT :],
-            "failures": failures[-BaseAgent._COMPACTION_FAILURE_LIMIT :],
-            "conclusions": conclusions[-BaseAgent._COMPACTION_PARAM_LIMIT :],
-            "avoid": avoid[-BaseAgent._COMPACTION_FAILURE_LIMIT :],
+            "params": params[-self._COMPACTION_PARAM_LIMIT :],
+            "paths": paths[-self._COMPACTION_PATH_LIMIT :],
+            "failures": failures[-self._COMPACTION_FAILURE_LIMIT :],
+            "conclusions": conclusions[-self._COMPACTION_PARAM_LIMIT :],
+            "avoid": avoid[-self._COMPACTION_FAILURE_LIMIT :],
         }
 
     @staticmethod
@@ -798,11 +807,11 @@ class BaseAgent(ABC):
         cleaned = [path.strip().rstrip(".,;，。；)") for path in paths]
         return BaseAgent._dedupe_preserve_order(cleaned)
 
-    @staticmethod
-    def _extract_failure_facts(messages: list[dict[str, Any]]) -> list[str]:
+
+    def _extract_failure_facts(self, messages: list[dict[str, Any]]) -> list[str]:
         failures: list[str] = []
         for message in messages:
-            content = BaseAgent._content_text(message.get("content"))
+            content = self._content_text(message.get("content"))
             if not content:
                 continue
             if message.get("role") == "tool" and (
@@ -831,15 +840,16 @@ class BaseAgent(ABC):
             )
         return BaseAgent._dedupe_preserve_order(items)
 
-    @staticmethod
-    def _extract_avoid_facts(messages: list[dict[str, Any]]) -> list[str]:
+
+    def _extract_avoid_facts(self,messages: list[dict[str, Any]]) -> list[str]:
         items: list[str] = []
         for message in messages:
-            content = BaseAgent._content_text(message.get("content"))
+            content = self._content_text(message.get("content"))
             for line in content.splitlines():
                 if "不要重复" in line or "do not repeat" in line.lower():
                     items.append(line.strip()[: BaseAgent._COMPACTION_SNIPPET_CHARS])
         return BaseAgent._dedupe_preserve_order(items)
+
 
     @staticmethod
     def _format_anchor_facts(anchor_facts: dict[str, list[str]]) -> str:
@@ -856,6 +866,7 @@ class BaseAgent(ABC):
                 lines.append(f"- {labels[key]}：{item}")
         return "\n".join(lines)
 
+
     @staticmethod
     def _dedupe_preserve_order(items: list[str]) -> list[str]:
         unique: list[str] = []
@@ -868,11 +879,11 @@ class BaseAgent(ABC):
             unique.append(normalized)
         return unique
 
-    @staticmethod
-    def _content_for_budget(content: Any) -> str:
+
+    def _content_for_budget(self,content: Any) -> str:
         """把 content 转成估算用文本，图片 data URL 只按一个占位块计。"""
         if isinstance(content, str):
-            return BaseAgent._replace_data_urls(content)
+            return self._replace_data_urls(content)
         if not isinstance(content, list):
             return str(content)
 
@@ -889,11 +900,12 @@ class BaseAgent(ABC):
                 parts.append(f"[{block.get('type', 'content')} content block]")
         return "\n".join(parts)
 
-    @staticmethod
-    def _content_text(content: Any) -> str:
+
+
+    def _content_text(self, content: Any) -> str:
         """从 content 中提取文本内容，忽略大体积多模态原文。"""
         if isinstance(content, str):
-            return BaseAgent._replace_data_urls(content)
+            return self._replace_data_urls(content)
         if not isinstance(content, list):
             return str(content or "")
 
@@ -903,10 +915,12 @@ class BaseAgent(ABC):
                 texts.append(str(block.get("text") or ""))
         return "\n".join(texts)
 
+
     @staticmethod
     def _replace_data_urls(text: str) -> str:
         """把 data URL 替换成短占位符，避免估算和摘要被 base64 主导。"""
         return re.sub(r"data:[^;\s]+;base64,[A-Za-z0-9+/=\r\n]+", "[base64 data url]", text)
+
 
     @staticmethod
     def _collect_do_not_repeat(messages: list[dict[str, Any]]) -> str:
@@ -921,12 +935,14 @@ class BaseAgent(ABC):
                     items.append(line.removeprefix("不要重复：").strip())
         return "\n".join(f"- {item}" for item in list(dict.fromkeys(items))[-5:])
 
+
     def _count_no_progress_failures(self, current_count: int, result: str) -> int:
         """连续失败且没有新观察信息时计数，用来提醒模型换策略。"""
         if not result.startswith("错误："):
             return 0
         has_observation = "观察结果：" in result
         return 0 if has_observation else current_count + 1
+
 
     @staticmethod
     def _add_tool_result(

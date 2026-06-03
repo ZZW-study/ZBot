@@ -84,8 +84,7 @@ async def validate_before_task_complete_hook(
 """.strip()
 
     prompt_messages: list[dict[str, Any]] = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
+        {"role": "system", "content": system_prompt + "\n\n" + user_prompt},
     ]
 
     response: LLMResponse = await provider.chat(
