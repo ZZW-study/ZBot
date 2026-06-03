@@ -125,6 +125,8 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools  # 工具列表（JSON Schema 格式）
             kwargs["tool_choice"] = "auto"
 
+        prompt_cache_key: str = self.prompt_caching(kwargs["messages"][0]["content"], tools)
+        kwargs["prmpt_cache_key"] = prompt_cache_key
         try:
             logger.debug("发送给模型的消息：{}", json.dumps(kwargs.get("messages", []), ensure_ascii=False, indent=2))
             if on_delta is not None:
@@ -160,6 +162,17 @@ class LiteLLMProvider(LLMProvider):
         if local_window:
             return local_window
         return DEFAULT_CONTEXT_WINDOW
+    
+
+    @staticmethod
+    def prompt_caching(system_prompt: str, tools: list[dict[str, Any]] | None = None) ->str:
+        """把固定的system prompt，工具等等，都采用缓存，减少token的开销,稳定的路由分组标识，不是缓存内容本身。
+        本身不用自己去做缓存，大模型提供商会跟你的内容，做缓存，不用自己去做。"""
+        import hashlib
+
+        prompt_cache_need = system_prompt + str(tools)
+        return hashlib.sha256(prompt_cache_need.encode("utf-8")).hexdigest()[:16]
+
 
     def _resolve_model(self, model: str) -> str:
         """
@@ -230,6 +243,8 @@ class LiteLLMProvider(LLMProvider):
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens,
             }
+            cached_token = getattr(getattr(usage, "prompt_token_details",None), "cached_tokens", 0)
+            logger.info(f"提示词token数量: {usage['prompt_tokens']}, 缓存token数量: {cached_token}, 缓存命中率: {cached_token / usage['prompt_tokens']:.2%}")
 
         # 思考内容
         reasoning_content = getattr(message, "reasoning_content", None)
@@ -243,23 +258,43 @@ class LiteLLMProvider(LLMProvider):
             reasoning_content=reasoning_content,
         )
 
+
     async def _stream_response(
         self,
         kwargs: dict[str, Any],
         on_delta: StreamCallback,
     ) -> LLMResponse:
-        """使用 LiteLLM stream=True 读取增量文本，同时兼容工具调用 delta。"""
+        """使用 LiteLLM stream=True 读取增量文本，同时兼容工具调用 delta。
+        向 LiteLLM 发起一次 流式异步请求，模型每生成一点内容就返回一个 chunk；
+        每次返回的 chunk 会包含一个文本片段、一个 reasoning 片段、一个 tool_call 片段、一个 finish_reason 和一个 usage。
+        本函数的逻辑是:
+        │  await acompletion(..., stream=True)
+        ▼
+        LiteLLM 向后端模型发请求
+        │
+        │  模型边生成边返回 chunk
+        ▼
+        async for chunk in stream
+        │
+        ├─ 文本片段        -> 立即调用 on_delta() 显示给用户
+        ├─ reasoning 片段  -> 暂存在 reasoning_parts
+        ├─ tool_call 片段  -> 暂存在 tool_call_parts
+        ├─ finish_reason   -> 记录停止原因
+        └─ usage           -> 记录 token 使用量
+        │
+        ▼
+        把所有片段拼成完整 LLMResponse"""
         kwargs = dict(kwargs)
-        kwargs["stream"] = True
+        kwargs["stream"] = True   # 关键点，设置为True即可
 
         content_parts: list[str] = []
         reasoning_parts: list[str] = []
         finish_reason = "stop"
         usage: dict[str, int] = {}
         tool_call_parts: dict[int, dict[str, str]] = {}
-
+        
         stream = await acompletion(**kwargs)
-        async for chunk in stream:
+        async for chunk in stream: # type: ignore
             choice = self._first_choice(chunk)
             if choice is None:
                 continue

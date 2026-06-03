@@ -13,7 +13,7 @@ from loguru import logger
 
 from ZBot.backend.routers.agent import router as agent_router
 from ZBot.backend.routers.config import router as config_router
-from ZBot.backend.routers.multimodal import router as multimodal_router
+from ZBot.backend.routers.session_name import router as session_router
 from ZBot.memory.daily_memory import daily_memory_store
 
 
@@ -69,4 +69,5 @@ app.add_middleware(
 
 app.include_router(config_router)
 app.include_router(agent_router)
-app.include_router(multimodal_router)
+app.include_router(session_router)
+

@@ -7,7 +7,7 @@ CLI、WebSocket 后端等入口都通过这里驱动一次 Agent 运行；展示
 from __future__ import annotations
 
 import asyncio
-import uuid
+import uuid   # 生成一个唯一的id字符串，可以用来标识，每次使用都不一样
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -22,13 +22,11 @@ if TYPE_CHECKING:
 
 BEIJING_TZ = ZoneInfo("Asia/Shanghai")
 
-
 @dataclass(slots=True)
 class AgentEvent:
     """发送给 CLI/前端的结构化 Agent 事件。"""
 
     type: str
-    run_id: str
     session_name: str
     message: str = ""
     agent_label: str | None = None
@@ -39,10 +37,8 @@ class AgentEvent:
         """转换为可 JSON 序列化的字典。"""
         return {
             "type": self.type,
-            "run_id": self.run_id,
             "session_name": self.session_name,
             "message": self.message,
-            "agent_label": self.agent_label,
             "payload": self.payload,
             "created_at": self.created_at,
         }
@@ -59,13 +55,26 @@ class AgentEvent:
         """构造控制事件 dict（不依赖 service 实例）。"""
         return cls(
             type=event_type,
-            run_id="control",
             session_name=session_name,
             message=message,
             payload=payload or {},
         ).to_dict()
 
 
+
+from ZBot.config.schema import Config
+from ZBot.service.agent_run.agent_factory import create_agent_bundle
+def create_agent_run_service(config: Config) -> AgentRunService:
+    """从 Config 创建 AgentRunService。
+
+    调用 create_agent_bundle + 包装为 AgentRunService。
+    失败时抛出 AgentSetupError，由调用方决定如何上报错误。
+    """
+    return AgentRunService(create_agent_bundle(config))
+
+# 类型别名声明, 可调用类型，它接收一个 AgentEvent，调用后返回一个可以被 await 的东西
+#   List[int]          → 一个装 int 的列表
+#   Dict[str, int]     → key 是 str、value 是 int 的字典
 EventSink = Callable[[AgentEvent], Awaitable[None]]
 
 
@@ -75,12 +84,9 @@ class AgentRunService:
     def __init__(
         self,
         bundle: "AgentBundle",
-        *,
-        run_id: str | None = None,
     ) -> None:
         """初始化 run service。"""
         self.bundle = bundle
-        self.run_id = run_id or uuid.uuid4().hex[:12]
         self._started = False
         self._closed = False
         self._event_sink: EventSink | None = None
@@ -92,7 +98,8 @@ class AgentRunService:
         *,
         event_sink: EventSink,
     ) -> None:
-        """启动会话级资源；交互会话/WebSocket 连接期间只调用一次。"""
+        """启动会话级资源；交互会话/WebSocket 连接期间只调用一次，并没有调用大模型接口，而且没有真正启动 Agent，
+        只是准备好了环境，真正的 Agent 启动是在 ask() 里调用的，并不要求强制调用 start()，如果直接调用 ask()，它会在内部调用 start() 来确保环境准备就绪。"""
         if self._closed:
             raise RuntimeError("AgentRunService 已关闭，不能再次启动")
         if self._started:
@@ -247,9 +254,9 @@ class AgentRunService:
         """构造统一事件对象。"""
         return AgentEvent(
             type=event_type,
-            run_id=self.run_id,
             session_name=session_name,
             message=message,
             agent_label=agent_label,
             payload=payload or {},
         )
+

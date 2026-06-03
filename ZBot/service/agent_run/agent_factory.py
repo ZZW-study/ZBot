@@ -16,6 +16,7 @@ from ZBot.cron.service import CronService
 from ZBot.providers.litellm_provider import LiteLLMProvider
 
 
+# 可以自己配置错误，可以自己决定如何展示,raise之后，里面的属性，你可以外部捕获
 class AgentSetupError(RuntimeError):
     """Agent 运行环境初始化失败。"""
 
@@ -83,6 +84,7 @@ def resolve_provider_config(config: Config) -> tuple[ProviderConfig, str, bool, 
 
     provider_config, provider_name, is_gateway = config.get_provider(model)
     if not provider_name or provider_config is None:
+        # 对外抛出异常，可有外部捕获处理
         raise AgentSetupError(f"无法为模型 {model} 自动匹配提供商，请检查 provider 配置和模型名称前缀。")
     if not provider_config.api_key:
         raise AgentSetupError(f"尚未配置 {provider_name} 的 API 密钥，请检查 {config_path}。")

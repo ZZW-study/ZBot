@@ -78,7 +78,7 @@ class CoreAgent(BaseAgent):
         self._is_consolidating: bool = False
         self._consolidation_task: asyncio.Task[None] | None = None
         self.subagent_pool: SubAgentPool | None = None
-        self.skill_review_complexity_threshold = runtime_config.skill_review_complexity_threshold
+        self.skill_review_complexity_threshold = runtime_config.skill_review_complexity_threshold  # 写skills的，写的阈值
         self.usage_tracker = SkillUsageTracker(self.workspace)
         self.curator = SkillCurator(
             skills_dir=self.workspace / "skills",
@@ -313,11 +313,14 @@ class CoreAgent(BaseAgent):
             f"{cross_session_section}"
         )
 
+
+
     def ensure_subagent_pool(self) -> SubAgentPool:
         """确保子 Agent 池已创建，并返回池实例。"""
         if self.subagent_pool is None:
             self.subagent_pool = SubAgentPool(self)
         return self.subagent_pool
+
 
     async def _save_task_progress_artifact(self, content: str) -> str | None:
         """上下文压缩前保存任务进度文件，避免长期状态只塞进 system 摘要。"""
@@ -331,6 +334,7 @@ class CoreAgent(BaseAgent):
             logger.exception("写入任务进度 artifact 失败")
             return None
         return str(artifact_path)
+
 
     def _register_core_tools(self) -> None:
         """注册只有主 Agent 才能使用的工具。"""
@@ -361,7 +365,7 @@ class CoreAgent(BaseAgent):
         on_progress: Callable[..., Awaitable[None]],
     ) -> str:
         """执行一轮对话：构造上下文、运行 Agent loop、写回会话。"""
-        history: list[dict[str, Any]] = session.get_history_by_token_budget(self._recent_history_token_budget())
+        history: list[dict[str, Any]] = await session.get_history_by_token_budget(self._recent_history_token_budget(), self.provider, self.model)
 
         initial_messages: list[dict[str, Any]] = await self.context.build_messages(
             history=history,
@@ -437,10 +441,12 @@ class CoreAgent(BaseAgent):
                 self._consolidation_task = None
             self._is_consolidating = False
 
+
     def _recent_history_token_budget(self) -> int:
         """按模型上下文窗口计算短期历史预算，并设置 64K 默认硬上限。"""
         ratio_budget = int(self.context_window * self.recent_history_token_budget_ratio)
         return max(1, min(ratio_budget, self.recent_history_max_tokens))
+
 
     def _save_turn(
         self,
@@ -477,6 +483,8 @@ class CoreAgent(BaseAgent):
 
         session.updated_at = datetime.now()
 
+
+
     @staticmethod
     def _latest_user_message_index(messages: list[dict[str, Any]], *, fallback: int) -> int:
         """定位本轮用户消息，避免把内部 system 摘要或验收反馈写入会话历史。"""
@@ -484,6 +492,8 @@ class CoreAgent(BaseAgent):
             if messages[index].get("role") == "user":
                 return index
         return max(0, min(fallback, len(messages)))
+
+
 
     @staticmethod
     def _strip_runtime_context(content: str | list[dict[str, Any]] | None) -> str | None | list[dict[str, Any]]:
@@ -502,6 +512,8 @@ class CoreAgent(BaseAgent):
             return ""
 
         return content
+
+
 
     @staticmethod
     def _sanitize_content_blocks(blocks: list[dict[str, Any]]) -> str:
@@ -523,6 +535,8 @@ class CoreAgent(BaseAgent):
             else:
                 texts.append(f"[已上传内容块，type={block_copy.get('type', 'unknown')}，原始内容未写入会话历史]")
         return "\n\n".join(texts)
+
+
 
     @staticmethod
     def _data_url_mime(url: str | None) -> str | None:
