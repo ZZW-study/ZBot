@@ -11,7 +11,13 @@ from loguru import logger
 from sqlite_vec import serialize_float32
 
 from ZBot.config.schema import Config
-from ZBot.service.utils.helpers import ensure_dir, format_messages, normalize_tool_args
+from ZBot.prompts.memory_prompts import (
+    DAILY_MEMORY_SYSTEM_PROMPT,
+    SAVE_DAILY_MEMORY_TOOL,
+    build_daily_memory_prompt,
+)
+from ZBot.services.formatting.paths import ensure_dir
+from ZBot.services.formatting.tools import normalize_tool_args
 
 if TYPE_CHECKING:
     from ZBot.providers.base import LLMProvider
@@ -69,30 +75,6 @@ async def init_db(db: aiosqlite.Connection):
     """)
 
     await db.commit()
-
-
-# 日常记忆工具定义
-_SAVE_DAILY_MEMORY_TOOL = [
-    {
-        "type": "function",
-        "function": {
-            "name": "save_daily_memory",
-            "description": "保存一条跨会话可复用的日常记忆记录",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "content": {
-                        "type": "string",
-                        "description": (
-                            "跨会话通用信息的结构化内容。\n必须包含【事实】【偏好】【任务】三个部分，用方括号标题分隔。"
-                        ),
-                    },
-                },
-                "required": ["content"],
-            },
-        },
-    },
-]
 
 
 class DailyMemoryStore:
@@ -248,15 +230,11 @@ class DailyMemoryStore:
                 [
                     {
                         "role": "system",
-                        "content": (
-                            "你是日常记忆提取助手，负责从对话中提取跨会话可复用的通用信息。\n"
-                            "⚠️ 必须调用 save_daily_memory 工具返回结果。\n"
-                            "只提取跨会话可复用信息，不提取当前会话专属状态。"
-                        ),
+                        "content": DAILY_MEMORY_SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": prompt},
                 ],
-                tools=_SAVE_DAILY_MEMORY_TOOL,
+                tools=SAVE_DAILY_MEMORY_TOOL,
                 model=model,
             )
         except Exception:
@@ -278,33 +256,7 @@ class DailyMemoryStore:
 
     def _build_daily_memory_prompt(self, messages: list[dict[str, Any]], memory_snapshot: str) -> str:
         """构建每日记忆的提示词"""
-        formatted_messages = "\n".join(format_messages(messages)) if messages else ""
-
-        return (
-            "请从以下对话中提取跨会话可复用的通用信息。\n\n"
-            "【提取范围】\n"
-            "- 用户偏好：编码风格、语言习惯、工作习惯、输出格式要求\n"
-            "- 用户背景：用户稳定的人设、职业背景、技术栈偏好、值得长期参考的个人细节\n"
-            "- 协作方式：用户对助手行为的稳定期待、工作风格偏好、希望的协作模式\n"
-            "- 通用知识：未来会复用的工具用法、最佳实践、踩坑经验、技术结论\n"
-            "- 长期任务线索：跨会话仍需继续关注的任务及其当前状态\n\n"
-            "【不提取】\n"
-            "- 当前会话专属信息：项目临时配置、本次临时约定、当前上下文压缩进度\n"
-            "- 可从仓库重新推导的普通代码细节\n"
-            "- 一次性工具输出、失败流水、未经确认的猜测\n"
-            "- 已经出现在已有记忆快照里的重复内容\n\n"
-            "【输出格式】直接使用此结构，不要加 Markdown 标记：\n"
-            "【事实】\n"
-            "- [提取的事实条目]\n\n"
-            "【偏好】\n"
-            "- [提取的偏好条目]\n\n"
-            "【任务】\n"
-            "- [提取的任务及状态条目]\n\n"
-            "已有记忆快照（不要重复提取）：\n"
-            f"{memory_snapshot}\n\n"
-            "对话内容：\n"
-            f"{formatted_messages}"
-        )
+        return build_daily_memory_prompt(messages, memory_snapshot)
 
     async def _generate_daily_memory_vec(self, content: str) -> list[float]:
         """生成每日记忆的向量表示。"""

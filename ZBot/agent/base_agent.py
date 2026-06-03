@@ -25,6 +25,7 @@ from ZBot.agent.tools.shell import ExecTool
 from ZBot.agent.tools.web import WebFetchTool, WebSearchTool
 from ZBot.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
+from ZBot.prompts.agent import build_task_progress_artifact, mixed_subagent_tool_call_message
 from ZBot.providers.base import LLMProvider, ToolCallRequest
 
 # ==================== 模块级常量 ====================
@@ -409,18 +410,7 @@ class BaseAgent(ABC):
     @staticmethod
     def _mixed_subagent_tool_call_message(retry_count: int = 1) -> str:
         """生成 create_sub_agent 并列调用时的停止提示。"""
-        if retry_count <= 1:
-            return (
-                "本轮模型同时请求了 create_sub_agent 和其他工具。"
-                "为避免子 Agent 拿到未配对完成的工具调用链，create_sub_agent 必须单独一轮调用。"
-                "请先完成必要的普通工具调用，再单独创建子 Agent。"
-            )
-        return (
-            "本轮模型同时请求了 create_sub_agent 和其他工具。"
-            f"这是连续第 {retry_count} 次混合调用，当前路径必须停止。"
-            "下一轮只能二选一：要么只调用普通工具补充信息；要么只调用 create_sub_agent。"
-            "不要再把 create_sub_agent 和任何普通工具放在同一轮。"
-        )
+        return mixed_subagent_tool_call_message(retry_count)
 
     @staticmethod
     def _strip_think(text: str | None) -> str | None:
@@ -687,23 +677,14 @@ class BaseAgent(ABC):
         assistant_notes = self._collect_role_snippets(messages, "assistant", limit=12)
         tool_successes, tool_failures = self._collect_tool_snippets(messages)
         anchor_facts = self._collect_anchor_facts(messages)
-        return (
-            "# ZBot Task Progress\n\n"
-            "## 当前任务目标\n"
-            f"{task_goal}\n\n"
-            "## 全历史锚点事实\n"
-            f"{self._format_anchor_facts(anchor_facts) or '- 暂无'}\n\n"
-            "## 已完成/最近结论\n"
-            f"{self._format_snippets(assistant_notes) or '- 暂无'}\n\n"
-            "## 工具成功观察\n"
-            f"{self._format_snippets(tool_successes) or '- 暂无'}\n\n"
-            "## 工具失败和不要重复\n"
-            f"{self._format_snippets(tool_failures) or '- 暂无'}\n"
-            f"{self._collect_do_not_repeat(messages) or ''}\n\n"
-            "## 重要文件/路径\n"
-            f"{self._extract_paths(messages) or '- 暂无'}\n\n"
-            "## 剩余待办\n"
-            "- 根据当前任务目标继续推进；如信息不足，获取新的有效观察。\n"
+        return build_task_progress_artifact(
+            task_goal=task_goal,
+            anchor_facts=self._format_anchor_facts(anchor_facts) or "- 暂无",
+            assistant_notes=self._format_snippets(assistant_notes) or "- 暂无",
+            tool_successes=self._format_snippets(tool_successes) or "- 暂无",
+            tool_failures=self._format_snippets(tool_failures) or "- 暂无",
+            do_not_repeat=self._collect_do_not_repeat(messages) or "",
+            paths=self._extract_paths(messages) or "- 暂无",
         )
 
 

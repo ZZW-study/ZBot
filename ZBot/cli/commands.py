@@ -18,7 +18,7 @@ from ZBot import __logo__, __version__
 from ZBot.config.loader import load_config
 from ZBot.config.paths import get_cli_history_path
 from ZBot.config.schema import Config
-from ZBot.service.utils.helpers import ensure_dir, ensure_workspace_dirs
+from ZBot.services.formatting import ensure_dir, ensure_workspace_dirs
 
 app = typer.Typer(name="ZBot", help="ZBot -- 你的个人 AI 助手", no_args_is_help=True)
 console = Console()
@@ -163,8 +163,8 @@ async def _run_interactive(config: Config, session_name: str) -> None:
 
 def _create_cli_service(config: Config):
     """创建 CLI 使用的 AgentRunService；初始化失败在这里统一展示。"""
-    from ZBot.service.agent_run.agent_factory import AgentSetupError, create_agent_bundle
-    from ZBot.service.agent_run.agent_run_service import AgentRunService
+    from ZBot.services.agent_run.agent_factory import AgentSetupError, create_agent_bundle
+    from ZBot.services.agent_run.agent_run_service import AgentRunService
 
     try:
         return AgentRunService(create_agent_bundle(config))

@@ -27,7 +27,8 @@ from typing import Any
 
 from loguru import logger
 
-from ZBot.service.utils.helpers import ensure_dir, safe_filename
+from ZBot.prompts.agent import SESSION_COMPRESSION_SYSTEM_PROMPT, build_session_compression_user_prompt
+from ZBot.services.formatting import ensure_dir, safe_filename
 from ZBot.providers.base import LLMProvider
 
 @dataclass
@@ -132,26 +133,11 @@ class Session:
         return [
             {
                 "role": "system",
-                "content": (
-                    "你是一个对话上下文压缩器。"
-                    "你的任务是将较早的历史对话压缩成一段简洁但信息完整的摘要，"
-                    "供后续对话继续使用。\n\n"
-                    "要求：\n"
-                    "1. 保留用户的核心问题、明确要求、限制条件和目标；\n"
-                    "2. 保留已经确定的重要结论、关键参数、代码设计和修改决定；\n"
-                    "3. 保留尚未完成、后续仍需继续处理的事项；\n"
-                    "4. 删除重复内容、寒暄和无关细节；\n"
-                    "5. 不要回答问题，不要扩展新内容，不要编造信息；\n"
-                    "6. 直接输出摘要内容，不要添加“摘要如下”等开场语。"
-                )
+                "content": SESSION_COMPRESSION_SYSTEM_PROMPT
             },
             {
                 "role": "user",
-                "content": (
-                    "请压缩下面这些较早的历史对话，使后续模型在看不到原始内容时，"
-                    "仍能继续准确完成当前任务：\n\n"
-                    f"{history_text}"
-                )
+                "content": build_session_compression_user_prompt(history_text)
             }
         ]
 

@@ -9,35 +9,15 @@ from typing import TYPE_CHECKING, Optional
 from loguru import logger
 
 from ZBot.config.schema import Config
-from ZBot.service.utils.helpers import normalize_tool_args
+from ZBot.prompts.memory_prompts import (
+    LONG_TERM_MEMORY_SYSTEM_PROMPT,
+    SAVE_LONG_TERM_MEMORY_TOOL,
+    build_long_term_memory_prompt,
+)
+from ZBot.services.formatting.tools import normalize_tool_args
 
 if TYPE_CHECKING:
     from ZBot.providers.base import LLMProvider
-
-
-_SAVE_LONG_TERM_MEMORY_TOOL = [
-    {
-        "type": "function",
-        "function": {
-            "name": "save_long_term_memory",
-            "description": "保存从高频召回的日常记忆中提炼的长期记忆精华",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "long_term_memory": {
-                        "type": "string",
-                        "description": (
-                            "长期记忆精华内容。\n"
-                            "每条以 [YYYY-MM-DD HH:MM] 时间戳开头。\n"
-                            "只包含经过多次验证的【事实】和【偏好】两部分，不包含任务状态。"
-                        ),
-                    },
-                },
-            },
-            "required": ["long_term_memory"],
-        },
-    },
-]
 
 
 class LongTermMemoryStore:
@@ -88,13 +68,11 @@ class LongTermMemoryStore:
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是长期记忆提炼助手，负责从高频召回的日常记忆中提炼长期有价值的精华信息。\n"
-                        "⚠️ 必须调用 save_long_term_memory 工具返回结果。\n"
-                        "只保留经过多次验证、长期有效的信息，不保留临时性、项目特定或任务状态信息。",
+                        "content": LONG_TERM_MEMORY_SYSTEM_PROMPT,
                     },
                     {"role": "user", "content": prompt},
                 ],
-                tools=_SAVE_LONG_TERM_MEMORY_TOOL,
+                tools=SAVE_LONG_TERM_MEMORY_TOOL,
                 model=model,
             )
         except Exception as e:
@@ -114,28 +92,7 @@ class LongTermMemoryStore:
 
     def _build_long_term_memory_prompt(self, old_memory: str, new_memory: str) -> str:
         """构建提示词，指导模型如何更新长期记忆。"""
-
-        return (
-            "请从以下高频召回的日常记忆中提炼长期记忆精华。\n\n"
-            "【提炼原则】\n"
-            "- 信息已被多次召回（验证了其价值）\n"
-            "- 经过时间验证仍然有效、稳定\n"
-            "- 合并相似内容，去除冗余\n"
-            "- 保留原有仍然有效的长期记忆，并把新信息合并进去\n"
-            "- 不复制日常记忆流水，只沉淀短、具体、可验证的长期事实\n\n"
-            "【提取范围】\n"
-            "- 事实：通用知识、工具用法、最佳实践、踩坑经验\n"
-            "- 偏好：用户编码风格、语言习惯、工作习惯\n\n"
-            "【不提取】\n"
-            "- 任务状态：任务有时效性，完成后无意义\n"
-            "- 临时性、项目特定、时效性强的信息\n\n"
-            "【冲突处理】新信息与原有记忆冲突时，以新信息为准\n\n"
-            "【现有的长期记忆】\n"
-            f"{old_memory or '(长期记忆为空，首次生成)'}\n\n"
-            "【待提炼的日常记忆】（已多次召回）\n"
-            f"{new_memory}\n\n"
-            "请返回更新后的完整长期记忆内容，每条以 [YYYY-MM-DD HH:MM] 时间戳开头，只包含【事实】和【偏好】两部分。"
-        )
+        return build_long_term_memory_prompt(old_memory, new_memory)
 
     async def _read_long_term(self) -> str:
         """读取 `LONG_TERM_MEMORY.md` 的内容，如果文件不存在或为空，则返回空字符串。"""
