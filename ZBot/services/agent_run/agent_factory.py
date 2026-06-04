@@ -67,6 +67,13 @@ def create_provider(config: Config) -> LiteLLMProvider:
     """根据配置创建 LLM Provider。"""
     provider_config, provider_name, is_gateway, model = resolve_provider_config(config)
     provider_model = model.split("/", 1)[1] if is_gateway and model.startswith(f"{provider_name}/") else model
+    sock_opts = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
+    if hasattr(socket, "TCP_KEEPIDLE"):
+        sock_opts += [
+            (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30),
+            (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10),
+            (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3),
+        ]
     return LiteLLMProvider(
         api_key=provider_config.api_key,
         api_base=provider_config.api_base,
