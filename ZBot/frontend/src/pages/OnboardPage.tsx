@@ -1,6 +1,6 @@
 /**
- * OnboardPage.jsx — Configuration page
- * Used for both initial setup and settings modification.
+ * OnboardPage.jsx — 配置页面
+ * 同时用于初始配置和修改设置。
  */
 
 import { useEffect, useState, type KeyboardEvent } from 'react';
@@ -46,7 +46,7 @@ export default function OnboardPage({ apiBase, isSettings = false, onConfigured 
         try {
           current = await api.config.get();
         } catch {
-          // Config may not exist yet
+          // 配置可能尚未存在
         }
         if (ignore) return;
 

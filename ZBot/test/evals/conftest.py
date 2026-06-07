@@ -1,0 +1,1 @@
+"""evals/ 子目录的 conftest：留空，避免引入父 conftest 中未完成的 Session 重构。"""

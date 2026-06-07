@@ -1,0 +1,10 @@
+﻿app:
+  name: zb-eval-app
+  version: 1.2.3
+  host: app.zb-eval.local
+  port: 8080
+  debug: false
+features:
+  cache_enabled: true
+  log_level: info
+  max_connections: 100

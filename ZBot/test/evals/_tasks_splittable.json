@@ -1,0 +1,220 @@
+[
+  {
+    "id": "S1",
+    "task": "logs/ 下 5 个 .log 各有多少 [ERROR] 行？请分别告诉我每个文件的 [ERROR] 计数。",
+    "subtasks": [
+      {
+        "id": "s1_app",
+        "description": "数 logs/app.log 里有多少 [ERROR] 行",
+        "expected": "1"
+      },
+      {
+        "id": "s1_access",
+        "description": "数 logs/access.log 里有多少 [ERROR] 行",
+        "expected": "0"
+      },
+      {
+        "id": "s1_error",
+        "description": "数 logs/error.log 里有多少 [ERROR] 行",
+        "expected": "6"
+      },
+      {
+        "id": "s1_debug",
+        "description": "数 logs/debug.log 里有多少 [ERROR] 行",
+        "expected": "0"
+      },
+      {
+        "id": "s1_audit",
+        "description": "数 logs/audit.log 里有多少 [ERROR] 行",
+        "expected": "0"
+      }
+    ]
+  },
+  {
+    "id": "S2",
+    "task": "src/ 下每个 .py 文件各有多少个 def 定义的函数？请分别列出。",
+    "subtasks": [
+      {
+        "id": "s2_init",
+        "description": "数 src/__init__.py 里 def 函数数量",
+        "expected": "0"
+      },
+      {
+        "id": "s2_cache",
+        "description": "数 src/cache.py 里 def 函数数量",
+        "expected": "5"
+      },
+      {
+        "id": "s2_parser",
+        "description": "数 src/parser.py 里 def 函数数量",
+        "expected": "3"
+      },
+      {
+        "id": "s2_config",
+        "description": "数 src/config.py 里 def 函数数量",
+        "expected": "2"
+      },
+      {
+        "id": "s2_utils",
+        "description": "数 src/utils.py 里 def 函数数量",
+        "expected": "3"
+      }
+    ]
+  },
+  {
+    "id": "S3",
+    "task": "configs/ 下 4 个 yaml 文件的 host 字段值分别是什么？",
+    "subtasks": [
+      {
+        "id": "s3_app",
+        "description": "读 configs/app.yaml 的 host 字段",
+        "expected": "app.zb-eval.local"
+      },
+      {
+        "id": "s3_db",
+        "description": "读 configs/db.yaml 的 host 字段",
+        "expected": "db.zb-eval.local"
+      },
+      {
+        "id": "s3_cache",
+        "description": "读 configs/cache.yaml 的 host 字段",
+        "expected": "cache.zb-eval.local"
+      },
+      {
+        "id": "s3_logging",
+        "description": "读 configs/logging.yaml 的 host 字段",
+        "expected": "logging.yaml"
+      }
+    ]
+  },
+  {
+    "id": "S4",
+    "task": "docs/ 下 5 个 .md 文件各有多少行？",
+    "subtasks": [
+      {
+        "id": "s4_readme",
+        "description": "数 docs/README.md 行数",
+        "expected": "20"
+      },
+      {
+        "id": "s4_changelog",
+        "description": "数 docs/CHANGELOG.md 行数",
+        "expected": "11"
+      },
+      {
+        "id": "s4_api",
+        "description": "数 docs/API.md 行数",
+        "expected": "18"
+      },
+      {
+        "id": "s4_deploy",
+        "description": "数 docs/DEPLOY.md 行数",
+        "expected": "9"
+      },
+      {
+        "id": "s4_contrib",
+        "description": "数 docs/CONTRIBUTING.md 行数",
+        "expected": "11"
+      }
+    ]
+  },
+  {
+    "id": "S5",
+    "task": "src/ 下每个 .py 文件各有多少个 class 定义？",
+    "subtasks": [
+      {
+        "id": "s5_cache",
+        "description": "数 src/cache.py 里 class 数量",
+        "expected": "1"
+      },
+      {
+        "id": "s5_router",
+        "description": "数 src/router.py 里 class 数量",
+        "expected": "2"
+      },
+      {
+        "id": "s5_parser",
+        "description": "数 src/parser.py 里 class 数量",
+        "expected": "0"
+      },
+      {
+        "id": "s5_logger",
+        "description": "数 src/logger.py 里 class 数量",
+        "expected": "1"
+      },
+      {
+        "id": "s5_validator",
+        "description": "数 src/validator.py 里 class 数量",
+        "expected": "0"
+      }
+    ]
+  },
+  {
+    "id": "S6",
+    "task": "tests/ 下 3 个 test_*.py 各有多少个 assert 断言？",
+    "subtasks": [
+      {
+        "id": "s6_cache",
+        "description": "数 tests/test_cache.py 里 assert 数量",
+        "expected": "7"
+      },
+      {
+        "id": "s6_parser",
+        "description": "数 tests/test_parser.py 里 assert 数量",
+        "expected": "5"
+      },
+      {
+        "id": "s6_math",
+        "description": "数 tests/test_math.py 里 assert 数量",
+        "expected": "3"
+      }
+    ]
+  },
+  {
+    "id": "S7",
+    "task": "data/ 下 2 个文件各有多少条记录？",
+    "subtasks": [
+      {
+        "id": "s7_users",
+        "description": "数 data/users.json 的记录数",
+        "expected": "5"
+      },
+      {
+        "id": "s7_metrics",
+        "description": "数 data/metrics.csv 的记录数（不含表头）",
+        "expected": "7"
+      }
+    ]
+  },
+  {
+    "id": "S8",
+    "task": "logs/ 下 5 个 .log 各有多少行？",
+    "subtasks": [
+      {
+        "id": "s8_app",
+        "description": "数 logs/app.log 行数",
+        "expected": "11"
+      },
+      {
+        "id": "s8_access",
+        "description": "数 logs/access.log 行数",
+        "expected": "8"
+      },
+      {
+        "id": "s8_error",
+        "description": "数 logs/error.log 行数",
+        "expected": "6"
+      },
+      {
+        "id": "s8_debug",
+        "description": "数 logs/debug.log 行数",
+        "expected": "7"
+      },
+      {
+        "id": "s8_audit",
+        "description": "数 logs/audit.log 行数",
+        "expected": "4"
+      }
+    ]
+  }
+]

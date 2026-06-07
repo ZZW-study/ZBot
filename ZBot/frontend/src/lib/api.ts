@@ -1,10 +1,10 @@
 /**
- * api.js — Unified REST API client
- * Centralizes fetch calls, base URL, error handling, and JSON parsing.
+ * api.js — 统一的 REST API 客户端
+ * 集中处理 fetch 请求、基础 URL、错误处理和 JSON 解析。
  */
 
 /**
- * Custom API error with HTTP status and backend error code.
+ * 自定义 API 错误,包含 HTTP 状态码和后端错误码。
  */
 import type { ConfigDefaults, ConfigPatch, ConfigResponse, SessionDetailResponse, SessionSummary } from '../types';
 
@@ -45,9 +45,9 @@ export class ApiError extends Error {
 }
 
 /**
- * Create an API client bound to a specific base URL.
+ * 创建一个绑定到指定基础 URL 的 API 客户端。
  *
- * @param {string} apiBase — e.g. "http://localhost:8000"
+ * @param {string} apiBase — 例如 "http://localhost:8000"
  * @returns {object} — { sessions, config, multimodal }
  */
 export function createApiClient(apiBase: string) {

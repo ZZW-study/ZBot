@@ -1,0 +1,7 @@
+﻿cache:
+  backend: redis
+  host: cache.zb-eval.local
+  port: 6379
+  ttl_seconds: 300
+  max_size: 10000
+  fallback_ttl_seconds: 30

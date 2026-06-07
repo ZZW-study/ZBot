@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Skill Initializer - Creates a new skill from template
+技能初始化器 - 从模板创建一个新技能
 
-Usage:
+用法:
     init_skill.py <skill-name> --path <path> [--resources scripts,references,assets] [--examples]
 
-Examples:
+示例:
     init_skill.py my-new-skill --path skills/public
     init_skill.py my-new-skill --path skills/public --resources scripts,references
     init_skill.py my-api-helper --path skills/private --resources scripts --examples
@@ -198,7 +198,7 @@ Note: This is a text placeholder. Actual assets can be any file type.
 
 
 def normalize_skill_name(skill_name):
-    """Normalize a skill name to lowercase hyphen-case."""
+    """将技能名称规范化为小写连字符格式。"""
     normalized = skill_name.strip().lower()
     normalized = re.sub(r"[^a-z0-9]+", "-", normalized)
     normalized = normalized.strip("-")
@@ -207,7 +207,7 @@ def normalize_skill_name(skill_name):
 
 
 def title_case_skill_name(skill_name):
-    """Convert hyphenated skill name to Title Case for display."""
+    """将连字符分隔的技能名称转换为 Title Case 以供显示。"""
     return " ".join(word.capitalize() for word in skill_name.split("-"))
 
 
@@ -260,26 +260,26 @@ def create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_
 
 def init_skill(skill_name, path, resources, include_examples):
     """
-    Initialize a new skill directory with template SKILL.md.
+    使用模板 SKILL.md 初始化一个新的技能目录。
 
     Args:
-        skill_name: Name of the skill
-        path: Path where the skill directory should be created
-        resources: Resource directories to create
-        include_examples: Whether to create example files in resource directories
+        skill_name: 技能名称
+        path: 技能目录的创建路径
+        resources: 要创建的资源目录
+        include_examples: 是否在资源目录中创建示例文件
 
     Returns:
-        Path to created skill directory, or None if error
+        已创建技能目录的路径,出错时返回 None
     """
-    # Determine skill directory path
+    # 确定技能目录路径
     skill_dir = Path(path).resolve() / skill_name
 
-    # Check if directory already exists
+    # 检查目录是否已存在
     if skill_dir.exists():
         print(f"[ERROR] Skill directory already exists: {skill_dir}")
         return None
 
-    # Create skill directory
+    # 创建技能目录
     try:
         skill_dir.mkdir(parents=True, exist_ok=False)
         print(f"[OK] Created skill directory: {skill_dir}")
@@ -287,7 +287,7 @@ def init_skill(skill_name, path, resources, include_examples):
         print(f"[ERROR] Error creating directory: {e}")
         return None
 
-    # Create SKILL.md from template
+    # 从模板创建 SKILL.md
     skill_title = title_case_skill_name(skill_name)
     skill_content = SKILL_TEMPLATE.format(skill_name=skill_name, skill_title=skill_title)
 
@@ -299,7 +299,7 @@ def init_skill(skill_name, path, resources, include_examples):
         print(f"[ERROR] Error creating SKILL.md: {e}")
         return None
 
-    # Create resource directories if requested
+    # 如果请求,则创建资源目录
     if resources:
         try:
             create_resource_dirs(skill_dir, skill_name, skill_title, resources, include_examples)
@@ -307,7 +307,7 @@ def init_skill(skill_name, path, resources, include_examples):
             print(f"[ERROR] Error creating resource directories: {e}")
             return None
 
-    # Print next steps
+    # 打印后续步骤
     print(f"\n[OK] Skill '{skill_name}' initialized successfully at {skill_dir}")
     print("\nNext steps:")
     print("1. Edit SKILL.md to complete the TODO items and update the description")

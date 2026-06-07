@@ -1,15 +1,15 @@
 /**
- * index.css — Global reset + base styles
+ * index.css — 全局重置 + 基础样式
  */
 
 @import './styles/tokens.css';
 
-/* Box-sizing: border-box — include padding/border in width/height */
+/* Box-sizing: border-box — 在宽度/高度计算中包含 padding 和 border */
 * {
   box-sizing: border-box;
 }
 
-/* Ensure full-height layout */
+/* 确保布局占满整个高度 */
 html,
 body,
 #root {

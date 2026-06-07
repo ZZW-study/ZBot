@@ -1,6 +1,6 @@
 /**
- * ws-client.ts — WebSocket connection management
- * Extracted from useWebSocket.js. Handles connect/disconnect/send/event routing.
+ * ws-client.ts — WebSocket 连接管理
+ * 从 useWebSocket.js 中抽取而来。处理连接/断开/发送/事件路由。
  */
 
 import type { AgentEvent, SocketState } from '../types';
@@ -20,9 +20,9 @@ export type AgentEventHandler = (_event: AgentEvent) => void;
 export type SocketStateHandler = (_state: SocketState) => void;
 
 /**
- * ZBot WebSocket client.
+ * ZBot WebSocket 客户端。
  *
- * Usage:
+ * 用法:
  *   const ws = new ZBotWebSocket(url);
  *   ws.connect();
  *   ws.on('run.started', (event) => { ... });
@@ -43,7 +43,7 @@ export class ZBotWebSocket {
   }
 
   /**
-   * Connect to the WebSocket server.
+   * 连接到 WebSocket 服务器。
    */
   connect(): void {
     this.socket = new WebSocket(this.url);
@@ -75,7 +75,7 @@ export class ZBotWebSocket {
   }
 
   /**
-   * Disconnect from the WebSocket server.
+   * 断开与 WebSocket 服务器的连接。
    */
   disconnect(): void {
     if (this.socket) {
@@ -85,8 +85,8 @@ export class ZBotWebSocket {
   }
 
   /**
-   * Send a command to the WebSocket server.
-   * @param {object} command — JSON-serializable command object
+   * 向 WebSocket 服务器发送命令。
+   * @param {object} command — 可序列化为 JSON 的命令对象
    */
   send(command: WebSocketCommand): void {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
@@ -95,8 +95,8 @@ export class ZBotWebSocket {
   }
 
   /**
-   * Register an event listener.
-   * @param {string} eventType — e.g. "run.started"
+   * 注册一个事件监听器。
+   * @param {string} eventType — 例如 "run.started"
    * @param {Function} handler — (event) => void
    */
   on(eventType: string, handler: AgentEventHandler): void {
@@ -107,7 +107,7 @@ export class ZBotWebSocket {
   }
 
   /**
-   * Remove an event listener.
+   * 移除一个事件监听器。
    * @param {string} eventType
    * @param {Function} handler
    */
@@ -116,7 +116,7 @@ export class ZBotWebSocket {
   }
 
   /**
-   * Internal: dispatch event to registered listeners.
+   * 内部方法:将事件分发给已注册的监听器。
    * @param {object} event
    */
   private _dispatch(event: AgentEvent): void {
@@ -125,7 +125,7 @@ export class ZBotWebSocket {
     if (handlers) {
       handlers.forEach((handler) => handler(event));
     }
-    // Also dispatch on '*' for wildcard listeners
+    // 同时分发给 '*' 通配符监听器
     const wildcardHandlers = this.listeners.get('*');
     if (wildcardHandlers) {
       wildcardHandlers.forEach((handler) => handler(event));

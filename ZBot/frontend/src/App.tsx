@@ -1,6 +1,6 @@
 /**
- * App.jsx — Root component with routing
- * Routes: / (ChatPage), /settings (OnboardPage)
+ * App.jsx — 带路由的根组件
+ * 路由：/ (ChatPage), /onboard (OnboardPage)
  */
 
 import './App.css';

@@ -1,5 +1,5 @@
 /**
- * sidebar.css — Left sidebar: brand, session list, status panel, buttons
+ * sidebar.css — 左侧边栏:品牌、会话列表、状态面板、按钮
  */
 
 .sidebar {
@@ -11,7 +11,7 @@
   gap: 22px;
 }
 
-/* Brand */
+/* 品牌 */
 .brand {
   display: flex;
   align-items: center;
@@ -54,7 +54,7 @@
   font-weight: 700;
 }
 
-/* Status panel */
+/* 状态面板 */
 .status-panel,
 .notes {
   border: 1px solid var(--color-border-light);
@@ -86,7 +86,7 @@
   text-align: right;
 }
 
-/* Status tones */
+/* 状态色调 */
 .tone.connected,
 .tone.running {
   color: var(--color-success);
@@ -106,7 +106,7 @@
   color: #334155;
 }
 
-/* Sidebar buttons */
+/* 侧边栏按钮 */
 .connect-button,
 .settings-button {
   border: 0;
@@ -132,7 +132,7 @@
   opacity: 0.45;
 }
 
-/* Responsive */
+/* 响应式 */
 @media (max-width: 760px) {
   .sidebar {
     border-right: 0;
