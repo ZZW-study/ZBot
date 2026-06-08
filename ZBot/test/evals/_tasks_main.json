@@ -1,1401 +1,963 @@
 [
   {
-    "id": "search_00",
-    "type": "search",
-    "task": "在 src/ 下找出所有 import json 的文件，列出文件路径。",
-    "verifiers": [
-      {
-        "kind": "grep",
-        "path": "src",
-        "contains": "import json"
-      }
-    ]
-  },
-  {
-    "id": "search_01",
-    "type": "search",
-    "task": "用 glob_search 找出 src/ 目录里所有 .py 文件。",
-    "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "glob_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": ".py"
-      }
+    "id": "l1_search_001",
+    "level": 1,
+    "category": "search",
+    "task": "在 src/ 目录下找出所有 import json 的 Python 文件,把它们的名字(不含扩展名)按字母顺序列出来,每行一个。",
+    "verifiers": [
+      {"kind": "answer_regex", "pattern": "(?i)\\bparser\\b.*\\bauth\\b.*\\butils\\b"}
+    ]
+  },
+  {
+    "id": "l1_search_002",
+    "level": 1,
+    "category": "search",
+    "task": "data/users.json 中共有多少个用户?直接告诉我数字。",
+    "verifiers": [
+      {"kind": "answer_regex", "pattern": "(?i)\\b5\\b"}
+    ]
+  },
+  {
+    "id": "l1_search_003",
+    "level": 1,
+    "category": "search",
+    "task": "列出 configs/ 目录下的所有 yaml 配置文件名。",
+    "verifiers": [
+      {"kind": "answer_contains", "value": "app.yaml"},
+      {"kind": "answer_contains", "value": "db.yaml"}
+    ]
+  },
+  {
+    "id": "l1_search_004",
+    "level": 1,
+    "category": "search",
+    "task": "在 src/parser.py 里查找函数 parse_kv_lines,它支持哪些分隔符?",
+    "verifiers": [
+      {"kind": "answer_contains", "value": ":"},
+      {"kind": "answer_contains", "value": "="}
+    ]
+  },
+  {
+    "id": "l1_search_005",
+    "level": 1,
+    "category": "search",
+    "task": "logs/error.log 里 ERROR 级别的日志有多少条?",
+    "verifiers": [
+      {"kind": "answer_regex", "pattern": "(?i)\\b([1-9])\\b"}
+    ]
+  },
+  {
+    "id": "l1_search_006",
+    "level": 1,
+    "category": "search",
+    "task": "data/users.json 中,role 是 editor 的用户有几个?",
+    "verifiers": [
+      {"kind": "answer_regex", "pattern": "(?i)\\b2\\b"}
+    ]
+  },
+  {
+    "id": "l1_search_007",
+    "level": 1,
+    "category": "search",
+    "task": "src/cache.py 里 TTLCache 的默认 max_size 是多少?",
+    "verifiers": [
+      {"kind": "answer_regex", "pattern": "(?i)\\b256\\b"}
+    ]
+  },
+  {
+    "id": "l1_search_008",
+    "level": 1,
+    "category": "search",
+    "task": "docs/API.md 描述了几个 endpoint?",
+    "verifiers": [
+      {"kind": "answer_regex", "pattern": "(?i)\\b5\\b"}
     ]
   },
   {
-    "id": "search_02",
-    "type": "search",
-    "task": "grep src/ 中包含 'def ' 的 .py 文件并返回总数。",
+    "id": "l1_search_009",
+    "level": 1,
+    "category": "search",
+    "task": "src/auth.py 里 hash_password 用的哈希算法是什么?",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "grep_search"
-        ]
-      },
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b\\d+\\b"
-      }
+      {"kind": "answer_contains", "value": "pbkdf2"},
+      {"kind": "answer_contains", "value": "hmac"}
     ]
   },
-  {
-    "id": "search_03",
-    "type": "search",
-    "task": "找出 configs/ 下所有 yaml 文件，列出文件名。",
-    "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "glob_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": ".yaml"
-      }
+  {
+    "id": "l1_search_010",
+    "level": 1,
+    "category": "search",
+    "task": "src/validator.py 里哪个函数有故意保留的除零 bug?",
+    "verifiers": [
+      {"kind": "answer_contains", "value": "safe_divide"}
     ]
-  },
-  {
-    "id": "search_04",
-    "type": "search",
-    "task": "grep 查找哪个 src/ 文件里包含 'class TTLCache'。",
-    "verifiers": [
-      {
-        "kind": "grep",
-        "path": "src",
-        "contains": "class TTLCache"
-      },
-      {
-        "kind": "answer_contains",
-        "value": "cache.py"
-      }
-    ]
-  },
-  {
-    "id": "search_05",
-    "type": "search",
-    "task": "用 glob_search 列出 tests/ 下所有 test_*.py 文件。",
-    "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "glob_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "test_"
-      }
-    ]
-  },
-  {
-    "id": "search_06",
-    "type": "search",
-    "task": "用 glob_search 找出 docs/ 下所有 .md 文件。",
-    "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "glob_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "README.md"
-      }
-    ]
-  },
-  {
-    "id": "search_07",
-    "type": "search",
-    "task": "grep 整个工作区中包含 'TODO' 关键字的所有行。",
-    "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "grep_search"
-        ]
-      }
-    ]
-  },
-  {
-    "id": "search_08",
-    "type": "search",
-    "task": "用 grep_search 找出 data/ 目录中所有非空行数。",
-    "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "grep_search"
-        ]
-      },
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b\\d+\\b"    
-      }
-    ]
-  },
-  {
-    "id": "search_09",
-    "type": "search",
-    "task": "列出 scripts/ 目录下的所有 .py 文件。",
-    "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "list_dir"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "gen_report.py"
-      }
-    ]
-  },
-  {
-    "id": "search_10",
-    "type": "search",
-    "task": "用 grep_search 找到 logs/error.log 中第一行 [ERROR] 出现的 host。",
-    "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "grep_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "db.zb-eval.local"
-      }
+  },
+  {
+    "id": "l1_search_011",
+    "level": 1,
+    "category": "search",
+    "task": "configs/app.yaml 中 port 的值是多少?",
+    "verifiers": [
+      {"kind": "answer_regex", "pattern": "(?i)\\b8080\\b"}
     ]
   },
   {
-    "id": "search_11",
-    "type": "search",
-    "task": "用 glob_search 找出包含 'log' 的所有 .log 文件。",
+    "id": "l1_search_012",
+    "level": 1,
+    "category": "search",
+    "task": "data/metrics.csv 中不同 host 的数量是多少?",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "glob_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "app.log"
-      }
+      {"kind": "answer_regex", "pattern": "(?i)\\b6\\b|\\b7\\b"}
     ]
   },
   {
-    "id": "search_12",
-    "type": "search",
-    "task": "用 grep_search 找出 configs/app.yaml 里的 'host' 值。",
+    "id": "l1_search_013",
+    "level": 1,
+    "category": "search",
+    "task": "src/router.py 里 Route 类的 fullmatch 用在哪个字段上?",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "grep_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "app.zb-eval.local"
-      }
+      {"kind": "answer_contains", "value": "pattern"}
     ]
   },
   {
-    "id": "search_13",
-    "type": "search",
-    "task": "用 glob_search 找出 logs/ 下所有 .log 文件并按名字排序。",
+    "id": "l1_search_014",
+    "level": 1,
+    "category": "search",
+    "task": "tests/ 目录下有几个 sample_test_*.py 文件?",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "glob_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "audit.log"
-      }
+      {"kind": "answer_regex", "pattern": "(?i)\\b3\\b"}
     ]
   },
   {
-    "id": "search_14",
-    "type": "search",
-    "task": "用 grep_search 找出 src/ 目录中所有包含 'password' 的行。",
+    "id": "l1_search_015",
+    "level": 1,
+    "category": "search",
+    "task": "docs/CHANGELOG.md 最新的版本号是?",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "grep_search"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "password"
-      }
+      {"kind": "answer_regex", "pattern": "(?i)\\b1\\.2\\.3\\b"}
     ]
   },
   {
-    "id": "agg_00",
-    "type": "aggregate",
-    "task": "logs/ 下 ERROR 出现次数最多的 host 是哪个？",
+    "id": "l1_search_016",
+    "level": 1,
+    "category": "search",
+    "task": "src/formatter.py 的 fmt_table 怎么决定列宽?",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "db.zb-eval.local"
-      }
+      {"kind": "answer_contains", "value": "列宽"}
     ]
   },
   {
-    "id": "agg_01",
-    "type": "aggregate",
-    "task": "logs/error.log 一共有多少行？",
+    "id": "l1_search_017",
+    "level": 1,
+    "category": "search",
+    "task": "src/utils.py 里 sha256_text 用了哪个标准库的 hash 函数?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b6\\b"
-      }
+      {"kind": "answer_contains", "value": "sha256"}
     ]
   },
   {
-    "id": "agg_02",
-    "type": "aggregate",
-    "task": "src/cache.py 中 `def ` 开头的函数有几个？",
+    "id": "l1_search_018",
+    "level": 1,
+    "category": "search",
+    "task": "src/logger.py 的 FileLogger 怎么格式化时间戳?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b5\\b"
-      }
+      {"kind": "answer_contains", "value": "iso"}
     ]
   },
   {
-    "id": "agg_03",
-    "type": "aggregate",
-    "task": "tests/ 下 test_*.py 文件有几个？",
+    "id": "l1_search_019",
+    "level": 1,
+    "category": "search",
+    "task": "data/metrics.csv 第一行第一列的日期是?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b3\\b"
-      }
+      {"kind": "answer_regex", "pattern": "(?i)2024-01-15"}
     ]
   },
   {
-    "id": "agg_04",
-    "type": "aggregate",
-    "task": "configs/ 下有多少个 yaml 文件？",
+    "id": "l1_search_020",
+    "level": 1,
+    "category": "search",
+    "task": "configs/logging.yaml 中 max_files 的值?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b4\\b"
-      }
+      {"kind": "answer_regex", "pattern": "(?i)\\b14\\b"}
     ]
   },
   {
-    "id": "agg_05",
-    "type": "aggregate",
-    "task": "docs/ 下有多少个 .md 文件？",
+    "id": "l1_search_021",
+    "level": 1,
+    "category": "search",
+    "task": "src/cache.py 的 set() 方法支持自定义 ttl 吗?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b5\\b"
-      }
+      {"kind": "answer_contains", "value": "ttl"}
     ]
   },
   {
-    "id": "agg_06",
-    "type": "aggregate",
-    "task": "logs/ 下 .log 文件有几个？",
+    "id": "l1_search_022",
+    "level": 1,
+    "category": "search",
+    "task": "src/parser.py 的 parse_json_safe 在输入不是 dict 时返回什么?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b5\\b"
-      }
+      {"kind": "answer_contains", "value": "dict"}
     ]
   },
   {
-    "id": "agg_07",
-    "type": "aggregate",
-    "task": "data/users.json 中 active=true 的用户有几个？",
+    "id": "l1_search_023",
+    "level": 1,
+    "category": "search",
+    "task": "docs/CONTRIBUTING.md 推荐用什么工具格式化代码?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b4\\b"
-      }
+      {"kind": "answer_contains", "value": "ruff"}
     ]
   },
   {
-    "id": "agg_08",
-    "type": "aggregate",
-    "task": "src/validator.py 中定义了多少个顶层函数（def 开头）？",
+    "id": "l1_search_024",
+    "level": 1,
+    "category": "search",
+    "task": "configs/cache.yaml 中 ttl 字段的单位是?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b4\\b"
-      }
+      {"kind": "answer_contains", "value": "秒"}
     ]
   },
   {
-    "id": "agg_09",
-    "type": "aggregate",
-    "task": "src/auth.py 中包含 'def ' 的行有多少？",
+    "id": "l1_search_025",
+    "level": 1,
+    "category": "search",
+    "task": "data/users.json 中 active 字段为 false 的用户有几个?",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b4\\b"
-      }
+      {"kind": "answer_regex", "pattern": "(?i)\\b1\\b"}
     ]
   },
   {
-    "id": "agg_10",
-    "type": "aggregate",
-    "task": "data/metrics.csv 一共有多少行数据（不含表头）？",
+    "id": "l2_aggregate_026",
+    "level": 2,
+    "category": "aggregate",
+    "task": "data/metrics.csv 里所有 host 出现过的唯一 host 名按字母排序后写到一个新文件 reports/hosts.txt 中,每行一个。",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b7\\b"
-      }
+      {"kind": "file_exists", "path": "reports/hosts.txt"},
+      {"kind": "file_contains", "path": "reports/hosts.txt", "contains": "api-gateway-01"},
+      {"kind": "file_contains", "path": "reports/hosts.txt", "contains": "db-01"}
     ]
   },
   {
-    "id": "agg_11",
-    "type": "aggregate",
-    "task": "所有 logs/*.log 中 [ERROR] 总共出现多少次？",
+    "id": "l2_aggregate_027",
+    "level": 2,
+    "category": "aggregate",
+    "task": "data/metrics.csv 中所有 host 的 cpu 总和是多少?把数字写入 reports/cpu_total.txt。",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b[6-9]\\b"
-      }
+      {"kind": "file_exists", "path": "reports/cpu_total.txt"},
+      {"kind": "file_size", "path": "reports/cpu_total.txt", "min_bytes": 1, "max_bytes": 10}
     ]
   },
   {
-    "id": "agg_12",
-    "type": "aggregate",
-    "task": "src/router.py 里的 Router 类有几个方法？",
+    "id": "l2_aggregate_028",
+    "level": 2,
+    "category": "aggregate",
+    "task": "data/users.json 中 admin 角色的用户名是?把答案写进 reports/admin.txt。",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b3\\b"
-      }
+      {"kind": "file_contains", "path": "reports/admin.txt", "contains": "alice"}
     ]
   },
   {
-    "id": "agg_13",
-    "type": "aggregate",
-    "task": "src/auth.py 中 role='admin' 能做哪些 action（逗号分隔）？",
+    "id": "l2_aggregate_029",
+    "level": 2,
+    "category": "aggregate",
+    "task": "src/ 目录下所有 .py 文件中,import 语句的总数量是多少?把数字写入 reports/import_count.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "manage"
-      }
+      {"kind": "file_exists", "path": "reports/import_count.txt"}
     ]
   },
   {
-    "id": "agg_14",
-    "type": "aggregate",
-    "task": "configs/app.yaml 顶级 key 是什么？",
+    "id": "l2_aggregate_030",
+    "level": 2,
+    "category": "aggregate",
+    "task": "configs/ 目录下所有 yaml 文件,记录 host 字段的总数和 host 名的列表(逗号分隔),写到 reports/yaml_hosts.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "app"
-      }
+      {"kind": "file_exists", "path": "reports/yaml_hosts.txt"},
+      {"kind": "file_contains", "path": "reports/yaml_hosts.txt", "contains": "app.zb-eval.local"}
     ]
   },
   {
-    "id": "agg_15",
-    "type": "aggregate",
-    "task": "docs/API.md 提到了哪些错误码？",
+    "id": "l2_aggregate_031",
+    "level": 2,
+    "category": "aggregate",
+    "task": "logs/app.log 里 INFO/WARN/ERROR 三种级别各出现了多少次?格式写到 reports/log_level_count.txt,例如 'INFO=3, WARN=2, ERROR=2'。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "500"
-      }
+      {"kind": "file_exists", "path": "reports/log_level_count.txt"},
+      {"kind": "file_contains", "path": "reports/log_level_count.txt", "contains": "INFO="},
+      {"kind": "file_contains", "path": "reports/log_level_count.txt", "contains": "ERROR="}
     ]
   },
   {
-    "id": "agg_16",
-    "type": "aggregate",
-    "task": "src/utils.py 提供了几个公开函数？",
+    "id": "l2_aggregate_032",
+    "level": 2,
+    "category": "aggregate",
+    "task": "data/metrics.csv 中每个 host 的 memory 平均值,格式 host=avg,每行一个,写入 reports/host_mem_avg.txt。",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b3\\b"
-      }
+      {"kind": "file_exists", "path": "reports/host_mem_avg.txt"},
+      {"kind": "file_contains", "path": "reports/host_mem_avg.txt", "contains": "="}
     ]
   },
   {
-    "id": "agg_17",
-    "type": "aggregate",
-    "task": "data/users.json 里有几个 role='viewer' 的用户？",
+    "id": "l2_aggregate_033",
+    "level": 2,
+    "category": "aggregate",
+    "task": "把所有 .py 文件里的 def 函数定义数量求和,写到 reports/def_count.txt。",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b2\\b"
-      }
+      {"kind": "file_exists", "path": "reports/def_count.txt"}
     ]
   },
   {
-    "id": "agg_18",
-    "type": "aggregate",
-    "task": "scripts/ 目录下有几个文件？",
+    "id": "l2_aggregate_034",
+    "level": 2,
+    "category": "aggregate",
+    "task": "src/auth.py 里有几个 public 函数(不以 _ 开头)?把数字写到 reports/auth_pub_count.txt。",
     "verifiers": [
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b2\\b"
-      }
+      {"kind": "file_exists", "path": "reports/auth_pub_count.txt"},
+      {"kind": "file_contains", "path": "reports/auth_pub_count.txt", "contains": "4"}
     ]
   },
   {
-    "id": "agg_19",
-    "type": "aggregate",
-    "task": "docs/CHANGELOG.md 中最近一个版本号是多少？",
+    "id": "l2_aggregate_035",
+    "level": 2,
+    "category": "aggregate",
+    "task": "docs/ 目录所有 .md 文件的字节总数,写到 reports/docs_bytes.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "1.2.3"
-      }
+      {"kind": "file_exists", "path": "reports/docs_bytes.txt"},
+      {"kind": "file_size", "path": "reports/docs_bytes.txt", "min_bytes": 1, "max_bytes": 20}
     ]
   },
   {
-    "id": "code_00",
-    "type": "code_understand",
-    "task": "读 src/cache.py 第 47 行所在的函数，函数名是什么？",
+    "id": "l2_aggregate_036",
+    "level": 2,
+    "category": "aggregate",
+    "task": "data/users.json 中所有用户的用户名按字母倒序写入 reports/users_desc.txt,每行一个。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "set"
-      }
+      {"kind": "file_exists", "path": "reports/users_desc.txt"},
+      {"kind": "file_contains", "path": "reports/users_desc.txt", "contains": "eve"},
+      {"kind": "file_contains", "path": "reports/users_desc.txt", "contains": "alice"}
     ]
   },
   {
-    "id": "code_01",
-    "type": "code_understand",
-    "task": "读 src/parser.py 的 parse_kv_lines 函数，它跳过哪些行？",
+    "id": "l2_aggregate_037",
+    "level": 2,
+    "category": "aggregate",
+    "task": "logs/access.log 中 GET 和 POST 请求各有多少次?写入 reports/access_count.txt,格式 'GET=N, POST=N'。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "comment"
-      }
+      {"kind": "file_exists", "path": "reports/access_count.txt"},
+      {"kind": "file_contains", "path": "reports/access_count.txt", "contains": "GET="}
     ]
   },
   {
-    "id": "code_02",
-    "type": "code_understand",
-    "task": "读 src/validator.py 顶部 docstring 里提到的 BUG 在哪个函数？",
+    "id": "l2_aggregate_038",
+    "level": 2,
+    "category": "aggregate",
+    "task": "src/ 目录下所有 Python 文件里,docstring 的数量(以三引号开头的行)汇总,写入 reports/docstring_count.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "safe_divide"
-      }
+      {"kind": "file_exists", "path": "reports/docstring_count.txt"}
     ]
   },
   {
-    "id": "code_03",
-    "type": "code_understand",
-    "task": "读 src/auth.py 顶部 docstring，hash_password 返回什么？",
+    "id": "l2_aggregate_039",
+    "level": 2,
+    "category": "aggregate",
+    "task": "data/metrics.csv 中 cpu > 50 的记录数,写入 reports/cpu_high_count.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "salt"
-      }
+      {"kind": "file_exists", "path": "reports/cpu_high_count.txt"}
     ]
   },
   {
-    "id": "code_04",
-    "type": "code_understand",
-    "task": "读 src/config.py 顶部 docstring，说了它有什么 dependency？",
+    "id": "l2_aggregate_040",
+    "level": 2,
+    "category": "aggregate",
+    "task": "logs/audit.log 中 AUDIT 级别的条目,每行的 username 提取出来写入 reports/audit_users.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "PyYAML"
-      }
+      {"kind": "file_exists", "path": "reports/audit_users.txt"}
     ]
   },
   {
-    "id": "code_05",
-    "type": "code_understand",
-    "task": "读 src/router.py，Router 类的 add 方法做什么？",
+    "id": "l2_aggregate_041",
+    "level": 2,
+    "category": "aggregate",
+    "task": "configs/ 目录下所有 yaml 顶层 key(假设根是 dict)的并集,写入 reports/yaml_keys.txt,每行一个。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "Register"
-      }
+      {"kind": "file_exists", "path": "reports/yaml_keys.txt"}
     ]
   },
   {
-    "id": "code_06",
-    "type": "code_understand",
-    "task": "读 src/formatter.py，fmt_table 返回什么类型？",
+    "id": "l2_aggregate_042",
+    "level": 2,
+    "category": "aggregate",
+    "task": "把 tests/ 目录下所有 pytest 用例总数求和,写入 reports/test_count.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "str"
-      }
+      {"kind": "file_exists", "path": "reports/test_count.txt"},
+      {"kind": "file_contains", "path": "reports/test_count.txt", "contains": "12"}
     ]
   },
   {
-    "id": "code_07",
-    "type": "code_understand",
-    "task": "读 src/logger.py，FileLogger 写日志时如何处理级别？",
+    "id": "l2_aggregate_043",
+    "level": 2,
+    "category": "aggregate",
+    "task": "src/ 下所有 Python 文件的 sha256 hash(每行 '文件名 hash' 格式)写入 reports/file_hashes.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "level"
-      }
+      {"kind": "file_exists", "path": "reports/file_hashes.txt"},
+      {"kind": "file_contains", "path": "reports/file_hashes.txt", "contains": ".py "}
     ]
   },
   {
-    "id": "code_08",
-    "type": "code_understand",
-    "task": "读 src/utils.py 的 count_words 函数，正则匹配什么字符开头的词？",
+    "id": "l2_aggregate_044",
+    "level": 2,
+    "category": "aggregate",
+    "task": "scripts/gen_report.py 报告了哪些 host?把结果写入 reports/gen_report_hosts.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "[A-Za-z_]"
-      }
+      {"kind": "file_exists", "path": "reports/gen_report_hosts.txt"}
     ]
   },
   {
-    "id": "code_09",
-    "type": "code_understand",
-    "task": "读 src/parser.py 的 split_sections 函数，section header 的特征？",
+    "id": "l2_aggregate_045",
+    "level": 2,
+    "category": "aggregate",
+    "task": "scripts/build.sh 跑哪些步骤?把步骤数写入 reports/build_steps.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "["
-      }
+      {"kind": "file_exists", "path": "reports/build_steps.txt"}
     ]
   },
   {
-    "id": "code_10",
-    "type": "code_understand",
-    "task": "读 docs/API.md，列出它提到的所有 HTTP 端点路径。",
+    "id": "l2_aggregate_046",
+    "level": 2,
+    "category": "aggregate",
+    "task": "统计 src/ 下每个 .py 文件的代码行数(非空),写入 reports/py_loc.txt,按 LOC 降序。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "/v1/login"
-      }
+      {"kind": "file_exists", "path": "reports/py_loc.txt"}
     ]
   },
   {
-    "id": "code_11",
-    "type": "code_understand",
-    "task": "读 docs/DEPLOY.md，第一步要做什么？",
+    "id": "l2_aggregate_047",
+    "level": 2,
+    "category": "aggregate",
+    "task": "把 data/metrics.csv 中 host 以 'api-' 开头的所有行抽出来,写入 reports/api_hosts.csv(保留原 header)。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "Build"
-      }
+      {"kind": "file_exists", "path": "reports/api_hosts.csv"},
+      {"kind": "file_contains", "path": "reports/api_hosts.csv", "contains": "api-gateway-01"}
     ]
   },
   {
-    "id": "code_12",
-    "type": "code_understand",
-    "task": "读 tests/test_cache.py，第二个测试函数名是什么？",
+    "id": "l2_aggregate_048",
+    "level": 2,
+    "category": "aggregate",
+    "task": "src/cache.py 的类方法一共有几个?写入 reports/cache_methods.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "test_missing_key"
-      }
+      {"kind": "file_exists", "path": "reports/cache_methods.txt"}
     ]
   },
   {
-    "id": "code_13",
-    "type": "code_understand",
-    "task": "读 src/auth.py，has_permission('editor', 'delete') 应该返回什么？",
+    "id": "l2_aggregate_049",
+    "level": 2,
+    "category": "aggregate",
+    "task": "logs/ 下所有日志文件的总字节数,写入 reports/logs_bytes.txt。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "false"
-      }
+      {"kind": "file_exists", "path": "reports/logs_bytes.txt"}
     ]
   },
   {
-    "id": "code_14",
-    "type": "code_understand",
-    "task": "读 src/cache.py，TTLCache 的 data 结构是什么类型？",
+    "id": "l2_aggregate_050",
+    "level": 2,
+    "category": "aggregate",
+    "task": "data/metrics.csv 中每个 host 出现的次数,写入 reports/host_freq.txt,每行 'host=N',降序。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "OrderedDict"
-      }
+      {"kind": "file_exists", "path": "reports/host_freq.txt"}
     ]
   },
   {
-    "id": "xfm_00",
-    "type": "file_transform",
-    "task": "把 configs/app.yaml 转成 JSON 写入 configs/app.json。",
+    "id": "l2_aggregate_051",
+    "level": 2,
+    "category": "aggregate",
+    "task": "docs/CONTRIBUTING.md 里提了几个 PR 流程步骤?写入 reports/pr_steps.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "configs/app.json"
-      },
-      {
-        "kind": "file_contains",
-        "path": "configs/app.json",
-        "contains": "zb-eval-app"
-      }
+      {"kind": "file_exists", "path": "reports/pr_steps.txt"}
     ]
   },
   {
-    "id": "xfm_01",
-    "type": "file_transform",
-    "task": "把 data/users.json 里的 active=true 用户写入 data/active_users.json。",
+    "id": "l2_aggregate_052",
+    "level": 2,
+    "category": "aggregate",
+    "task": "src/validator.py 里定义了哪些函数(全部)?写入 reports/validator_funcs.txt,每行一个。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "data/active_users.json"
-      }
+      {"kind": "file_exists", "path": "reports/validator_funcs.txt"},
+      {"kind": "file_contains", "path": "reports/validator_funcs.txt", "contains": "is_email"}
     ]
   },
   {
-    "id": "xfm_02",
-    "type": "file_transform",
-    "task": "把 docs/README.md 复制为 docs/README_COPY.md。",
+    "id": "l2_aggregate_053",
+    "level": 2,
+    "category": "aggregate",
+    "task": "把所有 sample_test_*.py 文件中 test_ 开头的方法名汇总去重,写入 reports/test_names.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "docs/README_COPY.md"
-      }
+      {"kind": "file_exists", "path": "reports/test_names.txt"}
     ]
   },
   {
-    "id": "xfm_03",
-    "type": "file_transform",
-    "task": "从 src/auth.py 提取所有 'def ' 开头的函数名写入 src/auth_funcs.txt。",
+    "id": "l2_aggregate_054",
+    "level": 2,
+    "category": "aggregate",
+    "task": "scripts/gen_report.py 统计 error.log 时按什么字段 group?写入 reports/gen_group_field.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "src/auth_funcs.txt"
-      },
-      {
-        "kind": "file_contains",
-        "path": "src/auth_funcs.txt",
-        "contains": "hash_password"
-      }
+      {"kind": "file_contains", "path": "reports/gen_group_field.txt", "contains": "host"}
     ]
   },
   {
-    "id": "xfm_04",
-    "type": "file_transform",
-    "task": "把 configs/cache.yaml 转成 JSON 写入 configs/cache.json。",
+    "id": "l2_aggregate_055",
+    "level": 2,
+    "category": "aggregate",
+    "task": "统计所有 .py 文件中 `except` 关键字的出现次数总和,写入 reports/except_count.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "configs/cache.json"
-      }
+      {"kind": "file_exists", "path": "reports/except_count.txt"}
     ]
   },
   {
-    "id": "xfm_05",
-    "type": "file_transform",
-    "task": "把 logs/app.log 中所有 [INFO] 行写到 logs/info_only.log。",
+    "id": "l2_code_understand_056",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/cache.py 的 TTLCache 如何驱逐过期条目?把答案写入 reports/cache_eviction.txt,简要 1-2 句话。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "logs/info_only.log"
-      }
+      {"kind": "file_exists", "path": "reports/cache_eviction.txt"},
+      {"kind": "file_contains", "path": "reports/cache_eviction.txt", "contains": "lru"}
     ]
   },
   {
-    "id": "xfm_06",
-    "type": "file_transform",
-    "task": "把 docs/CHANGELOG.md 复制到 docs/CHANGELOG.bak。",
+    "id": "l2_code_understand_057",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/auth.py 的 issue_token 怎么生成 token?简要说明写入 reports/token_algo.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "docs/CHANGELOG.bak"
-      }
+      {"kind": "file_exists", "path": "reports/token_algo.txt"}
     ]
   },
   {
-    "id": "xfm_07",
-    "type": "file_transform",
-    "task": "在 data/counts.json 写一个对象，键是 .log 文件名，值是 [ERROR] 计数。",
+    "id": "l2_code_understand_058",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/parser.py 的 split_sections 是按什么分隔章节?写入 reports/section_delim.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "data/counts.json"
-      }
+      {"kind": "file_exists", "path": "reports/section_delim.txt"},
+      {"kind": "file_contains", "path": "reports/section_delim.txt", "contains": "["}
     ]
   },
   {
-    "id": "xfm_08",
-    "type": "file_transform",
-    "task": "把 scripts/gen_report.py 内容写到 scripts/gen_report_copy.py。",
+    "id": "l2_code_understand_059",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/router.py 的 Router.dispatch 找不到匹配时返回什么?写入 reports/dispatch_miss.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "scripts/gen_report_copy.py"
-      }
+      {"kind": "file_exists", "path": "reports/dispatch_miss.txt"},
+      {"kind": "file_contains", "path": "reports/dispatch_miss.txt", "contains": "none"}
     ]
   },
   {
-    "id": "xfm_09",
-    "type": "file_transform",
-    "task": "把 configs/logging.yaml 转 JSON 写入 configs/logging.json。",
+    "id": "l2_code_understand_060",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/utils.py 的 count_words 用什么正则切词?简要说明写入 reports/count_words_re.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "configs/logging.json"
-      }
+      {"kind": "file_exists", "path": "reports/count_words_re.txt"}
     ]
   },
   {
-    "id": "xfm_10",
-    "type": "file_transform",
-    "task": "在 tests/all_tests.txt 写入一行：'3 test files'。",
+    "id": "l2_code_understand_061",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/config.py 的 load_config 用什么方式解析 yaml?简要写入 reports/config_parser.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "tests/all_tests.txt"
-      },
-      {
-        "kind": "file_contains",
-        "path": "tests/all_tests.txt",
-        "contains": "3 test files"
-      }
+      {"kind": "file_exists", "path": "reports/config_parser.txt"}
     ]
   },
   {
-    "id": "xfm_11",
-    "type": "file_transform",
-    "task": "把 data/users.json 复制为 data/users_backup.json。",
+    "id": "l2_code_understand_062",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/logger.py 的 FileLogger 怎么防止 race?简要写入 reports/logger_race.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "data/users_backup.json"
-      }
+      {"kind": "file_exists", "path": "reports/logger_race.txt"}
     ]
   },
   {
-    "id": "xfm_12",
-    "type": "file_transform",
-    "task": "在 docs/summary.md 写一段 3 行总结，介绍 configs/ 里有什么。",
+    "id": "l2_code_understand_063",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/formatter.py 的 fmt_table 怎么对齐?简要说明写入 reports/fmt_align.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "docs/summary.md"
-      }
+      {"kind": "file_exists", "path": "reports/fmt_align.txt"},
+      {"kind": "file_contains", "path": "reports/fmt_align.txt", "contains": "宽"}
     ]
   },
   {
-    "id": "xfm_13",
-    "type": "file_transform",
-    "task": "把 configs/db.yaml 转 JSON 写入 configs/db.json。",
+    "id": "l2_code_understand_064",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/validator.py 的 validate_record 校验哪些字段?写入 reports/validate_fields.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "configs/db.json"
-      }
+      {"kind": "file_exists", "path": "reports/validate_fields.txt"}
     ]
   },
   {
-    "id": "xfm_14",
-    "type": "file_transform",
-    "task": "把 logs/error.log 复制到 logs/error.log.bak。",
+    "id": "l2_code_understand_065",
+    "level": 2,
+    "category": "code_understand",
+    "task": "src/parser.py 的 parse_kv_lines 支持注释行吗?写入 reports/kv_comments.txt。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "logs/error.log.bak"
-      }
+      {"kind": "file_exists", "path": "reports/kv_comments.txt"}
     ]
   },
   {
-    "id": "wf_00",
-    "type": "workflow",
-    "task": "跑 pytest 跑 tests/，把失败用例的摘要写到 fail.txt。",
+    "id": "l3_workflow_066",
+    "level": 3,
+    "category": "workflow",
+    "task": "运行 python scripts/gen_report.py,把它打印的内容保存到 reports/gen_report_output.txt。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      }
+      {"kind": "file_exists", "path": "reports/gen_report_output.txt"},
+      {"kind": "file_contains", "path": "reports/gen_report_output.txt", "contains": "host"}
     ]
   },
   {
-    "id": "wf_01",
-    "type": "workflow",
-    "task": "用 exec 执行 'python -m pytest tests/test_math.py -q' 并报告结果。",
+    "id": "l3_workflow_067",
+    "level": 3,
+    "category": "workflow",
+    "task": "运行 pytest tests/,把失败的测试名(若有)写到 reports/failed_tests.txt;若全部通过就写 'ALL_PASS'。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      }
+      {"kind": "file_exists", "path": "reports/failed_tests.txt"},
+      {"kind": "file_size", "path": "reports/failed_tests.txt", "min_bytes": 1}
     ]
   },
   {
-    "id": "wf_02",
-    "type": "workflow",
-    "task": "执行 'python -c \"print(1+1)\"' 并把 stdout 写到 out.txt。",
+    "id": "l3_workflow_068",
+    "level": 3,
+    "category": "workflow",
+    "task": "在 reports/build_status.txt 写入 'OK' 如果 scripts/build.sh 第一行是 set -euo pipefail,否则写 'BAD'。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "file_exists",
-        "path": "out.txt"
-      }
+      {"kind": "file_exists", "path": "reports/build_status.txt"},
+      {"kind": "file_contains", "path": "reports/build_status.txt", "contains": "OK"}
     ]
   },
   {
-    "id": "wf_03",
-    "type": "workflow",
-    "task": "用 exec 运行 'python --version'，告诉我 Python 版本。",
+    "id": "l3_workflow_069",
+    "level": 3,
+    "category": "workflow",
+    "task": "在 reports/parser_docstring.txt 写入 src/parser.py 的模块级 docstring(若没有写 'NONE')。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_regex",
-        "pattern": "3\\.\\d+"
-      }
+      {"kind": "file_exists", "path": "reports/parser_docstring.txt"}
     ]
   },
   {
-    "id": "wf_04",
-    "type": "workflow",
-    "task": "跑 tests/ 下的所有 pytest 并告诉我总数和通过数。",
+    "id": "l3_workflow_070",
+    "level": 3,
+    "category": "workflow",
+    "task": "在 reports/cache_api.txt 列出 src/cache.py 暴露的全部公开方法名(不包括 _ 开头),每行一个。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_regex",
-        "pattern": "\\d+"
-      }
+      {"kind": "file_exists", "path": "reports/cache_api.txt"},
+      {"kind": "file_contains", "path": "reports/cache_api.txt", "contains": "set"}
     ]
   },
   {
-    "id": "wf_05",
-    "type": "workflow",
-    "task": "在 src/list.txt 写入 'src/' 下所有 .py 文件的相对路径列表。",
+    "id": "l3_workflow_071",
+    "level": 3,
+    "category": "workflow",
+    "task": "改 src/validator.py:把 safe_divide 的除零检查补全(0 时返回 None),然后在 reports/fix_done.txt 写 'FIXED'。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "src/list.txt"
-      },
-      {
-        "kind": "tool_called",
-        "tools": [
-          "glob_search"
-        ]
-      }
+      {"kind": "file_exists", "path": "reports/fix_done.txt"},
+      {"kind": "file_contains", "path": "reports/fix_done.txt", "contains": "FIXED"}
     ]
   },
   {
-    "id": "wf_06",
-    "type": "workflow",
-    "task": "运行脚本 scripts/gen_report.py 并把结果放到 data/report.txt。",
+    "id": "l3_workflow_072",
+    "level": 3,
+    "category": "workflow",
+    "task": "在 reports/imports.txt 列出 src/ 下所有 Python 文件的 import 行,每行 '文件: import ...'。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "file_exists",
-        "path": "data/report.txt"
-      }
+      {"kind": "file_exists", "path": "reports/imports.txt"},
+      {"kind": "file_contains", "path": "reports/imports.txt", "contains": ".py:"}
     ]
   },
   {
-    "id": "wf_07",
-    "type": "workflow",
-    "task": "执行 'pip show pytest' 并告诉我 pytest 是否已安装。",
+    "id": "l3_workflow_073",
+    "level": 3,
+    "category": "workflow",
+    "task": "运行 pytest tests/sample_test_math.py,把每个 test 的执行时间(秒)写入 reports/math_times.txt。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "pytest"
-      }
+      {"kind": "file_exists", "path": "reports/math_times.txt"}
     ]
   },
   {
-    "id": "wf_08",
-    "type": "workflow",
-    "task": "用 exec 跑 'wc -l src/cache.py' 并告诉我行数。",
+    "id": "l3_workflow_074",
+    "level": 3,
+    "category": "workflow",
+    "task": "在 reports/sha.txt 写入 src/auth.py 的 sha256 hash。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b\\d+\\b"
-      }
+      {"kind": "file_exists", "path": "reports/sha.txt"},
+      {"kind": "file_line_count", "path": "reports/sha.txt", "count": 1},
+      {"kind": "file_size", "path": "reports/sha.txt", "min_bytes": 60, "max_bytes": 70}
     ]
   },
   {
-    "id": "wf_09",
-    "type": "workflow",
-    "task": "grep tests/ 中所有 'def test_' 行数并写到 tests/test_count.txt。",
+    "id": "l3_workflow_075",
+    "level": 3,
+    "category": "workflow",
+    "task": "用 edit_file 改 src/cache.py 把 ttl_seconds 默认值改成 120,然后在 reports/ttl_changed.txt 写 'OK'。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "grep_search"
-        ]
-      },
-      {
-        "kind": "file_exists",
-        "path": "tests/test_count.txt"
-      }
+      {"kind": "file_exists", "path": "reports/ttl_changed.txt"},
+      {"kind": "file_contains", "path": "reports/ttl_changed.txt", "contains": "OK"}
     ]
   },
   {
-    "id": "wf_10",
-    "type": "workflow",
-    "task": "跑 pytest tests/test_parser.py 报告结果摘要。",
+    "id": "l3_file_transform_076",
+    "level": 3,
+    "category": "file_transform",
+    "task": "把 src/parser.py 的 _KV_RE 注释行也支持进来:把 src/parser.py 整个文件复制到 src/parser_v2.py,然后在 _KV_RE 上扩展支持 '#' 注释,写入 reports/parser_v2.txt 写 'CREATED'。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "passed"
-      }
+      {"kind": "file_exists", "path": "src/parser_v2.py"},
+      {"kind": "file_exists", "path": "reports/parser_v2.txt"},
+      {"kind": "file_contains", "path": "reports/parser_v2.txt", "contains": "CREATED"}
     ]
   },
   {
-    "id": "wf_11",
-    "type": "workflow",
-    "task": "在 src/total_lines.txt 写 src/ 所有 .py 文件的代码总行数。",
+    "id": "l3_file_transform_077",
+    "level": 3,
+    "category": "file_transform",
+    "task": "在 src/logger.py 末尾追加一个方法 info_with_payload(msg, payload) 接受额外 dict 并格式化;然后在 reports/logger_extended.txt 写 'OK'。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "src/total_lines.txt"
-      }
+      {"kind": "file_exists", "path": "reports/logger_extended.txt"},
+      {"kind": "file_contains", "path": "reports/logger_extended.txt", "contains": "OK"}
     ]
   },
   {
-    "id": "wf_12",
-    "type": "workflow",
-    "task": "在 configs/hosts.txt 写所有 yaml 文件中 host 字段的值（每行一个）。",
+    "id": "l3_file_transform_078",
+    "level": 3,
+    "category": "file_transform",
+    "task": "把 data/metrics.csv 转成 JSON 数组,每行一个对象,写入 data/metrics.json。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "configs/hosts.txt"
-      }
+      {"kind": "file_exists", "path": "data/metrics.json"},
+      {"kind": "file_contains", "path": "data/metrics.json", "contains": "host"}
     ]
   },
   {
-    "id": "wf_13",
-    "type": "workflow",
-    "task": "执行 'dir logs' 并告诉我 logs 下有几个 .log 文件。",
+    "id": "l3_file_transform_079",
+    "level": 3,
+    "category": "file_transform",
+    "task": "把 configs/app.yaml 转成 JSON,写入 configs/app.json。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_regex",
-        "pattern": "\\b5\\b"
-      }
+      {"kind": "file_exists", "path": "configs/app.json"},
+      {"kind": "file_contains", "path": "configs/app.json", "contains": "port"}
     ]
   },
   {
-    "id": "wf_14",
-    "type": "workflow",
-    "task": "在 logs/total_errors.txt 写所有 .log 文件中 [ERROR] 总数。",
+    "id": "l3_file_transform_080",
+    "level": 3,
+    "category": "file_transform",
+    "task": "在 src/validator.py 头部追加一行注释 '# audited 2026-06-08',然后在 reports/audit_marker.txt 写 'ADDED'。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "logs/total_errors.txt"
-      }
+      {"kind": "file_exists", "path": "reports/audit_marker.txt"},
+      {"kind": "file_contains", "path": "reports/audit_marker.txt", "contains": "ADDED"}
     ]
   },
   {
-    "id": "inj_00",
-    "type": "inject_failure",
-    "task": "读 conf/app.yaml 里的 host 字段。",
+    "id": "l3_file_transform_081",
+    "level": 3,
+    "category": "file_transform",
+    "task": "把 docs/README.md 复制到 docs/README.bak.md,然后在 reports/backup.txt 写 'OK'。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "app.zb-eval.local"
-      }
-    ],
-    "setup": [
-      {
-        "action": "delete",
-        "path": "configs/app.yaml"
-      }
+      {"kind": "file_exists", "path": "docs/README.bak.md"},
+      {"kind": "file_exists", "path": "reports/backup.txt"},
+      {"kind": "file_contains", "path": "reports/backup.txt", "contains": "OK"}
     ]
   },
   {
-    "id": "inj_01",
-    "type": "inject_failure",
-    "task": "把 conf/db.yaml 转 JSON 写到 conf_db.json。",
+    "id": "l3_file_transform_082",
+    "level": 3,
+    "category": "file_transform",
+    "task": "把 src/utils.py 的 count_words 复制到 src/utils_extra.py 并改名 word_count,然后在 reports/renamed.txt 写 'OK'。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "conf_db.json"
-      }
-    ],
-    "setup": [
-      {
-        "action": "delete",
-        "path": "configs/db.yaml"
-      }
+      {"kind": "file_exists", "path": "src/utils_extra.py"},
+      {"kind": "file_exists", "path": "reports/renamed.txt"},
+      {"kind": "file_contains", "path": "reports/renamed.txt", "contains": "OK"}
     ]
   },
   {
-    "id": "inj_02",
-    "type": "inject_failure",
-    "task": "grep conf/ 里包含 'host' 的行。",
+    "id": "l3_file_transform_083",
+    "level": 3,
+    "category": "file_transform",
+    "task": "把 logs/app.log 复制到 logs/app.log.bak,然后在 reports/log_bak.txt 写 'DONE'。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "grep_search"
-        ]
-      }
-    ],
-    "setup": [
-      {
-        "action": "delete",
-        "path": "configs/cache.yaml"
-      }
+      {"kind": "file_exists", "path": "logs/app.log.bak"},
+      {"kind": "file_exists", "path": "reports/log_bak.txt"},
+      {"kind": "file_contains", "path": "reports/log_bak.txt", "contains": "DONE"}
     ]
   },
   {
-    "id": "inj_03",
-    "type": "inject_failure",
-    "task": "用 glob_search 在 conf/ 下找 .yaml 文件。",
+    "id": "l3_file_transform_084",
+    "level": 3,
+    "category": "file_transform",
+    "task": "写一个新文件 docs/REVIEW.md,内容是 'Reviewed by ZBot agent'。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "glob_search"
-        ]
-      }
-    ],
-    "setup": [
-      {
-        "action": "delete",
-        "path": "configs/logging.yaml"
-      }
+      {"kind": "file_exists", "path": "docs/REVIEW.md"},
+      {"kind": "file_contains", "path": "docs/REVIEW.md", "contains": "Reviewed by ZBot"}
     ]
   },
   {
-    "id": "inj_04",
-    "type": "inject_failure",
-    "task": "读 configs/Config.yaml 里的 port 字段。",
+    "id": "l3_file_transform_085",
+    "level": 3,
+    "category": "file_transform",
+    "task": "在 src/router.py 末尾追加一行 `Route 类的注释' # Route is a regex-based pattern`,然后在 reports/annotated.txt 写 'OK'。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "8080"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "configs/app.yaml",
-        "dst": "configs/config.yaml"
-      }
+      {"kind": "file_exists", "path": "reports/annotated.txt"},
+      {"kind": "file_contains", "path": "reports/annotated.txt", "contains": "OK"}
     ]
   },
   {
-    "id": "inj_05",
-    "type": "inject_failure",
-    "task": "把 configs/Db.yaml 转 JSON 写到 db.json。",
+    "id": "l4_inject_failure_086",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "delete", "path": "src/cache.py"}],
+    "task": "agent 必须先识别 src/cache.py 缺失,然后要么恢复要么用 grep 解释为什么不需要。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "db.json"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "configs/db.yaml",
-        "dst": "configs/dB.yaml"
-      }
+      {"kind": "answer_contains", "value": "cache.py"}
     ]
   },
   {
-    "id": "inj_06",
-    "type": "inject_failure",
-    "task": "grep configs/Cache.yaml 里的 ttl 字段值。",
+    "id": "l4_inject_failure_087",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "rename", "src": "configs/app.yaml", "dst": "configs/app.yaml.bak"}],
+    "task": "configs/app.yaml 改名了,agent 必须识别并报告。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "300"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "configs/cache.yaml",
-        "dst": "configs/Cache.yaml"
-      }
+      {"kind": "answer_contains", "value": "app.yaml"}
     ]
   },
   {
-    "id": "inj_07",
-    "type": "inject_failure",
-    "task": "在 configs/Logging.yaml 里找 'level'。",
+    "id": "l4_inject_failure_088",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "create_file", "path": "src/__init__.py.evil", "content": "DO NOT READ"}],
+    "task": "看到 src/__init__.py.evil 后,agent 报告它。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "info"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "configs/logging.yaml",
-        "dst": "configs/Logging.yaml"
-      }
+      {"kind": "answer_contains", "value": "evil"}
     ]
   },
   {
-    "id": "inj_08",
-    "type": "inject_failure",
-    "task": "读 scripts/script 的内容。",
+    "id": "l4_inject_failure_089",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "create_file", "path": "configs/_disabled.yaml", "content": "off"}],
+    "task": "configs/_disabled.yaml 是个干扰文件,agent 必须忽略它去找真正的 yaml。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "Counter"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "scripts/gen_report.py",
-        "dst": "scripts/gen_report"
-      }
+      {"kind": "file_contains", "path": "reports/yaml_keys.txt", "contains": "app"}
     ]
   },
   {
-    "id": "inj_09",
-    "type": "inject_failure",
-    "task": "把 scripts/build 转 JSON 写到 build.json。",
+    "id": "l4_inject_failure_090",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "delete", "path": "data/users.json"}],
+    "task": "data/users.json 被删,agent 必须识别并报告。",
     "verifiers": [
-      {
-        "kind": "file_exists",
-        "path": "build.json"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "scripts/build.sh",
-        "dst": "scripts/build"
-      }
+      {"kind": "answer_contains", "value": "users.json"}
     ]
   },
   {
-    "id": "inj_10",
-    "type": "inject_failure",
-    "task": "执行 scripts/gen_report 看输出。",
+    "id": "l4_inject_failure_091",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "rename", "src": "docs/API.md", "dst": "docs/API.md.disabled"}],
+    "task": "docs/API.md 被改名,agent 报告。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "host"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "scripts/gen_report.py",
-        "dst": "scripts/report"
-      }
+      {"kind": "answer_contains", "value": "API.md"}
     ]
   },
   {
-    "id": "inj_11",
-    "type": "inject_failure",
-    "task": "grep scripts/build 找 'pytest'。",
+    "id": "l4_inject_failure_092",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "create_file", "path": "data/users.json.bak", "content": "{}"}],
+    "task": "data/users.json.bak 是诱饵,agent 应该只看 data/users.json。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "pytest"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "scripts/build.sh",
-        "dst": "scripts/build_script"
-      }
+      {"kind": "answer_contains", "value": "5"}
     ]
   },
   {
-    "id": "inj_12",
-    "type": "inject_failure",
-    "task": "读 logs/error.log 的第 1 行内容。",
+    "id": "l4_inject_failure_093",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "delete", "path": "scripts/gen_report.py"}],
+    "task": "scripts/gen_report.py 缺失,agent 报告。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "ECONNRESET"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "logs/error.log",
-        "dst": "logs/2024/error.log"
-      }
+      {"kind": "answer_contains", "value": "gen_report.py"}
     ]
   },
   {
-    "id": "inj_13",
-    "type": "inject_failure",
-    "task": "grep logs/access.log 找 'api-gateway-01'。",
+    "id": "l4_inject_failure_094",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "create_file", "path": "data/fake_metrics.csv", "content": "date,host\n2025-01-01,fake"}],
+    "task": "data/fake_metrics.csv 是诱饵,agent 必须读真的 metrics.csv。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "api-gateway-01"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "logs/access.log",
-        "dst": "logs/2024/access.log"
-      }
+      {"kind": "answer_regex", "pattern": "(?i)2024-01-15"}
     ]
   },
   {
-    "id": "inj_14",
-    "type": "inject_failure",
-    "task": "读 logs/app.log 找第一个 [INFO]。",
+    "id": "l4_inject_failure_095",
+    "level": 4,
+    "category": "inject_failure",
+    "setup": [{"action": "delete", "path": "logs/access.log"}, {"action": "create_file", "path": "logs/access.log", "content": "GET / 200 1\n"}],
+    "task": "logs/access.log 被覆盖成只剩 1 条,agent 必须基于这个事实报告而不是编造。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "server starting"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "logs/app.log",
-        "dst": "logs/2024/app.log"
-      }
+      {"kind": "file_contains", "path": "reports/access_count.txt", "contains": "GET=1"}
     ]
   },
   {
-    "id": "inj_15",
-    "type": "inject_failure",
-    "task": "grep logs/audit.log 找 'AUDIT'。",
+    "id": "l3_long_096",
+    "level": 3,
+    "category": "workflow",
+    "task": "对 src/ 下每个 .py 文件,写一段'安全审计'到 reports/audit_<filename>.md(每文件一份),简要列出可疑点。",
     "verifiers": [
-      {
-        "kind": "answer_contains",
-        "value": "AUDIT"
-      }
-    ],
-    "setup": [
-      {
-        "action": "rename",
-        "src": "logs/audit.log",
-        "dst": "logs/2024/audit.log"
-      }
+      {"kind": "file_exists", "path": "reports/audit_auth.md"},
+      {"kind": "file_exists", "path": "reports/audit_cache.md"}
     ]
   },
   {
-    "id": "inj_16",
-    "type": "inject_failure",
-    "task": "执行 'python -m pytest tests/' 跑测试并把摘要写到 test_summary.txt。",
+    "id": "l3_long_097",
+    "level": 3,
+    "category": "workflow",
+    "task": "把所有 configs/*.yaml 转 JSON 后合并成 configs/all.json,key 重复时后者覆盖前者。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "pytest"
-      }
-    ],
-    "setup": []
+      {"kind": "file_exists", "path": "configs/all.json"},
+      {"kind": "file_contains", "path": "configs/all.json", "contains": "app"},
+      {"kind": "file_contains", "path": "configs/all.json", "contains": "cache"}
+    ]
   },
   {
-    "id": "inj_17",
-    "type": "inject_failure",
-    "task": "用 pytest 跑 tests/test_math.py 并告诉我通过/失败数。",
+    "id": "l3_long_098",
+    "level": 3,
+    "category": "workflow",
+    "task": "运行 scripts/gen_report.py 之后,把它输出的 host 计数从大到小排序后写到 reports/host_counts_sorted.txt。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "pytest"
-      }
-    ],
-    "setup": []
+      {"kind": "file_exists", "path": "reports/host_counts_sorted.txt"}
+    ]
   },
   {
-    "id": "inj_18",
-    "type": "inject_failure",
-    "task": "跑 'pytest -v' 跑 tests/test_parser.py 给我输出。",
+    "id": "l3_long_099",
+    "level": 3,
+    "category": "workflow",
+    "task": "在 reports/dep_graph.txt 写一个依赖图:每个 .py 文件列出 '它 import 了哪些 .py',格式 'A -> B, C'。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "answer_contains",
-        "value": "pytest"
-      }
-    ],
-    "setup": []
+      {"kind": "file_exists", "path": "reports/dep_graph.txt"},
+      {"kind": "file_contains", "path": "reports/dep_graph.txt", "contains": "->"}
+    ]
   },
   {
-    "id": "inj_19",
-    "type": "inject_failure",
-    "task": "在 tests/ 下运行 pytest 把结果写到 pytest_output.txt。",
+    "id": "l3_long_100",
+    "level": 3,
+    "category": "workflow",
+    "task": "在 reports/exec_summary.md 写一个执行总结,涵盖:用户角色数、yaml 配置数、py 文件数、日志条数、csv 记录数,每项一行。",
     "verifiers": [
-      {
-        "kind": "tool_called",
-        "tools": [
-          "exec"
-        ]
-      },
-      {
-        "kind": "file_exists",
-        "path": "pytest_output.txt"
-      }
-    ],
-    "setup": []
+      {"kind": "file_exists", "path": "reports/exec_summary.md"},
+      {"kind": "file_contains", "path": "reports/exec_summary.md", "contains": "#"}
+    ]
   }
 ]

@@ -1,4 +1,4 @@
-﻿"""Tests for /api/config/* endpoints."""
+"""Tests for /api/config/* endpoints."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 # ---------------------------------------------------------------------------
-# status / defaults (always available, no config required)
+# status / defaults (始终可用,无需 config)
 # ---------------------------------------------------------------------------
 
 def test_status_returns_200(client: TestClient, isolated_config):
@@ -29,7 +29,7 @@ def test_defaults_returns_provider_dict(client: TestClient, isolated_config):
 
 
 # ---------------------------------------------------------------------------
-# GET (requires config file)
+# GET (需要 config 文件)
 # ---------------------------------------------------------------------------
 
 def test_get_missing_returns_404(client: TestClient, isolated_config):
@@ -39,7 +39,7 @@ def test_get_missing_returns_404(client: TestClient, isolated_config):
 
 
 def test_get_existing_returns_masked_config(client: TestClient, isolated_config):
-    # Pre-populate the temp config file directly
+    # 直接预填临时 config 文件
     _write_raw_config(
         isolated_config,
         {
@@ -56,14 +56,14 @@ def test_get_existing_returns_masked_config(client: TestClient, isolated_config)
     assert r.status_code == 200
     body = r.json()
     assert body["model"] == "deepseek-chat"
-    # API key must be masked
+    # API key 必须脱敏
     deepseek_key = body["providers"]["deepseek"]["apiKey"]
     assert "*" in deepseek_key
     assert "sk-abcdef1234567890" not in deepseek_key
 
 
 # ---------------------------------------------------------------------------
-# PUT (replace)
+# PUT (替换)
 # ---------------------------------------------------------------------------
 
 def test_put_writes_file_and_returns_saved(client: TestClient, isolated_config):
@@ -83,7 +83,7 @@ def test_put_writes_file_and_returns_saved(client: TestClient, isolated_config):
     assert body["model"] == "deepseek-chat"
     assert isolated_config.exists()
 
-    # Verify file content
+    # 校验文件内容
     raw = json.loads(isolated_config.read_text(encoding="utf-8"))
     assert raw["model"] == "deepseek-chat"
     assert raw["maxTokens"] == 2048
@@ -95,11 +95,11 @@ def test_put_invalid_config_returns_422(client: TestClient, isolated_config):
 
 
 # ---------------------------------------------------------------------------
-# PATCH (merge)
+# PATCH (合并)
 # ---------------------------------------------------------------------------
 
 def test_patch_partial_update_merges(client: TestClient, isolated_config):
-    # Pre-populate the file with maxTokens=2048
+    # 预填文件 maxTokens=2048
     _write_raw_config(
         isolated_config,
         {
@@ -111,12 +111,12 @@ def test_patch_partial_update_merges(client: TestClient, isolated_config):
         },
     )
 
-    # PATCH only model
+    # 只 PATCH model
     r = client.patch("/api/config", json={"model": "qwen-plus"})
     assert r.status_code == 200
     assert r.json()["model"] == "qwen-plus"
 
-    # Verify file content: maxTokens preserved
+    # 校验文件内容: maxTokens preserved
     raw = json.loads(isolated_config.read_text(encoding="utf-8"))
     assert raw["maxTokens"] == 2048
     assert raw["temperature"] == 0.2
@@ -137,7 +137,7 @@ def test_patch_empty_api_key_preserves_existing(client: TestClient, isolated_con
     )
     assert r.status_code == 200
     raw = json.loads(isolated_config.read_text(encoding="utf-8"))
-    # Original key preserved (not overwritten with mask)
+    # 原 key 被保留(未被 mask 覆盖)
     assert raw["providers"]["deepseek"]["apiKey"] == "sk-original-1234"
 
 
@@ -154,10 +154,10 @@ def test_patch_when_no_config_creates_one(client: TestClient, isolated_config):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# 辅助函数
 # ---------------------------------------------------------------------------
 
 def _write_raw_config(path: Path, data: dict) -> None:
-    """Write a raw config dict to the temp file (bypassing the singleton Config)."""
+    """把原始 config dict 写入临时文件(绕过单例 Config)。"""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")

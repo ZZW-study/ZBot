@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Optional
 
 from loguru import logger
 
-from ZBot.config.schema import Config
+from ZBot.services.config.schema import Config
 from ZBot.prompts.memory_prompts import (
     LONG_TERM_MEMORY_SYSTEM_PROMPT,
     SAVE_LONG_TERM_MEMORY_TOOL,

@@ -10,3 +10,5 @@
 @import './styles/composer.css';
 @import './styles/onboard.css';
 @import './styles/sessions.css';
+@import './styles/messages.css';
+@import './styles/toasts.css';

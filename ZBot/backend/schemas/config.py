@@ -1,14 +1,23 @@
-﻿"""Config API 请求/响应结构。"""
+"""Config API 请求/响应结构。"""
 
 from __future__ import annotations
 
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 
 class Base(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    """API schema 基类:snake_case 与 camelCase 双向识别,序列化时输出 camelCase。"""
+
+    # alias_generator=to_camel 让 model_validate 同时接受 snake_case 字段名和 camelCase 别名
+    # serialization_alias_generator 同样设上,确保 model_dump(by_alias=True) 也会输出 camelCase 键
+    # (Pydantic v2 默认 alias_generator 只设 validation_alias,不设 serialization_alias)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
 
 
 class ConfigStatusResponse(Base):

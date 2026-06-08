@@ -100,7 +100,8 @@ class CreateSubAgentTool(Tool):
             )
 
         # 父 Agent 的当前消息链会传给子 Agent，让子 Agent 了解完整上下文。
-        parent_messages = parent._current_messages_for_subagent
+        # H13: 直接走 ContextVar,这是唯一权威来源。
+        parent_messages = parent._get_current_messages()
         if parent_messages is None:
             return format_tool_error(
                 "缺少父 Agent 当前消息链，无法创建子 Agent",
@@ -215,7 +216,8 @@ class CreateSubAgentTool(Tool):
                 return
             # 父 Agent 的 run_agent_loop 会在本轮执行期间记录外部传入的真实回调。
             # 子 Agent 只负责把自己的状态转发给父 Agent 当前回调，不自己创建新的显示通道。
-            progress = parent._active_progress_callback
+            # H13: 直接走 ContextVar,这是唯一权威来源。
+            progress = parent._get_active_progress()
             if progress is None:
                 raise RuntimeError("父 Agent 当前没有可用的进度回调")
             # 去掉调用方可能传入的 agent_label，统一由这里注入标准格式的标签。

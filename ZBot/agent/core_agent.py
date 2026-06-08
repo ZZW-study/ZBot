@@ -20,7 +20,7 @@ from ZBot.agent.subagent.subagent_pool import SubAgentPool
 from ZBot.agent.tools.create_sub_agent import CreateSubAgentTool
 from ZBot.agent.tools.filesystem import EditFileTool, WriteFileTool
 from ZBot.agent.tools.skills import NewSkillsListLoader, SkillReader, SkillsManager
-from ZBot.config.agent_runtime import AgentRuntimeConfig
+from ZBot.services.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
 from ZBot.prompts.agent import SKILL_REVIEW_SYSTEM, build_skill_review_prompt, build_validation_feedback
 from ZBot.providers.base import LLMProvider
@@ -332,7 +332,12 @@ class CoreAgent(BaseAgent):
         content: str | list[dict[str, Any]],
         on_progress: Callable[..., Awaitable[None]],
     ) -> str:
-        """执行一轮对话：构造上下文、运行 Agent loop、写回会话。"""
+        """执行一轮对话：构造上下文、运行 Agent loop、写回会话。
+
+        H21: 用 try/except 包住 run_agent_loop 和 _complete_unfinished_task,
+        任一环节抛异常时,仍然把已经积累的 all_messages 落盘 + 保存 session,
+        保证用户的输入不会因为模型/工具异常而丢失上下文。
+        """
         history: list[dict[str, Any]] = await session.get_history_by_token_budget(self._recent_history_token_budget(), self.provider, self.model)
 
         initial_messages: list[dict[str, Any]] = await self.context.build_messages(
@@ -341,22 +346,35 @@ class CoreAgent(BaseAgent):
             score_threshold=self.score_threshold,
         )
 
-        final_content, tools_used, all_messages = await self.run_agent_loop(
-            initial_messages,
-            on_progress=on_progress,
-        )
+        final_content: str | None = None
+        tools_used: list[str] = []
+        all_messages: list[dict[str, Any]] = initial_messages
+        try:
+            final_content, tools_used, all_messages = await self.run_agent_loop(
+                initial_messages,
+                on_progress=on_progress,
+            )
+            final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
 
-        final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
-
-        # 任务完成验证：最多重试3次，验证通过则保存并返回
-        final_content, all_messages, retry_tools_used = await self._complete_unfinished_task(
-            self._message_preview(content),
-            final_content,
-            all_messages,
-            on_progress,
-        )
-        tools_used.extend(retry_tools_used)
-        final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
+            # 任务完成验证：最多重试3次，验证通过则保存并返回
+            final_content, all_messages, retry_tools_used = await self._complete_unfinished_task(
+                self._message_preview(content),
+                final_content,
+                all_messages,
+                on_progress,
+            )
+            tools_used.extend(retry_tools_used)
+            final_content = final_content or "我已经完成处理，但没有需要额外返回的内容。"
+        except BaseException as exc:
+            # 任意异常(包括 CancelledError)都要保存已积累的消息链,
+            # 否则下次 turn 时用户的输入就丢了。
+            logger.exception("Agent turn 异常,尽力保存当前进度: {}", exc)
+            self._save_turn(session, all_messages, 1 + len(history), tools_used)
+            try:
+                await self.sessions.save(session)
+            except Exception:
+                logger.exception("保存 session 失败,用户消息可能丢失")
+            raise
         self._save_turn(session, all_messages, 1 + len(history), tools_used)
         await self.sessions.save(session)
         return final_content

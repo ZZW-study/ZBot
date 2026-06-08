@@ -20,7 +20,7 @@ export default function Message({ message, turn }: { message?: ChatMessage; turn
     return (
       <article className={`message ${message.role}`} data-role={message.role}>
         <header className="message-meta">
-          <span>{message.role === 'user' ? 'You' : 'ZBot'}</span>
+          <span>{message.role === 'user' ? '你' : 'ZBot'}</span>
         </header>
         {message.role === 'assistant' ? (
           <Markdown source={message.content} />

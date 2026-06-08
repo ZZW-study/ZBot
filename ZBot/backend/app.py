@@ -6,15 +6,25 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from ZBot.backend.routers.agent import router as agent_router
 from ZBot.backend.routers.config import router as config_router
-from ZBot.backend.routers.session_name import router as session_router
+from ZBot.backend.routers.files import router as files_router
+from ZBot.backend.routers.runs import router as runs_router
+from ZBot.backend.routers.sessions import router as sessions_router
 from ZBot.memory.daily_memory import daily_memory_store
+from ZBot.services.agent_run.follow_up_queue import FollowUpQueue
+from ZBot.services.agent_run.run_registry import RunRegistry
+from ZBot.services.agent_run.session_expiry import (
+    session_registry,
+    session_watcher,
+    start_session_expiry_watcher,
+)
+from ZBot.session.manager import SessionManager
 
 
 def _log_warmup_failure(task: asyncio.Task[None]) -> None:
@@ -29,13 +39,41 @@ def _log_warmup_failure(task: asyncio.Task[None]) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """启动时后台预热日常记忆 embedding，不阻塞对外服务。"""
-    task = asyncio.create_task(daily_memory_store.warmup_embeddings())
-    # 当 task 执行完毕（成功/失败/取消），自动调用 _log_warmup_failure。
-    # 后台 task 的异常不会冒泡到主线程，加这个回调是为了兜底——
-    # 任务失败时至少能记一条日志，不会静默丢失错误。
-    task.add_done_callback(_log_warmup_failure)
-    yield
+    """启动时初始化 session/run/follow-up 单例,并后台预热日常记忆 embedding。
+
+    H9 修复:启动 session_expiry watcher 后台任务(每 60s 扫一次空闲超 30 分钟的 session)。
+    H11 修复:在 shutdown 阶段 cancel + await warmup task,避免事件循环关闭时打印
+            "Task was destroyed but it is pending" warning。
+    """
+    # 把核心单例挂到 app.state,供 FastAPI Depends 取用(get_session_manager 等)。
+    workspace = Path.home() / ".ZBot" / "workspace"
+    _app.state.session_manager = SessionManager(workspace)
+    _app.state.run_registry = RunRegistry()
+    _app.state.follow_up_queue = FollowUpQueue()
+    # SessionRegistry + Watcher:之前是定义但没人启动的死代码,现在显式启动。
+    _app.state.session_registry = session_registry
+    _app.state.session_watcher_task = await start_session_expiry_watcher(session_watcher)
+
+    warmup_task = asyncio.create_task(daily_memory_store.warmup_embeddings())
+    warmup_task.add_done_callback(_log_warmup_failure)
+    _app.state.warmup_task = warmup_task
+
+    try:
+        yield
+    finally:
+        # shutdown:取消并等待所有后台 task,避免资源泄漏。
+        session_watcher.stop()
+        if _app.state.session_watcher_task is not None:
+            _app.state.session_watcher_task.cancel()
+            try:
+                await _app.state.session_watcher_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        warmup_task.cancel()
+        try:
+            await warmup_task
+        except (asyncio.CancelledError, Exception):
+            pass
 
 
 app = FastAPI(title="ZBot Harness API", lifespan=lifespan)
@@ -68,6 +106,6 @@ app.add_middleware(
 )
 
 app.include_router(config_router)
-app.include_router(agent_router)
-app.include_router(session_router)
-
+app.include_router(files_router)
+app.include_router(runs_router)
+app.include_router(sessions_router)

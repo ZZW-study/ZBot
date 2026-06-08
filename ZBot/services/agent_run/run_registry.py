@@ -1,10 +1,10 @@
-﻿"""Run registry:跟踪进行中和已结束的 agent run。
+"""Run registry:跟踪进行中和已结束的 agent run。
 
 每个 run 由一个唯一 run_id 标识,关联:
 - asyncio.Task:跑 AgentRunService.ask() 的后台任务
 - asyncio.Queue:SSE 处理器从队列取事件发给前端
 - status:queued | running | completed | failed | cancelled
-- 元数据:thread_name, created_at, started_at, ended_at, error
+- 元数据:session_name, created_at, started_at, ended_at, error
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ class RunStatus(str, Enum):
 @dataclass
 class RunState:
     run_id: str
-    thread_name: str
+    session_name: str
     status: RunStatus = RunStatus.QUEUED
     created_at: datetime = field(default_factory=datetime.now)
     started_at: Optional[datetime] = None
@@ -46,10 +46,10 @@ class RunRegistry:
         self._states: dict[str, RunState] = {}
         self._lock = asyncio.Lock()
 
-    async def create(self, thread_name: str) -> RunState:
+    async def create(self, session_name: str) -> RunState:
         """创建并注册一个新 run,返回 RunState。"""
         run_id = str(uuid.uuid4())
-        state = RunState(run_id=run_id, thread_name=thread_name)
+        state = RunState(run_id=run_id, session_name=session_name)
         async with self._lock:
             self._states[run_id] = state
         return state

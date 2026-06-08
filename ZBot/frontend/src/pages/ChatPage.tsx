@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useWebSocket } from '../hooks/useWebSocket';
-import { useConfig } from '../hooks/useConfig';
+import { useAgentStream } from '../hooks/useAgentStream';
+import { useConfigContext } from '../hooks/useConfigContext';
 import { useSessions } from '../hooks/useSessions';
+import { useToasts } from '../hooks/useToasts';
+import { createApiClient } from '../lib/api';
 import Sidebar from '../components/Sidebar';
 import MessageList from '../components/MessageList';
 import Composer from '../components/Composer';
-import type { AgentEvent, ChatMessage } from '../types';
+import type { AttachedFile, ChatMessage, TaskCompleteEvent } from '../types';
 
 export default function ChatPage() {
   const navigate = useNavigate();
@@ -15,9 +17,19 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [sessionName, setSessionName] = useState('default');
   const [messagesLoading, setMessagesLoading] = useState(false);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  // MEDIUM 修复:inline 弹层输入框,替代 window.prompt(后者阻塞主线程)。
+  const [newSessionDialog, setNewSessionDialog] = useState<{ open: boolean; name: string; error: string }>({
+    open: false, name: '', error: '',
+  });
   const activeSessionRef = useRef(sessionName);
+  // C2 修复:同步守卫,防止连点/双击/键盘事件竞态导致同 render 内多次 sendMessage。
+  // setIsRunning 是异步的,React 18 自动批处理下,同 render 内多次 sendMessage
+  // 都会通过 isRunning 守卫,所以必须用 ref 同步翻转。
+  const sendingRef = useRef(false);
 
-  const { apiBase, configured, reason } = useConfig();
+  // H31 修复:从 ConfigContext 读,不再自己调 useConfig。
+  const { configured, reason, apiBase } = useConfigContext();
   const {
     sessions,
     loading: sessionsLoading,
@@ -27,6 +39,9 @@ export default function ChatPage() {
     renameSession,
     deleteSession,
   } = useSessions(apiBase);
+  const { push: pushToast } = useToasts();
+
+  const api = useMemo(() => createApiClient(apiBase), [apiBase]);
 
   useEffect(() => {
     activeSessionRef.current = sessionName;
@@ -52,76 +67,99 @@ export default function ChatPage() {
     };
   }, [getSession, sessionName]);
 
-  const wsUrl = useMemo(() => {
-    if (import.meta.env.VITE_ZBOT_WS_URL) return import.meta.env.VITE_ZBOT_WS_URL;
-    const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-    if (import.meta.env.DEV) {
-      return `${protocol}://${window.location.hostname}:8000/api/agent/ws`;
-    }
-    return `${protocol}://${window.location.host}/api/agent/ws`;
-  }, []);
-
-  const handleCompleted = useCallback((event: AgentEvent) => {
-    if (event.session_name && event.session_name !== activeSessionRef.current) {
-      refresh();
-      return;
-    }
-
-    const payloadContent = event.payload?.final_content;
-    const finalContent = typeof payloadContent === 'string' ? payloadContent : event.message || '';
-    setStreamingContent('');
-    setMessages((prev) => [
-      ...prev,
-      { id: `${event.run_id}-${event.created_at}-assistant`, role: 'assistant', content: finalContent },
-    ]);
-    refresh();
-  }, [refresh]);
-
-  const handleFailed = useCallback((event: AgentEvent) => {
-    if (event.session_name && event.session_name !== activeSessionRef.current) {
-      refresh();
-      return;
-    }
-
-    setStreamingContent('');
-    setMessages((prev) => [
-      ...prev,
-      { id: `${event.run_id}-${event.created_at}-error`, role: 'assistant', content: event.message || '任务失败' },
-    ]);
-  }, [refresh]);
-
-  const handleStarted = useCallback((event: AgentEvent) => {
-    if (event.session_name && event.session_name !== activeSessionRef.current) return;
-
-    setStreamingContent('');
-  }, []);
-
-  const handleDelta = useCallback((event: AgentEvent) => {
-    if (event.session_name && event.session_name !== activeSessionRef.current) return;
-
-    const payloadDelta = event.payload?.delta;
-    const delta = (typeof payloadDelta === 'string' ? payloadDelta : event.message) ?? '';
-    if (!delta) return;
-    setStreamingContent((prev) => `${prev}${delta}`);
-  }, []);
-
   const {
-    socketState, events, isRunning, activeRunId,
-    sendMessage, stopRun, reconnect,
-  } = useWebSocket(wsUrl, {
-    onCompleted: handleCompleted,
-    onDelta: handleDelta,
-    onFailed: handleFailed,
-    onStarted: handleStarted,
+    socketState, isRunning, activeRunId,
+    sendMessage, stopRun, resetStream,
+  } = useAgentStream({ sessions: api.sessions }, {
+    onCompleted: (event: TaskCompleteEvent) => {
+      sendingRef.current = false;
+      if (event.session_name && event.session_name !== activeSessionRef.current) {
+        refresh();
+        return;
+      }
+      // task_complete 一次性给出 final_content,与 WS 路径的双事件(turn.completed + run.completed)不同,
+      // 不需要去重。直接追加一条 assistant 消息。
+      const finalContent = event.final_content || '';
+      if (!finalContent) return;
+      setStreamingContent('');
+      setMessages((prev) => {
+        const msgId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        return [
+          ...prev,
+          { id: msgId, role: 'assistant', content: finalContent },
+        ];
+      });
+      refresh();
+    },
+    onDelta: (content: string) => {
+      setStreamingContent((prev) => `${prev}${content}`);
+    },
+    onFailed: (info: { message?: string; code?: string }) => {
+      sendingRef.current = false;
+      // 不再把错误塞进 messages — 改用 toast,让消息列表只展示真实对话。
+      pushToast('error', info.message || '任务失败', { sticky: true });
+      setStreamingContent('');
+    },
+    onStarted: () => {
+      sendingRef.current = false;
+      setStreamingContent('');
+    },
   });
+
+  // 切换 session 时主动清状态,防止旧 session 的 turns 残留
+  useEffect(() => {
+    resetStream();
+  }, [sessionName, resetStream]);
+
+  const handleAddFile = useCallback(async (file: File) => {
+    // H32 修复:客户端先校验大小,避免大文件空跑网络往返被后端 413。
+    // 后端 MAX_FILE_BYTES = 10 MB,这里和 Composer 保持一致。
+    const FILE_MAX_BYTES = 10 * 1024 * 1024;
+    if (file.size > FILE_MAX_BYTES) {
+      pushToast('error', `文件 ${file.name} 超过 ${FILE_MAX_BYTES / 1024 / 1024} MB 上限`, { sticky: true });
+      return;
+    }
+    const placeholder: AttachedFile = { file, uploading: true, error: null };
+    setAttachedFiles((prev) => [...prev, placeholder]);
+    try {
+      const res = await api.files.upload([file]);
+      setAttachedFiles((prev) =>
+        prev.map((f) => (f === placeholder ? { ...f, uploading: false, fileId: res.file_id } : f))
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : '文件上传失败';
+      setAttachedFiles((prev) =>
+        prev.map((f) => (f === placeholder ? { ...f, uploading: false, error: msg } : f))
+      );
+      pushToast('error', `文件上传失败: ${msg}`, { sticky: true });
+    }
+  }, [api, pushToast]);
+
+  const handleRemoveFile = useCallback((index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const canSend =
+    socketState === 'connected' &&
+    !isRunning &&
+    input.trim().length > 0 &&
+    !attachedFiles.some((f) => f.uploading);
 
   const handleSend = useCallback(() => {
     const content = input.trim();
     if (!content) return;
+    // C2 修复:同步守卫防双发。startingRef 守卫由 useAgentStream 内部也有,
+    // 但 setIsRunning 是异步的,React 18 自动批处理下同 render 内多次 sendMessage
+    // 都会通过 isRunning 检查,所以必须这里再用 ref 同步翻转。
+    if (sendingRef.current) return;
+    sendingRef.current = true;
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', content }]);
     setInput('');
-    sendMessage(content, sessionName.trim() || 'default');
-  }, [input, sessionName, sendMessage]);
+    // 取第一个已上传完成的文件 id 透传 — 多个文件场景等 Composer UX PR 一起做。
+    const fileId = attachedFiles.find((f) => f.fileId)?.fileId;
+    sendMessage(content, sessionName.trim() || 'default', fileId);
+    setAttachedFiles([]);
+  }, [input, sessionName, sendMessage, attachedFiles]);
 
   const handleSelectSession = useCallback((name: string) => {
     setSessionName(name);
@@ -134,18 +172,34 @@ export default function ChatPage() {
     }
   }, [deleteSession, sessionName]);
 
-  const handleNewSession = useCallback(async () => {
-    const name = prompt('请输入新会话名称');
-    if (!name || !name.trim()) return;
+  const handleNewSession = useCallback(() => {
+    // MEDIUM 修复:打开 inline 弹层(替代阻塞主线程的 window.prompt)。
+    setNewSessionDialog({ open: true, name: '', error: '' });
+  }, []);
 
-    const trimmed = name.trim();
+  const handleConfirmNewSession = useCallback(async () => {
+    const trimmed = newSessionDialog.name.trim();
+    if (!trimmed) {
+      setNewSessionDialog((prev) => ({ ...prev, error: '会话名不能为空' }));
+      return;
+    }
+    if (!/^[\w\-.]{1,200}$/.test(trimmed)) {
+      setNewSessionDialog((prev) => ({
+        ...prev,
+        error: '只能包含字母、数字、下划线、连字符、点,长度 1-200',
+      }));
+      return;
+    }
     const ok = await createSession(trimmed);
     if (ok) {
       setSessionName(trimmed);
       setMessages([]);
       setStreamingContent('');
+      setNewSessionDialog({ open: false, name: '', error: '' });
+    } else {
+      setNewSessionDialog((prev) => ({ ...prev, error: '创建会话失败' }));
     }
-  }, [createSession]);
+  }, [newSessionDialog.name, createSession]);
 
   const handleRenameSession = useCallback(async (oldName: string, newName: string) => {
     const ok = await renameSession(oldName, newName);
@@ -155,9 +209,6 @@ export default function ChatPage() {
     return ok;
   }, [renameSession, sessionName]);
 
-  const canSend = socketState === 'connected' && !isRunning && input.trim().length > 0;
-  const latestEvent = events[0] || null;
-
   return (
     <main className="shell">
       <Sidebar
@@ -165,7 +216,7 @@ export default function ChatPage() {
         socketState={socketState}
         isRunning={isRunning}
         activeRunId={activeRunId}
-        onReconnect={reconnect}
+        onReset={resetStream}
         onOpenSettings={() => navigate('/onboard')}
         sessions={sessions}
         sessionsLoading={sessionsLoading}
@@ -191,12 +242,48 @@ export default function ChatPage() {
         <MessageList
           messages={messages}
           isRunning={isRunning}
-          latestEvent={latestEvent}
           streamingContent={streamingContent}
           loading={messagesLoading}
         />
-        <Composer input={input} setInput={setInput} onSend={handleSend} disabled={!canSend} />
+        <Composer
+          input={input}
+          setInput={setInput}
+          onSend={handleSend}
+          disabled={!canSend}
+          attachedFiles={attachedFiles}
+          onAddFile={handleAddFile}
+          onRemoveFile={handleRemoveFile}
+        />
       </section>
+
+      {newSessionDialog.open && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <div className="modal-card">
+            <h3>新建会话</h3>
+            <input
+              autoFocus
+              type="text"
+              value={newSessionDialog.name}
+              onChange={(e) => setNewSessionDialog((prev) => ({ ...prev, name: e.target.value, error: '' }))}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void handleConfirmNewSession();
+                else if (e.key === 'Escape') setNewSessionDialog({ open: false, name: '', error: '' });
+              }}
+              placeholder="例如:weekly-report"
+              maxLength={200}
+            />
+            {newSessionDialog.error && <p className="modal-error">{newSessionDialog.error}</p>}
+            <div className="modal-actions">
+              <button type="button" onClick={() => setNewSessionDialog({ open: false, name: '', error: '' })}>
+                取消
+              </button>
+              <button type="button" onClick={() => void handleConfirmNewSession()}>
+                创建
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

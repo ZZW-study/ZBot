@@ -15,7 +15,7 @@ from ZBot.agent.tools.base import Tool, format_tool_error
 
 # 类型检查块：仅在类型检查阶段导入 WebSearchConfig，避免运行时循环依赖
 if TYPE_CHECKING:
-    from ZBot.config.schema import WebSearchConfig
+    from ZBot.services.config.schema import WebSearchConfig
 
 # 定义常量 USER_AGENT，用于 HTTP 请求头中的 User-Agent 字段
 # 模拟 macOS 上的 Chrome 浏览器，避免被服务器拒绝
@@ -26,6 +26,9 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36"
 # 重定向 = 网站对你说：“你找的页面不在这，去另一个地址”
 # 浏览器 / 程序就会自动跳过去，这就叫一次重定向。
 MAX_REDIRECTS = 5
+
+# H20: 抓取 body 的字节上限(防止 10GB 响应直接 OOM)。
+MAX_FETCH_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
 def _strip_tags(text: str) -> str:
@@ -96,7 +99,7 @@ class WebSearchTool(Tool):
 
     def __init__(self, config: WebSearchConfig | None = None, proxy: str | None = None):
         """初始化网页搜索配置和代理地址。"""
-        from ZBot.config.schema import WebSearchConfig
+        from ZBot.services.config.schema import WebSearchConfig
 
         self.config = config if config is not None else WebSearchConfig()  # 使用传入配置或默认配置
         self.proxy = proxy  # HTTP 代理地址
@@ -267,29 +270,38 @@ class WebFetchTool(Tool):
                 timeout=30.0,  # 超时时间
                 proxy=self.proxy,  # 代理设置
             ) as client:
-                # 发送 GET 请求
-                r = await client.get(url, headers={"User-Agent": USER_AGENT})
-                r.raise_for_status()  # 检查 HTTP 状态
-
-            # 获取 Content-Type
-            ctype = r.headers.get("content-type", "")
+                # H20: 用 stream 模式 + 字节上限,避免服务器返回 GB 级 body 时直接 OOM。
+                # httpx 的 stream() 不会一次性读全 body,aread() 读满 MAX_FETCH_BYTES 就停。
+                async with client.stream("GET", url, headers={"User-Agent": USER_AGENT}) as response:
+                    response.raise_for_status()
+                    body_bytes = await response.aread()
+                    # 强制截断到 MAX_FETCH_BYTES(防御服务端不报告 Content-Length)
+                    if len(body_bytes) > MAX_FETCH_BYTES:
+                        body_bytes = body_bytes[:MAX_FETCH_BYTES]
+                    ctype = response.headers.get("content-type", "")
+                    final_url = str(response.url)
 
             # 根据内容类型处理响应
+            text: str
             if "application/json" in ctype:
                 # JSON 格式美化输出
-                text = json.dumps(r.json(), indent=2, ensure_ascii=False)
-            elif "text/html" in ctype or r.text[:256].lower().startswith(("<!doctype", "<html")):
+                try:
+                    text = json.dumps(json.loads(body_bytes), indent=2, ensure_ascii=False)
+                except Exception:
+                    text = body_bytes.decode("utf-8", errors="replace")
+            elif "text/html" in ctype or body_bytes[:256].lower().startswith((b"<!doctype", b"<html")):
                 # HTML 格式提取正文
-                text = self._extract_html_content(r.text, extract_mode)
+                html_text = body_bytes.decode("utf-8", errors="replace")
+                text = self._extract_html_content(html_text, extract_mode)
             else:
                 # 其他类型直接返回原文
-                text = r.text
+                text = body_bytes.decode("utf-8", errors="replace")
 
             # 截断超长内容
             if len(text) > max_chars:
                 text = text[:max_chars] + "\n... (truncated)"
 
-            return f"Content from {str(r.url)}:\n\n{text}"
+            return f"Content from {final_url}:\n\n{text}"
         except httpx.HTTPStatusError as e:
             return format_tool_error(
                 f"HTTP 状态码 {e.response.status_code}",

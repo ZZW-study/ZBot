@@ -1078,6 +1078,32 @@ class SkillsManager(Tool):
                 ensure_ascii=False,
             )
 
+        # H25: 删除前先 walk 目录,任何路径组件是 symlink 且指向 skills_dir 外的
+        # 就拒绝删除。shutil.rmtree 默认会跟随 symlink 把目标目录也清空,
+        # 这是 TOCTOU 类的高危行为,必须显式检查。
+        skills_root_resolved = self.skills_dir.resolve()
+        for entry in skill_dir.rglob("*"):
+            try:
+                if entry.is_symlink():
+                    target_resolved = entry.resolve()
+                    try:
+                        target_resolved.relative_to(skills_root_resolved)
+                        # 目标在 skills_dir 内,允许
+                    except ValueError:
+                        return json.dumps(
+                            {
+                                "success": False,
+                                "error": (
+                                    f"拒绝删除: 技能目录包含指向 skills_dir 外的符号链接 "
+                                    f"({entry} -> {entry.readlink()})"
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+            except OSError:
+                # broken symlink 等异常,跳过但继续检查其他条目
+                continue
+
         try:
             shutil.rmtree(skill_dir)
         except Exception as e:

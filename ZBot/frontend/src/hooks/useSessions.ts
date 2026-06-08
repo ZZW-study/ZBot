@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { createApiClient } from '../lib/api';
 import type { SessionDetailResponse, SessionSummary } from '../types';
 
@@ -8,14 +8,13 @@ export function useSessions(apiBase: string) {
   const [error, setError] = useState<string | null>(null);
 
   const api = useMemo(() => createApiClient(apiBase), [apiBase]);
-  const mountedRef = useRef(true);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const data = await api.sessions.list();
-      setSessions(data.sessions || []);
+      setSessions(data || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载会话失败');
       setSessions([]);
@@ -68,7 +67,6 @@ export function useSessions(apiBase: string) {
   }, [api]);
 
   useEffect(() => {
-    mountedRef.current = true;
     let ignore = false;
 
     async function load() {
@@ -76,7 +74,7 @@ export function useSessions(apiBase: string) {
         setLoading(true);
         setError(null);
         const data = await api.sessions.list();
-        if (!ignore) setSessions(data.sessions || []);
+        if (!ignore) setSessions(data || []);
       } catch (err) {
         if (!ignore) {
           setError(err instanceof Error ? err.message : '加载会话失败');
@@ -90,7 +88,6 @@ export function useSessions(apiBase: string) {
     load();
 
     return () => {
-      mountedRef.current = false;
       ignore = true;
     };
   }, [api]);

@@ -38,7 +38,12 @@ class Base(BaseModel):
 
     # alias_generator=to_camel 自动将下划线字段转为驼峰别名
     # populate_by_name=True 允许同时用原名和别名赋值
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+    # serialization_alias_generator 同样设上,确保 model_dump(by_alias=True) 也会输出驼峰键
+    # (Pydantic v2 默认 alias_generator 只设 validation_alias,不设 serialization_alias)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
 
 
 class ProviderConfig(Base):
@@ -104,6 +109,8 @@ class WebToolsConfig(Base):
 class ExecToolConfig(Base):
     """Shell 命令执行工具配置,用于配置 AI 执行系统命令时的参数。"""
 
+    timeout: int = 60  # 命令执行超时时间（秒）
+
 
 class MCPServerConfig(Base):
     """MCP 服务器连接配置,此配置定义了如何连接 MCP 服务器。"""
@@ -115,6 +122,7 @@ class MCPServerConfig(Base):
     env: dict[str, str] = Field(default_factory=dict)  # 环境变量
     url: str = ""  # 服务器 URL（sse/http 模式）
     headers: dict[str, str] = Field(default_factory=dict)  # HTTP 请求头
+    tool_timeout: int = 30  # 工具调用超时时间（秒）
 
     @model_validator(mode="before")
     @classmethod
@@ -150,6 +158,7 @@ class Config(Base):
     这是整个系统的核心配置类，汇总了所有配置项。
     """
 
+    _instance: ClassVar[Optional["Config"]] = None
 
     # Agent 默认配置
     workspace: str = "~/.ZBot/workspace"  # 工作区路径
@@ -157,6 +166,8 @@ class Config(Base):
     provider: str = "auto"  # LLM 提供商
     max_tokens: int = 4096  # 模型最大输出 token 数，1 token ≈ 0.5~0.8 个中文字符
     temperature: float = 0.1  # 采样温度（越低越确定，越高越随机）
+    agent_timeout_seconds: int = 3600  # 主 Agent 单轮任务最长运行时间，默认 1 小时
+    subagent_timeout_seconds: int = 600  # 子 Agent 单个子任务最长运行时间，默认 10 分钟
     context_compaction_threshold: float = 0.8  # 当前上下文接近模型窗口的比例阈值，超过后触发压缩
     recent_history_token_budget_ratio: float = 0.25  # 最近历史最多占模型上下文窗口的比例
     recent_history_max_tokens: int = 64_000  # 最近历史 token 硬上限，避免大窗口模型默认塞入过多历史
@@ -174,6 +185,11 @@ class Config(Base):
     providers: ProvidersConfig = Field(default_factory=ProvidersConfig)  # 所有 LLM 提供商
     tools: ToolsConfig = Field(default_factory=ToolsConfig)  # 所有工具配置
 
+    def __new__(cls, *args, **kwargs):
+        """确保配置对象在进程内保持单例。"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     @property
     def workspace_path(self) -> Path:
@@ -227,6 +243,8 @@ class Config(Base):
 
     @field_validator(
         "max_tokens",
+        "agent_timeout_seconds",
+        "subagent_timeout_seconds",
         "recent_history_max_tokens",
         "memory_consolidation_interval",
         "session_memory_keep_recent_tokens",

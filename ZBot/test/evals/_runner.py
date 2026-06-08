@@ -7,18 +7,13 @@ Test 2（``test_subagent_splittable_eval.py``）则把同一个父 Agent
 与真实的 :class:`SubAgent` / :class:`SubAgentPool` 拼起来，对比
 串行 vs 并发的执行效果。
 
-绕开循环导入：``ZBot.services.agent_run.__init__`` 会预导入
-``agent_factory`` -> ``core_agent`` -> ``base_agent``，而
-``ZBot.agent.base_agent`` 又会 import
-``ZBot.services.agent_run.agent_runtime``，两者相互依赖。这里
-先用 ``importlib`` 把 ``agent_runtime`` 提前加载进 ``sys.modules``，
-使 ``base_agent`` 后续 import 时能直接拿到符号，避免循环。
+``AgentRuntimeConfig`` 现在统一定义在 ``ZBot.services.config.agent_runtime``，
+``ZBot.agent.base_agent`` 也直接 import 那里，不再有循环导入问题。
 """
 
 from __future__ import annotations
 
 import asyncio
-import importlib
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,17 +21,11 @@ from typing import Any, Awaitable, Callable
 
 from loguru import logger
 
-_agent_runtime = importlib.import_module("ZBot.services.agent_run.agent_runtime")
-AgentRuntimeConfig = _agent_runtime.AgentRuntimeConfig
+from ZBot.services.config.agent_runtime import AgentRuntimeConfig
 
-_base_agent_mod = importlib.import_module("ZBot.agent.base_agent")
-BaseAgent = _base_agent_mod.BaseAgent
-
-_subagent_mod = importlib.import_module("ZBot.agent.subagent.subagent")
-SubAgent = _subagent_mod.SubAgent
-
-_pool_mod = importlib.import_module("ZBot.agent.subagent.subagent_pool")
-SubAgentPool = _pool_mod.SubAgentPool
+from ZBot.agent.base_agent import BaseAgent
+from ZBot.agent.subagent.subagent import SubAgent
+from ZBot.agent.subagent.subagent_pool import SubAgentPool
 
 from ZBot.providers.litellm_provider import LiteLLMProvider  # noqa: E402
 
@@ -85,6 +74,10 @@ class TaskRunResult:
     final_text: str = ""
     verifier_reasons: list = field(default_factory=list)
     error: str | None = None
+    # 任务难度 + 分类(新 100 条任务用 level / category,旧版用 type)。
+    # 报告里兼容两个字段。
+    task_level: int = 0
+    task_category: str = ""
 
 
 def make_provider() -> LiteLLMProvider:
@@ -124,20 +117,20 @@ class _RecoveryState:
 def _make_recovery_wrapper(registry, no_progress_limit=RECOVERY_THRESHOLD):
     """包装 ``ToolRegistry.execute``，复现 ZBot 源码中的换策略提醒逻辑。
 
-    判定规则（与 ``BaseAgent._count_no_progress_failures`` 一致）：
-    - 工具返回以"错误"开头、且没有"观察结果"的字符串时，视为一次无进展失败，计数 +1
-    - 计数达到阈值后，向返回串末尾追加 ZBot 原版换策略 system 提示
+    H35 修复:不再自实现 startswith 字符串检测,
+    直接调用 BaseAgent._count_no_progress_failures 拿到权威判定。
     """
+    from ZBot.agent.base_agent import BaseAgent
+
     state = _RecoveryState()
 
     async def execute(name, params):
         result = await registry.execute(name, params)
-        if (
-            isinstance(result, str)
-            and result.startswith("错误")
-            and "观察结果" not in result
-        ):
-            state.consecutive += 1
+        if isinstance(result, str):
+            # 复用生产代码的连续失败计数器
+            state.consecutive = BaseAgent._count_no_progress_failures(
+                state.consecutive, result
+            )
         else:
             state.consecutive = 0
         if state.consecutive >= no_progress_limit:
@@ -202,6 +195,8 @@ async def run_main_agent_task(*, task, provider, with_recovery, per_task_timeout
         final_text=final_text or "",
         verifier_reasons=reasons,
         error=error,
+        task_level=int(task.get("level", 0)),
+        task_category=str(task.get("category", task.get("type", ""))),
     )
 
 

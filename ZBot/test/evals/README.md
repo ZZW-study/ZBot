@@ -29,8 +29,8 @@ $env:PYTHONPATH = 'E:\LLMsApplicationDevelopment\ZBot'
 .venv\Scripts\python.exe -m pytest --noconftest -v ZBot/test/evals/
 ```
 
-> 注：因 `ZBot/session/manager.py` 存在未完成的 Session->Thread 重构（`Thread | None=` 占位未替换），
-> 使用 `--noconftest` 跳过父 conftest 的全量 import。`ZBot/test/evals/conftest.py` 是空的。
+> 注：eval 测试用 `--noconftest` 跳过父 conftest 的全量 import（避免 daily memory embedding
+> warmup 等副作用）。`ZBot/test/evals/conftest.py` 是空的。
 
 toutiaoA 测试:
 

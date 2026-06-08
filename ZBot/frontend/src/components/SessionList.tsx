@@ -1,4 +1,4 @@
-import { useState, type KeyboardEvent, type MouseEvent } from 'react';
+import { useRef, useState, type KeyboardEvent, type MouseEvent } from 'react';
 import type { SessionSummary } from '../types';
 
 interface SessionListProps {
@@ -13,15 +13,6 @@ interface SessionListProps {
 
 /**
  * SessionList 组件 — 会话列表
- *
- * Props:
- *   sessions        - 会话列表数组
- *   currentSession  - 当前选中的会话名
- *   onSelect        - 选择会话的回调函数
- *   onDelete        - 删除会话的回调函数
- *   onNew           - 新建会话的回调函数
- *   onRename        - 重命名会话的回调函数 (oldName, newName) => Promise<boolean>
- *   loading         - 是否正在加载
  */
 export default function SessionList({
   sessions,
@@ -34,6 +25,11 @@ export default function SessionList({
 }: SessionListProps) {
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
+  // MEDIUM 修复:用 committingRef 防止 Enter + onBlur 双触发。
+  // 之前:Enter 提交后 setEditingName(null) -> input 卸载 -> 焦点移 body
+  // 触发 onBlur -> 再次 commit(虽然 editingName=null early return,但仍会跑 setState)。
+  // 现在:commit 期间上锁,commit 完成后由调用方清锁。
+  const committingRef = useRef(false);
 
   const startEdit = (name: string) => {
     setEditingName(name);
@@ -41,12 +37,17 @@ export default function SessionList({
   };
 
   const commitEdit = async () => {
-    if (!editingName) return;
-    const trimmed = editValue.trim();
-    if (trimmed && trimmed !== editingName) {
-      await onRename(editingName, trimmed);
+    if (!editingName || committingRef.current) return;
+    committingRef.current = true;
+    try {
+      const trimmed = editValue.trim();
+      if (trimmed && trimmed !== editingName) {
+        await onRename(editingName, trimmed);
+      }
+      setEditingName(null);
+    } finally {
+      committingRef.current = false;
     }
-    setEditingName(null);
   };
 
   const handleEditKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {

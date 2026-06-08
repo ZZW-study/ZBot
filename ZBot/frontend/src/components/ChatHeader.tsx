@@ -1,5 +1,5 @@
 /**
- * ChatHeader — extracted from ChatPage. Shows thread title, model + token
+ * ChatHeader — extracted from ChatPage. Shows session title, model + token
  * usage, and a Stop button when a run is active.
  */
 
@@ -52,7 +52,7 @@ export default function ChatHeader({
           </button>
         )}
         <div>
-          <h2 className="chat-header-title">{title || 'New thread'}</h2>
+          <h2 className="chat-header-title">{title || 'New session'}</h2>
           {modelLabel && <p className="chat-header-model">{modelLabel}</p>}
           {configWarning && <p className="config-warning">{configWarning}</p>}
         </div>

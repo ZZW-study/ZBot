@@ -1,7 +1,7 @@
-﻿"""Agent run / 文件上传 / Follow-up 队列的 API 结构。
+"""Agent run / 文件上传 / Follow-up 队列的 API 结构。
 
 事件流采用 OpenAI Responses API 兼容的事件分类:
-  - session_meta: 会话/thread 元数据
+  - session_meta: 会话元数据
   - turn_context: turn 切换时的上下文快照
   - event_msg: 应用层事件(task_started/task_complete/user_message/token_count)
   - response_item: 模型原始输出(message/function_call/function_call_output/reasoning)
@@ -16,10 +16,17 @@ from datetime import datetime
 from typing import Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field
+from pydantic.alias_generators import to_camel
 
 
 class Base(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
+    """API schema 基类:snake_case 与 camelCase 双向识别,序列化时输出 camelCase。"""
+
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+
+        populate_by_name=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -38,17 +45,17 @@ RunStatus = Literal["queued", "running", "completed", "failed", "cancelled"]
 
 
 class RunStartRequest(Base):
-    """POST /api/threads/{name}/runs body。"""
+    """POST /api/sessions/{name}/runs body。"""
 
     message: str = Field(min_length=1, max_length=32000)
     file_id: Optional[str] = None
 
 
 class RunResponse(Base):
-    """POST /api/threads/{name}/runs 响应(立即返回,run 在后台跑)。"""
+    """POST /api/sessions/{name}/runs 响应(立即返回,run 在后台跑)。"""
 
     run_id: str
-    thread_name: str
+    session_name: str
     status: RunStatus
     created_at: datetime
     events_url: str
@@ -63,10 +70,10 @@ class TokenUsage(Base):
 
 
 class RunStatusResponse(Base):
-    """GET /api/threads/{name}/runs/{run_id} 响应。"""
+    """GET /api/sessions/{name}/runs/{run_id} 响应。"""
 
     run_id: str
-    thread_name: str
+    session_name: str
     status: RunStatus
     created_at: datetime
     started_at: Optional[datetime] = None
@@ -85,7 +92,7 @@ class FollowUpCreate(Base):
 
 class FollowUp(Base):
     follow_up_id: str
-    thread_name: str
+    session_name: str
     message: str
     queued_at: datetime
 
@@ -95,10 +102,10 @@ class FollowUp(Base):
 # ---------------------------------------------------------------------------
 
 class SessionMetaPayload(Base):
-    """session_meta 事件:流的开头,描述 thread 元数据。"""
+    """session_meta 事件:流的开头,描述 session 元数据。"""
 
     id: str
-    thread_name: str
+    session_name: str
     cwd: str = ""
     model_provider: str = ""
     cli_version: str = ""
@@ -109,7 +116,7 @@ class TurnContextPayload(Base):
     """turn_context 事件:turn 切换时的上下文快照。"""
 
     turn_id: str
-    thread_name: str
+    session_name: str
     model_context_window: int = 0
 
 

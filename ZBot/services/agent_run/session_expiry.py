@@ -238,7 +238,7 @@ __all__ = [
 # =====================================================================
 # 使用方式：
 #   - backend/app.py 的 lifespan 调用 session_watcher.start() / stop()
-#   - agent_ws.py 调用 session_registry.register() / touch() / unregister()
+#   - SSE 路径通过 run_registry 维护 run 生命周期(见 backend/handlers/agent_sse.py)
 # 不想用默认实例可自己 new SessionRegistry()。
 
 # 进程级注册表，所有 WS 连接 / 平台桥接共享

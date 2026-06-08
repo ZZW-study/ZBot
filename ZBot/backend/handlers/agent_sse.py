@@ -30,6 +30,7 @@ from typing import Any, AsyncIterator
 
 from loguru import logger
 
+from ZBot.backend.handlers.agent_files import file_store
 from ZBot.services.agent_run.agent_factory import AgentSetupError
 from ZBot.services.agent_run.agent_run_service import (
     AgentEvent,
@@ -189,7 +190,7 @@ def build_session_meta(state: RunState) -> dict[str, Any]:
         "type": "session_meta",
         "payload": {
             "id": state.run_id,
-            "thread_name": state.thread_name,
+            "session_name": state.session_name,
             "cwd": "",
             "model_provider": "",
             "cli_version": "0.1.0",
@@ -293,13 +294,11 @@ async def stream_run_events(
             _next_seq(),
         )
     finally:
-        # 通知队列关闭 + emit done + unregister
-        try:
-            state.event_queue.put_nowait(None)
-        except Exception:
-            pass
+        # H8 修复:不再在 SSE generator 的 finally 里 unregister(run worker 也可能
+        # 还在写 event_queue,而且 SSE 客户端断连不等于 run 结束)。
+        # 改由 run_worker 自己在所有 _ask_once 跑完后调 registry.unregister,
+        # 这样 registry 的生命周期严格跟随 run,而不是跟 SSE 客户端。
         yield format_done(_next_seq())
-        await registry.unregister(state.run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -311,6 +310,8 @@ async def run_worker(
     registry: RunRegistry,
     message: str | list[dict[str, Any]],
     follow_up_queue: FollowUpQueue | None = None,
+    *,
+    file_id: str | None = None,
 ) -> None:
     """
     Background task: drive the agent.ask() loop and feed events into
@@ -321,11 +322,11 @@ async def run_worker(
     if config is None:
         await registry.mark_ended(state.run_id, RunStatus.FAILED, "no config")
         await state.event_queue.put(
-            AgentEvent(
-                type="run.failed",
-                session_name=state.thread_name,
-                message="ZBot not configured",
-            ).to_dict()
+            AgentEvent.control_event(
+                "run.failed",
+                state.session_name,
+                "ZBot not configured",
+            )
         )
         return
 
@@ -334,12 +335,12 @@ async def run_worker(
     except AgentSetupError as exc:
         await registry.mark_ended(state.run_id, RunStatus.FAILED, exc.message)
         await state.event_queue.put(
-            AgentEvent(
-                type="run.failed",
-                session_name=state.thread_name,
-                message=exc.message,
+            AgentEvent.control_event(
+                "run.failed",
+                state.session_name,
+                exc.message,
                 payload={"code": exc.code},
-            ).to_dict()
+            )
         )
         return
 
@@ -351,13 +352,24 @@ async def run_worker(
         except Exception:
             logger.exception("run_worker sink push failed")
 
+    async def _finalize() -> None:
+        """关闭 service,触发 cron.stop / close_mcp / 记忆刷盘等副作用。
+
+        必须在 run 真正结束(正常 / 取消 / 失败)的每个出口都调一次,
+        否则 memory 永远不落盘、cron timer 泄漏、MCP 子进程句柄残留。
+        """
+        try:
+            await service.close(state.session_name)
+        except Exception:
+            logger.exception("service.close failed, run_id={}", state.run_id)
+
     async def _ask_once(prompt) -> bool:
         """Run a single ask. Returns True if it completed normally,
         False if cancelled or raised."""
         try:
             await service.ask(
                 prompt,
-                state.thread_name,
+                state.session_name,
                 event_sink=sink,
             )
             return True
@@ -366,10 +378,11 @@ async def run_worker(
             await sink(
                 AgentEvent(
                     type="run.cancelled",
-                    session_name=state.thread_name,
+                    session_name=state.session_name,
                     message="run cancelled",
                 )
             )
+            await _finalize()
             return False
         except Exception as exc:
             logger.exception("run_worker error")
@@ -377,25 +390,65 @@ async def run_worker(
             await sink(
                 AgentEvent(
                     type="run.failed",
-                    session_name=state.thread_name,
+                    session_name=state.session_name,
                     message=f"run failed: {exc}",
                 )
             )
+            await _finalize()
             return False
 
-    if not await _ask_once(message):
+    # 解析 file_id → message content blocks
+    if file_id:
+        if file_id not in file_store:
+            await registry.mark_ended(state.run_id, RunStatus.FAILED, "file_not_found")
+            await state.event_queue.put(
+                AgentEvent.control_event(
+                    "run.failed",
+                    state.session_name,
+                    "文件不存在，请重新上传文件。",
+                )
+            )
+            return
+        message_blocks: str | list[dict[str, Any]] = [
+            {"type": "text", "text": message},
+            *file_store[file_id],
+        ]
+    else:
+        message_blocks = message
+
+    if not await _ask_once(message_blocks):
+        # H8: 不管 _ask_once 成功与否,unregister 都要发生,否则 run 状态会永久驻留。
+        # 走 _finalize 之前先 mark_ended(若 _ask_once 内部没成功标记过)。
+        # 关闭 event_queue 让 SSE generator 的 await get() 拿到 None 并退出。
+        try:
+            state.event_queue.put_nowait(None)
+        except Exception:
+            pass
+        await registry.unregister(state.run_id)
         return
 
-    # Drain queued follow-ups: each enqueued message becomes another
-    # turn on the same run. Stop on cancel/failure/empty queue.
+    # 排空已排队的 follow-up:每条入队消息成为同一 run 的下一 turn
+    # 在 cancel/failure/队列空时停止。
     if follow_up_queue is not None:
         while True:
-            fu = await follow_up_queue.dequeue(state.thread_name)
+            fu = await follow_up_queue.dequeue(state.session_name)
             if fu is None:
                 break
             if not await _ask_once(fu.message):
+                try:
+                    state.event_queue.put_nowait(None)
+                except Exception:
+                    pass
+                await registry.unregister(state.run_id)
                 return
 
     await registry.mark_ended(state.run_id, RunStatus.COMPLETED, None)
+    await _finalize()
+    # H8: worker 收尾,关闭事件队列并 unregister,让 SSE generator 退出。
+    try:
+        state.event_queue.put_nowait(None)
+    except Exception:
+        pass
+    await registry.unregister(state.run_id)
 
 

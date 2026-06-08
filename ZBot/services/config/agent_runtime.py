@@ -68,6 +68,8 @@ class AgentRuntimeConfig:
     temperature: float = 0.1
     max_tokens: int = 4096
     reasoning_effort: str | None = None
+    agent_timeout_seconds: int = 3600
+    subagent_timeout_seconds: int = 600
     context_compaction_threshold: float = 0.8
     recent_history_token_budget_ratio: float = 0.25    # 历史上下文 token 占总配额的比例阈值
     recent_history_max_tokens: int = 64_000            # 最大历史上下文 token 配额
@@ -121,6 +123,8 @@ class AgentRuntimeConfig:
             temperature=config.temperature,
             max_tokens=config.max_tokens,
             reasoning_effort=config.reasoning_effort,
+            agent_timeout_seconds=config.agent_timeout_seconds,
+            subagent_timeout_seconds=config.subagent_timeout_seconds,
             context_compaction_threshold=config.context_compaction_threshold,
             recent_history_token_budget_ratio=config.recent_history_token_budget_ratio,
             recent_history_max_tokens=config.recent_history_max_tokens,
