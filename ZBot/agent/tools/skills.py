@@ -1,4 +1,4 @@
-"""技能运行时工具（改进版）。
+"""技能运行时工具。
 核心机制：
 - 模糊匹配：8 级匹配链，模型传参有偏差也能匹配
 - 原子写入：临时文件 + os.replace，写一半崩了不损坏文件
@@ -573,7 +573,7 @@ async def _normalize_manifest(skill_dir: Path) -> tuple[SkillManifest, str]:
 
 
 # =============================================================================
-# Tool 1: NewSkillsListLoader — 发现新技能
+# Tool 1: NewSkillsListLoader — 扫描技能
 # =============================================================================
 
 
@@ -660,7 +660,7 @@ class NewSkillsListLoader(Tool):
 
 
 class SkillReader(Tool):
-    """按技能名称加载 SKILL.md 正文。"""
+    """按技能名称加载 SKILL.md 正文,就是agent要使用技能会用到。"""
 
     def __init__(self, skills_dir: Path) -> None:
         self.skills_dir: Path = skills_dir
@@ -830,6 +830,7 @@ class SkillsManager(Tool):
     # -- create --
 
     async def _handle_create(self, name: str, kwargs: dict) -> str:
+        """创建技能，但是要进行多重校验：名称、frontmatter、大小、相似度、路径安全，最后原子写入，因为你的技能格式一定要保证。"""
         content: str = kwargs.get("content", "")
         force: bool = kwargs.get("force", False)
 
@@ -974,6 +975,7 @@ class SkillsManager(Tool):
     # -- patch --
 
     async def _handle_patch(self, name: str, kwargs: dict) -> str:
+        """"""
         old_string: str = kwargs.get("old_string", "")
         new_string: str = kwargs["new_string"] if "new_string" in kwargs else None  # type: ignore[assignment]
         replace_all: bool = kwargs.get("replace_all", False)
@@ -1077,6 +1079,32 @@ class SkillsManager(Tool):
                 {"success": False, "error": f"技能 '{name}' 不存在。"},
                 ensure_ascii=False,
             )
+
+        # H25: 删除前先 walk 目录,任何路径组件是 symlink 且指向 skills_dir 外的
+        # 就拒绝删除。shutil.rmtree 默认会跟随 symlink 把目标目录也清空,
+        # 这是 TOCTOU 类的高危行为,必须显式检查。
+        skills_root_resolved = self.skills_dir.resolve()
+        for entry in skill_dir.rglob("*"):
+            try:
+                if entry.is_symlink():
+                    target_resolved = entry.resolve()
+                    try:
+                        target_resolved.relative_to(skills_root_resolved)
+                        # 目标在 skills_dir 内,允许
+                    except ValueError:
+                        return json.dumps(
+                            {
+                                "success": False,
+                                "error": (
+                                    f"拒绝删除: 技能目录包含指向 skills_dir 外的符号链接 "
+                                    f"({entry} -> {entry.readlink()})"
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+            except OSError:
+                # broken symlink 等异常,跳过但继续检查其他条目
+                continue
 
         try:
             shutil.rmtree(skill_dir)

@@ -15,9 +15,9 @@ from rich.console import Console
 from rich.markdown import Markdown
 
 from ZBot import __logo__, __version__
-from ZBot.config.loader import load_config
-from ZBot.config.paths import get_cli_history_path
-from ZBot.config.schema import Config
+from ZBot.services.config.loader import load_config
+from ZBot.services.config.paths import get_cli_history_path
+from ZBot.services.config.schema import Config
 from ZBot.services.formatting import ensure_dir, ensure_workspace_dirs
 
 app = typer.Typer(name="ZBot", help="ZBot -- 你的个人 AI 助手", no_args_is_help=True)
@@ -44,8 +44,8 @@ def main(
 @app.command()
 def onboard() -> None:
     """初始化配置文件和工作区。"""
-    from ZBot.config.loader import save_config
-    from ZBot.config.paths import get_config_path
+    from ZBot.services.config.loader import save_config
+    from ZBot.services.config.paths import get_config_path
 
     config_path = get_config_path()
     if config_path.exists():

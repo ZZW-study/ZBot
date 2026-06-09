@@ -1,5 +1,5 @@
 /**
- * composer.css — Message input area
+ * composer.css — 消息输入区
  */
 
 .composer {
@@ -30,7 +30,7 @@
   box-shadow: var(--shadow-accent-sm);
 }
 
-/* Send button */
+/* 发送按钮 */
 .composer button {
   border: 0;
   border-radius: var(--radius-md);
@@ -45,7 +45,7 @@
   opacity: 0.45;
 }
 
-/* Responsive */
+/* 响应式 */
 @media (max-width: 760px) {
   .composer {
     grid-template-columns: 1fr;

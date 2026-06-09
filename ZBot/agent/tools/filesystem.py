@@ -1,6 +1,8 @@
 """文件系统工具集：读取、写入、编辑、列出目录"""
 
 import difflib
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +10,39 @@ import aiofiles
 
 from ZBot.agent.tools.base import Tool, format_tool_error
 from ZBot.services.formatting import path_failure_hint, resolve_path
+
+# H18: 写文件时一次性读太多会 OOM(ReadFileTool),写入则用临时文件 + os.replace 原子化,
+# 避免进程被杀中途留半截文件。ReadFileTool 的字节上限放在 _MAX_READ_BYTES。
+_MAX_READ_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+async def _atomic_write_bytes(fp: Path, content: bytes) -> None:
+    """原子写字节:先写临时文件,再 os_replace。
+    保证即使进程中途被杀,目标文件要么是旧版本要么是新版本,不会半截。
+    临时文件放在目标文件同目录,保证 os_replace 原子性(跨文件系统会降级)。
+    """
+    fp.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(
+        dir=str(fp.parent),
+        prefix=f".{fp.name}.tmp.",
+        suffix="",
+    )
+    os.close(fd)
+    try:
+        async with aiofiles.open(temp_path, "wb") as f:
+            await f.write(content)
+        os.replace(temp_path, fp)
+    except Exception:
+        try:
+            os.unlink(temp_path)
+        except OSError:
+            pass
+        raise
+
+
+async def _atomic_write_text(fp: Path, content: str, encoding: str = "utf-8") -> None:
+    """原子写文本,语义同 _atomic_write_bytes。"""
+    await _atomic_write_bytes(fp, content.encode(encoding))
 
 
 class ReadFileTool(Tool):
@@ -111,9 +146,14 @@ class ReadFileTool(Tool):
                     next_action=next_action,
                 )
 
-            # 读取文件全部行
-            async with aiofiles.open(fp, mode="r", encoding="utf-8") as f:
-                content = await f.read()
+            # H19: 不再整文件 read,改用 _MAX_READ_BYTES 上限截断,防止 OOM。
+            # 字节数到上限立刻停止,后续逻辑正常处理(全文件大小写不影响)。
+            async with aiofiles.open(fp, mode="rb") as f:
+                raw_bytes = await f.read(_MAX_READ_BYTES + 1)
+            truncated_by_cap = len(raw_bytes) > _MAX_READ_BYTES
+            if truncated_by_cap:
+                raw_bytes = raw_bytes[:_MAX_READ_BYTES]
+            content = raw_bytes.decode("utf-8", errors="replace")
             all_lines = content.splitlines()
             # fp.read_text(encoding="utf-8")
             # 打开文件 fp
@@ -239,11 +279,8 @@ class WriteFileTool(Tool):
         try:
             # 解析路径(包含了文件)并检查是否在允许范围内
             fp = resolve_path(path, self._workspace, self._allowed_dir)
-            # 自动创建所有缺失的父目录
-            fp.parent.mkdir(parents=True, exist_ok=True)
-            # 写入文件内容, write_text() 会自动创建不存在的文件。只会创建文件本身，不会自动创建父级文件夹
-            async with aiofiles.open(fp, mode="w", encoding="utf-8") as f:
-                await f.write(content)
+            # H18: 用原子写避免半截文件
+            await _atomic_write_text(fp, content)
 
             return f"已成功写入文件：{fp}（共 {len(content)} 个字符）"
         except PermissionError as e:
@@ -394,12 +431,16 @@ class EditFileTool(Tool):
                     next_action=f"先调用 list_dir 查看父目录：{fp.parent}",
                 )
 
-            # 以二进制读取，返回字节串（bytes），检测换行符类型（CRLF 还是 LF）
+            # 以二进制读取,检测换行符类型（CRLF 还是 LF）
+            # H19: 同样用 _MAX_READ_BYTES 上限,避免 GB 级文件 OOM
             async with aiofiles.open(fp, mode="rb") as f:
-                raw = await f.read()
+                raw = await f.read(_MAX_READ_BYTES + 1)
+            truncated_by_cap = len(raw) > _MAX_READ_BYTES
+            if truncated_by_cap:
+                raw = raw[:_MAX_READ_BYTES]
             uses_crlf = b"\r\n" in raw  # Windows 换行符
             # 统一转为 LF 处理
-            content = raw.decode("utf-8").replace("\r\n", "\n")
+            content = raw.decode("utf-8", errors="replace").replace("\r\n", "\n")
 
             # 查找要替换的旧文本（也统一转为 LF）
             match, count = _find_match(content, old_text.replace("\r\n", "\n"))
@@ -421,8 +462,8 @@ class EditFileTool(Tool):
             if uses_crlf:
                 new_content = new_content.replace("\n", "\r\n")
 
-            # 写回文件
-            fp.write_bytes(new_content.encode("utf-8"))
+            # H18: 原子写
+            await _atomic_write_bytes(fp, new_content.encode("utf-8"))
             return f"已成功编辑文件：{fp}"
 
         except PermissionError as e:

@@ -12,9 +12,9 @@ from fastapi import APIRouter, HTTPException
 from pydantic import ValidationError
 
 from ZBot.backend.handlers.config import config_payload, config_saved_payload, config_status_payload
-from ZBot.config.loader import save_config
-from ZBot.config.schema import Config
-from ZBot.services.config import (
+from ZBot.services.config.loader import save_config
+from ZBot.services.config.schema import Config
+from ZBot.services.config.config import (
     PROVIDER_DEFAULTS,
     config_cache,
     merge_config_patch,
@@ -47,9 +47,8 @@ async def provider_defaults() -> dict[str, dict[str, str]]:
     return PROVIDER_DEFAULTS
 
 
-@router.put("")
-async def put_config(body: dict[str, Any]) -> dict[str, Any]:
-    """接收前端提交的局部配置，合并当前配置后校验并写盘。"""
+def _save_merged_config(body: dict[str, Any]) -> dict[str, Any]:
+    """合并当前配置、校验、写盘、更新缓存,返回保存响应。"""
     current = config_cache.get() or Config()
     try:
         config = merge_config_patch(current, body)
@@ -60,3 +59,15 @@ async def put_config(body: dict[str, Any]) -> dict[str, Any]:
     config_cache.invalidate()
     ensure_workspace_dirs(workspace=config.workspace_path)
     return config_saved_payload(config)
+
+
+@router.put("")
+async def put_config(body: dict[str, Any]) -> dict[str, Any]:
+    """接收前端提交的局部配置，合并当前配置后校验并写盘。"""
+    return _save_merged_config(body)
+
+
+@router.patch("")
+async def patch_config(body: dict[str, Any]) -> dict[str, Any]:
+    """部分更新(merge 语义):同 PUT 实现,前端统一用 PATCH 表达"增量更新"。"""
+    return _save_merged_config(body)

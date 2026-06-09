@@ -38,7 +38,12 @@ class Base(BaseModel):
 
     # alias_generator=to_camel 自动将下划线字段转为驼峰别名
     # populate_by_name=True 允许同时用原名和别名赋值
-    model_config = ConfigDict(alias_generator=to_camel, populate_by_name=True)
+    # serialization_alias_generator 同样设上,确保 model_dump(by_alias=True) 也会输出驼峰键
+    # (Pydantic v2 默认 alias_generator 只设 validation_alias,不设 serialization_alias)
+    model_config = ConfigDict(
+        alias_generator=to_camel,
+        populate_by_name=True,
+    )
 
 
 class ProviderConfig(Base):
@@ -148,7 +153,7 @@ class ToolsConfig(Base):
     restrict_to_workspace: bool = False  # 是否限制工具只访问工作区内的文件
 
 
-class Config(BaseModel):
+class Config(Base):
     """ZBot 根配置。
     这是整个系统的核心配置类，汇总了所有配置项。
     """

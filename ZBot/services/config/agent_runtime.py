@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ZBot.config.schema import Config, ExecToolConfig, WebSearchConfig
+from ZBot.services.config.schema import Config, ExecToolConfig, WebSearchConfig
 
 
 # ── @dataclass ──────────────────────────────────────────────────────────────

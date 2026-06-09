@@ -308,14 +308,26 @@ class ExecTool(Tool):
 
         # ========== 第二层：路径限制检查 ==========
         if self.restrict_to_workspace:
-            # 检查路径穿越攻击（如 ../../）
-            # ../：Linux/macOS 系统的上级目录写法
-            # ..\\：Windows 系统的上级目录写法（双反斜杠是 Python 转义写法）
+            # C6 修复:不只匹配字面 "..\\" / "../",
+            # 还要拦截"裸 `..` token"和 `cd ..` 的写法(原代码会漏掉 `cd ..`、`'..'`、`(..)` 等)。
+            # 思路:把命令按 shell token 拆分,只要发现任何 token 严格等于 ".."(去引号后)就拒绝。
+            has_parent_ref = False
+            # 1) 字面子串形式
             if "..\\" in cmd or "../" in cmd:
+                has_parent_ref = True
+            # 2) `cd ..` 形式
+            if re.search(r"\bcd\s+\.\.\s*(?:[;&|]|$)", cmd):
+                has_parent_ref = True
+            # 3) 裸 `..` token(允许两侧有空白/分号/管道/重定向/引号)
+            for token in re.findall(r"""['"`\s](\.\.)['"`\s;,|&)(]""", cmd):
+                if token == "..":
+                    has_parent_ref = True
+                    break
+            if has_parent_ref:
                 return format_tool_error(
                     "命令被安全策略拦截，检测到路径穿越",
                     attempted=f"在 {cwd} 执行：{command}",
-                    observed="命令中包含 ../ 或 ..\\",
+                    observed="命令中包含 ../ / ..\\ / 裸 .. / cd .. 中的任一种",
                     do_not_repeat="不要继续用路径穿越访问工作区外内容",
                     next_action="把目标路径改成工作区内路径，或先用 list_dir 确认可访问目录",
                 )

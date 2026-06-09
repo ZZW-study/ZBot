@@ -7,8 +7,8 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from ZBot.config.paths import get_config_path
-from ZBot.config.schema import Config
+from ZBot.services.config.paths import get_config_path
+from ZBot.services.config.schema import Config
 
 
 def load_config(config_path: Path | None = None) -> Config | None:
@@ -38,7 +38,12 @@ def load_config(config_path: Path | None = None) -> Config | None:
 def save_config(config: Config, config_path: Path | None = None) -> None:
     """
     把配置对象写回磁盘。
+
+    H4 修复:写完磁盘后立即调用 config_cache.invalidate(),
+    让所有 in-process 读者下次 get() 重新读盘。
+    否则内存里的 Config 对象能保留旧值长达 1 小时 (TTL)。
     """
+    from ZBot.services.config.config import config_cache
     from ZBot.services.formatting import ensure_dir
 
     path = config_path or get_config_path()
@@ -47,3 +52,6 @@ def save_config(config: Config, config_path: Path | None = None) -> None:
     # 将 Config 对象转换为字典并写入 JSON 文件
     data = config.model_dump(by_alias=True)
     path.write_text(json.dumps(data, indent=4, ensure_ascii=False), encoding="utf-8")
+
+    # 写盘后必须 invalidate 缓存,否则后续请求读到的还是旧值
+    config_cache.invalidate()

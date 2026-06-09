@@ -1,6 +1,6 @@
 /**
- * OnboardPage.jsx — Configuration page
- * Used for both initial setup and settings modification.
+ * OnboardPage.jsx — 配置页面
+ * 同时用于初始配置和修改设置。
  */
 
 import { useEffect, useState, type KeyboardEvent } from 'react';
@@ -45,8 +45,13 @@ export default function OnboardPage({ apiBase, isSettings = false, onConfigured 
         let current = null;
         try {
           current = await api.config.get();
-        } catch {
-          // Config may not exist yet
+        } catch (err) {
+          // 配置可能尚未存在 — 但如果是非 404 错误(网络、500 等),
+          // 要给用户提示,而不是静默回退到默认值。
+          const status = (err as { status?: number })?.status;
+          if (status && status !== 404) {
+            setError(`读取现有配置失败: ${err instanceof Error ? err.message : '未知错误'}`);
+          }
         }
         if (ignore) return;
 
@@ -59,8 +64,9 @@ export default function OnboardPage({ apiBase, isSettings = false, onConfigured 
         setModel(current?.model || defaultsData[currentProvider]?.model_placeholder || '');
         setApiBaseInput(providerData.apiBase || defaultsData[currentProvider]?.api_base || '');
         setHasExistingKey(Boolean(providerData.apiKey));
-      } catch {
+      } catch (err) {
         if (ignore) return;
+        setError(err instanceof Error ? err.message : '加载配置失败');
         setApiBaseInput('');
         setModel('');
       }
@@ -77,8 +83,10 @@ export default function OnboardPage({ apiBase, isSettings = false, onConfigured 
       setApiBaseInput(defaults[value].api_base || '');
       setModel(defaults[value].model_placeholder || '');
     }
+    // MEDIUM 修复:不立即清空已输入的 apiKey,留给 save 时按"留空则保留"语义处理。
+    // 之前切 provider 会无条件清空,如果用户已经输入 key 然后误改 dropdown,
+    // 必须重新输入。改为只更新 hasExistingKey 标记。
     setHasExistingKey(false);
-    setApiKey('');
   };
 
   const canSave = model.trim().length > 0

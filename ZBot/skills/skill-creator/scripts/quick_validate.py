@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Minimal validator for nanobot skill folders.
+用于 nanobot 技能文件夹的极简验证器。
 """
 
 import re
@@ -37,7 +37,7 @@ def _extract_frontmatter(content: str) -> Optional[str]:
 
 
 def _parse_simple_frontmatter(frontmatter_text: str) -> Optional[dict[str, str]]:
-    """Fallback parser for simple frontmatter when PyYAML is unavailable."""
+    """在未安装 PyYAML 时,用于简单 frontmatter 的回退解析器。"""
     parsed: dict[str, str] = {}
     current_key: Optional[str] = None
     multiline_key: Optional[str] = None
@@ -122,7 +122,7 @@ def _validate_description(description: str) -> Optional[str]:
 
 
 def validate_skill(skill_path):
-    """Validate a skill folder structure and required frontmatter."""
+    """验证技能文件夹结构及必需的 frontmatter。"""
     skill_path = Path(skill_path).resolve()
 
     if not skill_path.exists():

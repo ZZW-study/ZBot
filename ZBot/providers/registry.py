@@ -116,7 +116,7 @@ def find_gateway(provider_name: str | None) -> ProviderSpec | None:
 
 
 def context_window_for_model(model: str, provider: ProviderSpec | None = None) -> int | None:
-    """Return a locally maintained context window for models missing from LiteLLM metadata."""
+    """返回 LiteLLM 元数据缺失的模型的本地维护的上下文窗口大小。"""
     for candidate in (model, model.split("/", 1)[-1]):
         if candidate in MODEL_CONTEXT_WINDOWS:
             return MODEL_CONTEXT_WINDOWS[candidate]

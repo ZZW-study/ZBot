@@ -1,6 +1,6 @@
 """子 Agent 执行单元池。
 
-第一版先复用内存里的 SubAgent 实例；后续如果要替换成多进程池，
+第一版先复用内存里的 SubAgent 实例;后续如果要替换成多进程池,
 只需要保持 acquire/release/close 这一层接口稳定。
 """
 
@@ -10,6 +10,8 @@ import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import AsyncIterator
+
+from loguru import logger
 
 from ZBot.agent.base_agent import BaseAgent
 from ZBot.agent.subagent.subagent import SubAgent
@@ -21,19 +23,23 @@ class SubAgentPolicy:
 
     # 主 Agent 一次最多能同时借出的子 Agent 执行单元数量。
     max_count: int = 5
-    # 单个子任务的默认最大执行时间；运行时配置未传入时使用，默认 10 分钟。
+    # 单个子任务的默认最大执行时间;运行时配置未传入时使用,默认 10 分钟。
     timeout_seconds: int = 600
 
 
-# 全局唯一的内部策略对象，和 SubAgentPool 放在一起，避免额外拆一个策略文件。
+# 全局唯一的内部策略对象,和 SubAgentPool 放在一起,避免额外拆一个策略文件。
 SUBAGENT_POLICY = SubAgentPolicy()
+
+
+# H23: Sentinel 哨兵对象,用于唤醒可能在 _available.get() 上挂死的 acquire(),
+# 让它在 close 后能立刻抛 RuntimeError 而不是无限等待。
+_CLOSE_SENTINEL: "SubAgentLease" = None  # type: ignore[assignment]
 
 
 class SubAgentLease:
     """一次从池里借出的子 Agent 执行单元。"""
 
     def __init__(self, agent_id: str, agent: SubAgent) -> None:
-        """???????? Agent ??????"""
         self.agent_id: str = agent_id
         self.agent: SubAgent = agent
 
@@ -41,7 +47,7 @@ class SubAgentLease:
 class SubAgentPool:
     """预创建并复用子 Agent 实例。
 
-    当前实现是同进程内的实例池；设计上刻意像执行单元池，
+    当前实现是同进程内的实例池;设计上刻意像执行单元池,
     方便后面把 SubAgent 替换成独立进程代理而不改 create_sub_agent 工具。
     """
 
@@ -51,28 +57,24 @@ class SubAgentPool:
             SubAgentLease(agent_id=f"subagent_{index}", agent=SubAgent.from_parent(parent))
             for index in range(1, max_count + 1)
         ]
-        self._available: asyncio.Queue[SubAgentLease] = asyncio.Queue(maxsize=max_count)
+        self._available: asyncio.Queue["SubAgentLease"] = asyncio.Queue(maxsize=max_count)
         for lease in self._leases:
-            # 普通 put()：队列满了会阻塞等待有空位
-            # put_nowait()：不阻塞、立即放入；如果队列已满直接抛异常，不等待
             self._available.put_nowait(lease)
         self._closed = False
 
     @asynccontextmanager
-    # Python contextlib 提供的异步上下文管理器装饰器
-    # 把一个异步生成器函数，快速变成异步上下文管理器，可以用 async with 语法。
-    # 函数必须是 async def，且是生成器（带 yield）
-    # 执行流程：
-    # async with 进入时：执行 yield **之前** 的代码（初始化 / 资源申请）
-    # yield 切到业务逻辑
-    # 代码块退出时：执行 yield **之后** 的代码（释放资源、收尾）
-    # 专门给异步 IO用，替代手动写 __aenter__ / __aexit__ 魔法方法，极简封装异步资源（数据库连接、异步锁、网络会话等）
     async def acquire(self) -> AsyncIterator[SubAgentLease]:
-        """借出一个子 Agent；任务结束后自动归还池中。"""
+        """借出一个子 Agent;任务结束后自动归还池中。
+
+        H23 修复:如果 close() 在 await get() 期间被调用,队列里会是哨兵 None,
+        这里直接抛 RuntimeError 而不是继续 yield 一个不存在的 lease。
+        """
         if self._closed:
             raise RuntimeError("子 Agent 池已经关闭")
 
         lease = await self._available.get()
+        if lease is _CLOSE_SENTINEL:
+            raise RuntimeError("子 Agent 池已经关闭")
         try:
             yield lease
         finally:
@@ -80,20 +82,35 @@ class SubAgentPool:
                 self._available.put_nowait(lease)
 
     async def close(self) -> None:
-        """关闭池。后续替换为多进程实现时，在这里终止所有子进程。"""
+        """关闭池。后续替换为多进程实现时,在这里终止所有子进程。
+
+        H23 修复:
+          1. 先翻 _closed 标志,后续 acquire() 入口直接拒绝。
+          2. 排空队列 + push 哨兵唤醒所有挂死的 acquire waiter。
+          3. 关闭每个 SubAgent 持有的资源(MCP 连接、embedding 等)。
+        """
+        if self._closed:
+            return
         self._closed = True
+        # 先排空已有 lease,避免哨兵和 lease 在队列里混杂
         while not self._available.empty():
-            # 非阻塞从队列里取出一个元素，不等待.--->用get也可以。
-            # 阻塞（get()）
-            # pythonitem = await queue.get()  # 队列空了 → 程序在这里"卡住"等待
-            # # 直到有元素放进来，才继续往下执行
-            # 线程/协程被挂起，什么都干不了，就是傻等。
-            # 非阻塞（get_nowait()）
-            # pythontry:
-            #     item = self._available.get_nowait()  # 队列空了 → 立刻抛出异常，不等
-            # except asyncio.QueueEmpty:
-            #     # 没拿到，但程序继续正常运行，可以做别的事
-            #     pass
-            # 有元素 → 取出来返回 ✅
-            # 没元素 → 抛出 asyncio.QueueEmpty 异常 ❌（不等待）
             self._available.get_nowait()
+        # 对每个 max_size 推一个哨兵,确保所有 waiter 都被唤醒。
+        # put_nowait 在 queue 已满(maxsize)时抛 QueueFull,这是预期的。
+        for _ in range(self._available.maxsize):
+            try:
+                self._available.put_nowait(_CLOSE_SENTINEL)
+            except asyncio.QueueFull:
+                break
+        # 关闭所有 SubAgent 持有的资源(close 可能是 async 或 sync)
+        for lease in self._leases:
+            try:
+                agent = lease.agent
+                close_attr = getattr(agent, "close", None)
+                if not callable(close_attr):
+                    continue
+                result = close_attr()
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception:
+                logger.exception("关闭子 Agent {} 失败", lease.agent_id)

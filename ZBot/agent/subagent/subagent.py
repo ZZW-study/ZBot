@@ -11,7 +11,7 @@ from loguru import logger
 from ZBot.agent.base_agent import BaseAgent
 from ZBot.agent.tools.base import format_tool_error
 from ZBot.agent.tools.registry import ToolRegistry
-from ZBot.config.agent_runtime import AgentRuntimeConfig
+from ZBot.services.config.agent_runtime import AgentRuntimeConfig
 from ZBot.prompts.agent import SUBAGENT_FALLBACK_RULES
 from ZBot.providers.base import LLMProvider, ToolCallRequest
 
@@ -24,8 +24,12 @@ class SubAgent(BaseAgent):
     传入的消息链，因此不会残留上一轮子任务的消息或参数。
     """
 
-    # parents[3]：向上回溯 3 层上级目录，因此 parents[3] 指回 ZBot 根目录，再进入 templates/SUBAGENT.md。
-    _SUBAGENT_RULES_PATH = Path(__file__).parents[3] / "templates" / "SUBAGENT.md"
+    # parents[2]：向上回溯 2 层上级目录，即 ZBot 包根目录，再进入 templates/SUBAGENT.md。
+    # parents[0] = ZBot/agent/subagent, parents[1] = ZBot/agent, parents[2] = ZBot
+    _SUBAGENT_RULES_PATH = Path(__file__).parents[2] / "templates" / "SUBAGENT.md"
+    # H15: 进程级缓存,避免每次 process_messages 都做同步磁盘 IO。
+    # 注意:此处故意用可变 list 作 holder,因为 str 不可变;第一个元素为 None 表示尚未读取。
+    _CACHED_RULES_HOLDER: list[str | None] = [None]
 
     def __init__(
         self,
@@ -158,8 +162,18 @@ class SubAgent(BaseAgent):
 
         模板文件存在时使用模板；不存在时返回最小兜底规则，保证子 Agent
         仍然不会变成长期会话主体。
-        """
-        if cls._SUBAGENT_RULES_PATH.exists():
-            return cls._SUBAGENT_RULES_PATH.read_text(encoding="utf-8")
 
-        return SUBAGENT_FALLBACK_RULES
+        H15: 用类级 holder 缓存,只在第一次调用时执行同步 IO;后续调用直接返回缓存。
+        holder 是 list[str | None] 而非 str 变量,后者不可变无法表达"尚未读取"状态。
+        """
+        cached = cls._CACHED_RULES_HOLDER[0]
+        if cached is not None:
+            return cached
+
+        if cls._SUBAGENT_RULES_PATH.exists():
+            content = cls._SUBAGENT_RULES_PATH.read_text(encoding="utf-8")
+        else:
+            content = SUBAGENT_FALLBACK_RULES
+
+        cls._CACHED_RULES_HOLDER[0] = content
+        return content

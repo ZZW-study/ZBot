@@ -1,6 +1,6 @@
 """Agent run 生命周期服务。
 
-CLI、WebSocket 后端等入口都通过这里驱动一次 Agent 运行；展示层只消费
+CLI、SSE 后端等入口都通过这里驱动一次 Agent 运行；展示层只消费
 结构化事件，不直接耦合 Agent 内部进度回调。
 """
 
@@ -30,6 +30,7 @@ class AgentEvent:
     session_name: str
     message: str = ""
     agent_label: str | None = None
+    run_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=lambda: datetime.now(BEIJING_TZ).isoformat())
 
@@ -39,6 +40,8 @@ class AgentEvent:
             "type": self.type,
             "session_name": self.session_name,
             "message": self.message,
+            "agent_label": self.agent_label,
+            "run_id": self.run_id,
             "payload": self.payload,
             "created_at": self.created_at,
         }
@@ -62,7 +65,7 @@ class AgentEvent:
 
 
 
-from ZBot.config.schema import Config
+from ZBot.services.config.schema import Config
 from ZBot.services.agent_run.agent_factory import create_agent_bundle
 def create_agent_run_service(config: Config) -> AgentRunService:
     """从 Config 创建 AgentRunService。
@@ -98,7 +101,7 @@ class AgentRunService:
         *,
         event_sink: EventSink,
     ) -> None:
-        """启动会话级资源；交互会话/WebSocket 连接期间只调用一次，并没有调用大模型接口，而且没有真正启动 Agent，
+        """启动会话级资源；交互会话/SSE 连接期间只调用一次，并没有调用大模型接口，而且没有真正启动 Agent，
         只是准备好了环境，真正的 Agent 启动是在 ask() 里调用的，并不要求强制调用 start()，如果直接调用 ask()，它会在内部调用 start() 来确保环境准备就绪。"""
         if self._closed:
             raise RuntimeError("AgentRunService 已关闭，不能再次启动")
@@ -128,19 +131,29 @@ class AgentRunService:
 
         self._event_sink = event_sink
         self._session_name = session_name
-        await event_sink(self._event("turn.started", session_name, "开始处理本轮消息"))
+        # H2: 给本轮分配一个稳定 turn_id,塞到 turn.started / turn.completed / run.completed
+        # 的 payload 中。前端 useAgentStream 拿这个 turn_id 正确把 deltas 路由到对应 turn。
+        turn_id = str(uuid.uuid4())
+        await event_sink(
+            self._event(
+                "turn.started",
+                session_name,
+                "开始处理本轮消息",
+                payload={"turn_id": turn_id},
+            )
+        )
         try:
             final_content = await self.bundle.agent.process_message(
                 message,
                 session_name,
-                on_progress=self._progress_sink(session_name, event_sink),
+                on_progress=self._progress_sink(session_name, event_sink, turn_id=turn_id),
             )
             await event_sink(
                 self._event(
                     "turn.completed",
                     session_name,
                     "本轮消息处理完成",
-                    payload={"final_content": final_content},
+                    payload={"final_content": final_content, "turn_id": turn_id},
                 )
             )
             await event_sink(
@@ -148,7 +161,7 @@ class AgentRunService:
                     "run.completed",
                     session_name,
                     "任务完成",
-                    payload={"final_content": final_content},
+                    payload={"final_content": final_content, "turn_id": turn_id},
                 )
             )
             return final_content
@@ -173,6 +186,8 @@ class AgentRunService:
             return
 
         self._closed = True
+        # cron/service.py:CronService.stop 是 sync 函数(只 cancel _timer_task),
+        # 不是 coroutine,所以不需要 await。这里显式调用,见 cron/service.py:122-127。
         self.bundle.cron.stop()
         try:
             await self.bundle.agent.close_mcp()
@@ -218,6 +233,8 @@ class AgentRunService:
         self,
         session_name: str,
         event_sink: EventSink,
+        *,
+        turn_id: str = "",
     ) -> Callable[..., Awaitable[None]]:
         """把 BaseAgent 的字符串进度回调转换为结构化事件。"""
 
@@ -230,13 +247,17 @@ class AgentRunService:
         ) -> None:
             """接收 Agent 内部进度并发送事件。"""
             event_type = str(kwargs.pop("event_type", "") or ("tool.progress" if tool_hint else "agent.progress"))
+            # H2: 把 turn_id 注入到所有 progress 事件的 payload,前端按它路由 deltas。
+            payload = dict(kwargs)
+            if turn_id:
+                payload.setdefault("turn_id", turn_id)
             await event_sink(
                 self._event(
                     event_type,
                     session_name,
                     content,
                     agent_label=agent_label,
-                    payload=kwargs,
+                    payload=payload,
                 )
             )
 
@@ -249,6 +270,7 @@ class AgentRunService:
         message: str = "",
         *,
         agent_label: str | None = None,
+        run_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> AgentEvent:
         """构造统一事件对象。"""
@@ -257,6 +279,7 @@ class AgentRunService:
             session_name=session_name,
             message=message,
             agent_label=agent_label,
+            run_id=run_id,
             payload=payload or {},
         )
 

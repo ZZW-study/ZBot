@@ -1,10 +1,10 @@
 /**
- * api.js — Unified REST API client
- * Centralizes fetch calls, base URL, error handling, and JSON parsing.
+ * api.js — 统一的 REST API 客户端
+ * 集中处理 fetch 请求、基础 URL、错误处理和 JSON 解析。
  */
 
 /**
- * Custom API error with HTTP status and backend error code.
+ * 自定义 API 错误,包含 HTTP 状态码和后端错误码。
  */
 import type { ConfigDefaults, ConfigPatch, ConfigResponse, SessionDetailResponse, SessionSummary } from '../types';
 
@@ -17,12 +17,9 @@ interface ApiErrorBody {
 interface ConfigStatusResponse {
   exists: boolean;
   configured: boolean;
+  model?: string;
   provider?: string;
   reason?: string;
-}
-
-interface SessionsListResponse {
-  sessions: SessionSummary[];
 }
 
 interface OkResponse {
@@ -30,6 +27,15 @@ interface OkResponse {
   name?: string;
   error?: string;
   [key: string]: unknown;
+}
+
+interface StartRunResponse {
+  runId: string;
+  sessionName: string;
+  status: string;
+  createdAt: string;
+  eventsUrl: string;
+  statusUrl: string;
 }
 
 export class ApiError extends Error {
@@ -45,9 +51,9 @@ export class ApiError extends Error {
 }
 
 /**
- * Create an API client bound to a specific base URL.
+ * 创建一个绑定到指定基础 URL 的 API 客户端。
  *
- * @param {string} apiBase — e.g. "http://localhost:8000"
+ * @param {string} apiBase — 例如 "http://localhost:8000"
  * @returns {object} — { sessions, config, multimodal }
  */
 export function createApiClient(apiBase: string) {
@@ -72,19 +78,63 @@ export function createApiClient(apiBase: string) {
     return res.json() as Promise<T>;
   }
 
+  /**
+   * 一些 RESTful 端点返回 204 No Content(删除 / 取消成功等)。
+   * 该辅助函数把 204 当作成功,返回 undefined;非 2xx 仍走 request 的错误分支。
+   */
+  async function requestVoid(path: string, options: globalThis.RequestInit = {}): Promise<void> {
+    const url = `${apiBase}${path}`;
+    const isFormData = options.body instanceof FormData;
+    const headers = isFormData
+      ? { ...options.headers }
+      : { 'Content-Type': 'application/json', ...options.headers };
+
+    const res = await fetch(url, { ...options, headers });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as ApiErrorBody;
+      throw new ApiError(
+        body.detail || body.message || res.statusText,
+        res.status,
+        body.code,
+      );
+    }
+    // 204 / 空 body 视为成功
+  }
+
   return {
     sessions: {
-      list: () => request<SessionsListResponse>('/api/sessions'),
+      list: () => request<SessionSummary[]>('/api/sessions'),
       get: (name: string) => request<SessionDetailResponse>(`/api/sessions/${encodeURIComponent(name)}`),
-      delete: (name: string) => request<OkResponse>(`/api/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
+      delete: (name: string) => requestVoid(`/api/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
       create: (name: string) => request<OkResponse>('/api/sessions', {
         method: 'POST',
         body: JSON.stringify({ name }),
       }),
       rename: (oldName: string, newName: string) => request<OkResponse>(`/api/sessions/${encodeURIComponent(oldName)}`, {
-        method: 'PUT',
+        method: 'PATCH',
         body: JSON.stringify({ name: newName }),
       }),
+      runs: {
+        start: (sessionName: string, message: string, fileId?: string) => request<StartRunResponse>(
+          `/api/sessions/${encodeURIComponent(sessionName)}/runs`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ message, ...(fileId ? { file_id: fileId } : {}) }),
+          },
+        ),
+        cancel: (sessionName: string, runId: string) => requestVoid(
+          `/api/sessions/${encodeURIComponent(sessionName)}/runs/${encodeURIComponent(runId)}`,
+          { method: 'DELETE' },
+        ),
+      },
+    },
+    files: {
+      upload: (files: File[]) => {
+        const form = new FormData();
+        files.forEach((f) => form.append('files', f));
+        return request<{ file_id: string }>('/api/agent/files', { method: 'POST', body: form });
+      },
     },
     config: {
       status: () => request<ConfigStatusResponse>('/api/config/status'),

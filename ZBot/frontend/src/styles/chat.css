@@ -1,5 +1,5 @@
 /**
- * chat.css — Chat area: header, message list, message bubbles
+ * chat.css — 聊天区:头部、消息列表、消息气泡
  */
 
 .chat {
@@ -8,7 +8,7 @@
   grid-template-rows: auto minmax(0, 1fr) auto;
 }
 
-/* Chat header */
+/* 聊天头部 */
 .chat-header {
   height: var(--chat-header-height);
   border-bottom: 1px solid var(--color-border-light);
@@ -32,7 +32,7 @@
   line-height: var(--leading-normal);
 }
 
-/* Message list */
+/* 消息列表 */
 .message-list {
   overflow-y: auto;
   padding: var(--space-7);
@@ -47,7 +47,7 @@
   font-size: var(--text-sm);
 }
 
-/* Single message */
+/* 单条消息 */
 .message {
   max-width: min(760px, 88%);
   display: grid;
@@ -71,7 +71,7 @@
   background: var(--color-surface);
 }
 
-/* User message (right-aligned) */
+/* 用户消息(右对齐) */
 .message.user {
   align-self: flex-end;
 }
@@ -86,12 +86,12 @@
   color: var(--color-surface);
 }
 
-/* Streaming message */
+/* 流式消息 */
 .message.streaming p {
   color: var(--color-text-secondary);
 }
 
-/* Stop button */
+/* 停止按钮 */
 .stop-button {
   border: 0;
   border-radius: var(--radius-md);
@@ -109,7 +109,7 @@
   opacity: 0.45;
 }
 
-/* Responsive */
+/* 响应式 */
 @media (max-width: 760px) {
   .chat-header {
     height: auto;

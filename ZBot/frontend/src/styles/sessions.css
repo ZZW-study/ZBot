@@ -1,5 +1,5 @@
 /**
- * sessions.css — Session list in sidebar
+ * sessions.css — 侧边栏中的会话列表
  */
 
 .session-input {
@@ -18,7 +18,7 @@
   box-shadow: var(--shadow-accent-sm);
 }
 
-/* Session list container */
+/* 会话列表容器 */
 .session-list {
   display: flex;
   flex-direction: column;
@@ -61,7 +61,7 @@
   color: var(--color-brand-accent);
 }
 
-/* Session items list */
+/* 会话项列表 */
 .session-items {
   list-style: none;
   margin: 0;

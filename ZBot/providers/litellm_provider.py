@@ -103,13 +103,25 @@ class LiteLLMProvider(LLMProvider):
         if model is None:
             model = self.default_model
 
-        model = self._resolve_model(model)
+        # _resolve_model 之前调用,如果模型名/网关没注册会抛 ValueError
+        # 这种情况下不应该让 agent loop 直接崩掉,而是返回 LLMResponse 错误
+        try:
+            model = self._resolve_model(model)
+        except ValueError as exc:
+            return LLMResponse(
+                content=f"无法解析模型名称：{exc}",
+                finish_reason="error",
+            )
 
         # 确保 max_tokens 至少为1，避免传入0导致SDK报错
         max_tokens = max(1, max_tokens)
+        # 防御空消息:有些 provider 在 messages=[] 时会报错,这里给一个最小占位
+        sanitized_messages = self._sanitize_messages(self._sanitize_empty_content(messages))
+        if not sanitized_messages:
+            sanitized_messages = [{"role": "user", "content": "(empty)"}]
         kwargs: dict[str, Any] = {
             "model": model,
-            "messages": self._sanitize_messages(self._sanitize_empty_content(messages)),
+            "messages": sanitized_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
         }
@@ -125,8 +137,12 @@ class LiteLLMProvider(LLMProvider):
             kwargs["tools"] = tools  # 工具列表（JSON Schema 格式）
             kwargs["tool_choice"] = "auto"
 
-        prompt_cache_key: str = self.prompt_caching(kwargs["messages"][0]["content"], tools)
-        kwargs["prmpt_cache_key"] = prompt_cache_key
+        try:
+            prompt_cache_key: str = self.prompt_caching(sanitized_messages[0].get("content") or "", tools)
+        except Exception:
+            # 防御性：万一消息结构异常,不影响主流程
+            prompt_cache_key = ""
+        kwargs["prompt_cache_key"] = prompt_cache_key
         try:
             logger.debug("发送给模型的消息：{}", json.dumps(kwargs.get("messages", []), ensure_ascii=False, indent=2))
             if on_delta is not None:
@@ -243,8 +259,19 @@ class LiteLLMProvider(LLMProvider):
                 "completion_tokens": response.usage.completion_tokens,
                 "total_tokens": response.usage.total_tokens,
             }
-            cached_token = getattr(getattr(usage, "prompt_token_details",None), "cached_tokens", 0)
-            logger.info(f"提示词token数量: {usage['prompt_tokens']}, 缓存token数量: {cached_token}, 缓存命中率: {cached_token / usage['prompt_tokens']:.2%}")
+            # 从 LiteLLM 的 usage 对象上读取缓存命中数（在 dump 成 dict 之前）
+            cached_token = 0
+            try:
+                details = getattr(response.usage, "prompt_tokens_details", None)
+                if details is not None:
+                    cached_token = int(getattr(details, "cached_tokens", 0) or 0)
+            except Exception:
+                cached_token = 0
+            prompt_total = int(usage.get("prompt_tokens", 0) or 0)
+            hit_ratio = (cached_token / prompt_total) if prompt_total > 0 else 0.0
+            logger.info(
+                f"提示词token数量: {prompt_total}, 缓存token数量: {cached_token}, 缓存命中率: {hit_ratio:.2%}"
+            )
 
         # 思考内容
         reasoning_content = getattr(message, "reasoning_content", None)

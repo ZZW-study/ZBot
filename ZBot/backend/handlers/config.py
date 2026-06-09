@@ -2,8 +2,8 @@
 
 from typing import Any
 
-from ZBot.config.schema import Config
-from ZBot.services.config import resolved_provider_status
+from ZBot.services.config.schema import Config
+from ZBot.services.config.config import resolved_provider_status
 from ZBot.services.formatting.config_masking import mask_key
 
 

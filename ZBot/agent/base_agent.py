@@ -12,6 +12,7 @@ import re
 import time
 from abc import ABC
 from contextlib import AsyncExitStack  # 感觉这个像函数一样，创建的时候有各种资源，当结束的时候，就把这些资源释放掉
+from contextvars import ContextVar
 from typing import Any, Awaitable, Callable
 
 from loguru import logger
@@ -23,7 +24,7 @@ from ZBot.agent.tools.registry import ToolRegistry
 from ZBot.agent.tools.search import glob_search, grep_search
 from ZBot.agent.tools.shell import ExecTool
 from ZBot.agent.tools.web import WebFetchTool, WebSearchTool
-from ZBot.config.agent_runtime import AgentRuntimeConfig
+from ZBot.services.config.agent_runtime import AgentRuntimeConfig
 from ZBot.cron.service import CronService
 from ZBot.prompts.agent import build_task_progress_artifact, mixed_subagent_tool_call_message
 from ZBot.providers.base import LLMProvider, ToolCallRequest
@@ -32,6 +33,20 @@ from ZBot.providers.base import LLMProvider, ToolCallRequest
 # 匹配模型输出中的 <think>...</think> 思考块，非贪婪地停在第一个闭合标签。
 _THINK_BLOCK_RE = re.compile(
     r"<think>[\s\S]*?</think>", re.IGNORECASE
+)
+
+# ==================== 并发安全的 per-turn 上下文 ====================
+# 这些变量在并行 SubAgent 任务中需要按上下文隔离(而不是按实例共享),
+# 改成 ContextVar 后,每次 asyncio.gather 出子任务都会拿到独立的副本,
+# 不会再出现"上一个 SubAgent 留下的 messages 串给下一个"的问题。
+#
+# H13: 之前是 BaseAgent 实例属性,pool 中多个 SubAgent 共享同一个实例时
+#      会发生并发覆盖。现在通过 ContextVar 在 asyncio.Task/协程之间隔离。
+_current_messages_for_subagent_var: ContextVar[list[dict[str, Any]] | None] = ContextVar(
+    "_current_messages_for_subagent_var", default=None
+)
+_active_progress_callback_var: ContextVar[Callable[..., Awaitable[None]] | None] = ContextVar(
+    "_active_progress_callback_var", default=None
 )
 
 
@@ -101,11 +116,42 @@ class BaseAgent(ABC):
 
         # ==================== 其他配置 ====================
         self.score_threshold = runtime_config.score_threshold
-        self._current_messages_for_subagent: list[dict[str, Any]] | None = None
-        self._active_progress_callback: Callable[..., Awaitable[None]] | None = None
 
         # ==================== 注册默认工具 ====================
         self._register_default_tools()
+
+    # ---------- ContextVar 访问层(H13) ----------
+    # 全部走 ContextVar,绝不在实例上保存 mutable 共享状态。
+    # 每个 asyncio.Task / 协程上下文有自己的副本,asyncio.gather 出去的子任务互不污染。
+    @staticmethod
+    def _get_current_messages() -> list[dict[str, Any]] | None:
+        """读取当前协程上下文的 messages 副本(per-turn 隔离)。"""
+        return _current_messages_for_subagent_var.get()
+
+    @staticmethod
+    def _set_current_messages(messages: list[dict[str, Any]] | None) -> Any:
+        """写入当前协程上下文的 messages 副本,返回 token 供 reset。"""
+        return _current_messages_for_subagent_var.set(messages)
+
+    @staticmethod
+    def _reset_current_messages(token: Any) -> None:
+        """恢复 ContextVar 到 set 之前的状态。"""
+        _current_messages_for_subagent_var.reset(token)
+
+    @staticmethod
+    def _get_active_progress() -> Callable[..., Awaitable[None]] | None:
+        """读取当前协程上下文的 progress 回调。"""
+        return _active_progress_callback_var.get()
+
+    @staticmethod
+    def _set_active_progress(callback: Callable[..., Awaitable[None]] | None) -> Any:
+        """写入当前协程上下文的 progress 回调,返回 token 供 reset。"""
+        return _active_progress_callback_var.set(callback)
+
+    @staticmethod
+    def _reset_active_progress(token: Any) -> None:
+        """恢复 ContextVar 到 set 之前的状态。"""
+        _active_progress_callback_var.reset(token)
 
     async def connect_mcp(self) -> None:
         """连接 MCP 服务器，注册 MCP 工具。
@@ -162,8 +208,11 @@ class BaseAgent(ABC):
         turn_index: int = 0
         consecutive_no_progress_failures: int = 0
         mixed_subagent_call_count: int = 0
-        self._current_messages_for_subagent: list[dict[str, Any]] | None = None
-        self._active_progress_callback = on_progress
+        # H14: 跟踪本 turn 是否已补过 assistant.tool_calls,避免重复追加。
+        timeout_assistant_added: bool = False
+        # H13: 改用 ContextVar 而非实例属性,保证并行 SubAgent 任务互不污染。
+        messages_token = self._set_current_messages(None)
+        progress_token = self._set_active_progress(on_progress)
 
         # ========== 主交互循环 ==========
         try:
@@ -294,14 +343,45 @@ class BaseAgent(ABC):
                             else:
                                 if tool_call.name == "create_sub_agent":
                                     # 工具执行前的上下文可以安全交给子 agent；它不包含尚未配对的 tool_call。
-                                    self._current_messages_for_subagent = copy.deepcopy(messages)
+                                    # H13: 写入 ContextVar,不在实例上共享。
+                                    self._set_current_messages(copy.deepcopy(messages))
                                 # 执行工具。用户中断会向上传播，确保上层 finally 清理资源。
                                 result = await asyncio.wait_for(
                                     self.tools.execute(tool_call.name, tool_call.arguments),
                                     timeout=self._remaining_agent_seconds(loop_started_at),
                                 )
                         except asyncio.TimeoutError:
-                            result: str = self._tool_timeout_result(tool_call.name)
+                            # H14: 工具超时时,后续还要走 _add_tool_result 写入 tool 消息;
+                            # OpenAI 协议要求 tool 消息必须配对一个 assistant.tool_calls,
+                            # 否则下次对话模型会报 "messages with role 'tool' must be a response
+                            # to a preceeding tool_call_id"。
+                            # 简化:本轮第一次出现超时时,把整个本轮的 assistant 消息补全;
+                            # 后续 tool_call 也共用同一个 assistant.tool_calls 列表。
+                            if not timeout_assistant_added:
+                                timeout_assistant_added = True
+                                # 找出当前 assistant 消息(已写在 _add_assistant_message 里),
+                                # 如果还没有,就补一个占位的
+                                if not any(
+                                    m.get("role") == "assistant"
+                                    and m.get("tool_calls")
+                                    for m in messages
+                                ):
+                                    self._add_assistant_message(
+                                        messages,
+                                        None,
+                                        [
+                                            {
+                                                "id": tc.id,
+                                                "type": "function",
+                                                "function": {
+                                                    "name": tc.name,
+                                                    "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                                                },
+                                            }
+                                            for tc in response.tool_calls
+                                        ],
+                                    )
+                            result = self._tool_timeout_result(tool_call.name)
 
                         await on_progress(
                             self._tool_hint([tool_call]),
@@ -354,8 +434,9 @@ class BaseAgent(ABC):
                 final_content = clean
                 break
         finally:
-            self._current_messages_for_subagent = None
-            self._active_progress_callback = None
+            # H13: 清理 ContextVar。
+            self._reset_current_messages(messages_token)
+            self._reset_active_progress(progress_token)
 
         return final_content, tools_used, messages
 

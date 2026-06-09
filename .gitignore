@@ -92,3 +92,10 @@ ACM.py
 .VSCoderCounter/
 memory/
 递归删除提交缓存.py
+docs/
+test/
+
+# Excluded paths (added 2026-06-09) �� never tracked, never pushed
+/.github/
+/ZBot/test/
+

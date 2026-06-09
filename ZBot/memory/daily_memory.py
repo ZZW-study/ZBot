@@ -10,7 +10,7 @@ import sqlite_vec
 from loguru import logger
 from sqlite_vec import serialize_float32
 
-from ZBot.config.schema import Config
+from ZBot.services.config.schema import Config
 from ZBot.prompts.memory_prompts import (
     DAILY_MEMORY_SYSTEM_PROMPT,
     SAVE_DAILY_MEMORY_TOOL,
@@ -167,11 +167,24 @@ class DailyMemoryStore:
         """
         db = await self._ensure_db()
         try:
+            # 标准 SQLite 不支持 `DELETE ... JOIN ...`,改用子查询:
+            # 先挑出满足 score 阈值且在 vector 表里存在的 id,再 DELETE。
+            # 这样既保证 sqlite-vec rowid 完整性,又避免 OperationalError。
             await db.execute(
                 """
                 DELETE FROM daily_memory
-                JOIN daily_memory_vector ON daily_memory.id = daily_memory_vector.rowid
                 WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) < ?
+                  AND id IN (SELECT rowid FROM daily_memory_vector)
+                """,
+                (decay_rate, obsolete_score_threshold),
+            )
+            await db.execute(
+                """
+                DELETE FROM daily_memory_vector
+                WHERE rowid IN (
+                    SELECT id FROM daily_memory
+                    WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) < ?
+                )
                 """,
                 (decay_rate, obsolete_score_threshold),
             )
@@ -204,11 +217,22 @@ class DailyMemoryStore:
             await cursor.close()
             # 这里可以把 results 直接返回给调用者让它们自己处理。
             # 迁移完成后再删除这些记录。
+            # 标准 SQLite 不支持 `DELETE ... JOIN ...`,改用子查询。
             await db.execute(
                 """
                 DELETE FROM daily_memory
-                JOIN daily_memory_vector ON daily_memory.id = daily_memory_vector.rowid
                 WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) >= ?
+                  AND id IN (SELECT rowid FROM daily_memory_vector)
+                """,
+                (decay_rate, evolve_score_threshold),
+            )
+            await db.execute(
+                """
+                DELETE FROM daily_memory_vector
+                WHERE rowid IN (
+                    SELECT id FROM daily_memory
+                    WHERE recall_count * EXP(-? * (JULIANDAY('now') - JULIANDAY(created_at))) >= ?
+                )
                 """,
                 (decay_rate, evolve_score_threshold),
             )

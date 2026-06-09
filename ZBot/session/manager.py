@@ -95,10 +95,16 @@ class Session:
 
                 if summary:
                     original_content = selected[0].get("content", "")
-                    selected[0]["content"] = (
-                        f"【前置对话摘要】\n{summary}\n\n"
-                        f"【当前用户消息】\n{original_content}"
-                    )
+                    # H24: 不再 mutate 原 dict,而是创建新 dict 并替换 selected[0],
+                    # 避免在原消息对象上留副作用(下次评估时也避免再压缩一次)。
+                    new_first = {
+                        **selected[0],
+                        "content": (
+                            f"【前置对话摘要】\n{summary}\n\n"
+                            f"【当前用户消息】\n{original_content}"
+                        ),
+                    }
+                    selected = [new_first, *selected[1:]]
                     
         return selected
 
@@ -173,6 +179,23 @@ class SessionManager:
             session = Session(session_name=session_name)  # 创建新会话
             self._cache[session_name] = session
         return session, False  # 返回会话和标记，标记为False表示新创建的会话
+
+    async def get(self, session_name: str) -> Session | None:
+        """只读获取会话。命中缓存或磁盘则返回 Session,否则返回 None(不会创建空会话)。
+
+        与 get_or_create 的区别:本方法不会因为会话不存在就自动建一个空 session,
+        适用于 GET 详情等"只读"场景,避免触发副作用。
+        """
+        session = self._cache.get(session_name)
+        if session is not None:
+            return session
+        return await self._load(session_name)
+
+    async def exists(self, session_name: str) -> bool:
+        """判断指定名称的会话是否已存在(磁盘或缓存中任一即可)。"""
+        if session_name in self._cache:
+            return True
+        return self._session_path(session_name).exists()
 
     async def save(self, session: Session) -> None:
         """保存会话到磁盘,同一会话名字，都是追加写入。"""

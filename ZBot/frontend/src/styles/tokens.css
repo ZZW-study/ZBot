@@ -1,10 +1,10 @@
 /**
- * tokens.css — Design tokens for ZBot frontend
- * Centralized CSS variables for colors, spacing, typography, etc.
+ * tokens.css — ZBot 前端的设计令牌
+ * 集中管理颜色、间距、排版等 CSS 变量。
  */
 
 :root {
-  /* ── Colors ── */
+  /* ── 颜色 ── */
   --color-background: #ffffff;
   --color-foreground: #1a1a2e;
   --color-muted: #f1f5f9;
@@ -19,24 +19,24 @@
   --color-success: #22c55e;
   --color-warning: #f59e0b;
 
-  /* ZBot brand-specific colors */
+  /* ZBot 品牌专用色 */
   --color-brand-dark: #17324d;
   --color-brand-accent: #2f6fed;
   --color-brand-bg: #f6f7fb;
   --color-panel-bg: #fbfcff;
   --color-surface: #ffffff;
 
-  /* Foreground variations */
+  /* 前景色变体 */
   --color-text-primary: #172033;
   --color-text-secondary: #4c596e;
   --color-text-tertiary: #69758a;
 
-  /* Border variations */
+  /* 边框色变体 */
   --color-border-light: #dde2ed;
   --color-border-lighter: #e7ebf2;
   --color-border-input: #cfd7e6;
 
-  /* ── Radius ── */
+  /* ── 圆角 ── */
   --radius-sm: 4px;
   --radius: 6px;
   --radius-md: 8px;
@@ -44,7 +44,7 @@
   --radius-xl: 28px;
   --radius-full: 9999px;
 
-  /* ── Spacing (4px grid) ── */
+  /* ── 间距 (4px 栅格) ── */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -56,14 +56,14 @@
   --space-10: 40px;
   --space-12: 48px;
 
-  /* ── Shadows ── */
+  /* ── 阴影 ── */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
   --shadow-card: 0 2px 12px rgba(23, 32, 51, 0.06);
   --shadow-accent-sm: 0 0 0 3px rgba(47, 111, 237, 0.12);
 
-  /* ── Font ── */
+  /* ── 字体 ── */
   --font-sans: 'Inter', 'Noto Sans SC', 'PingFang SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
 
@@ -79,12 +79,12 @@
   --leading-relaxed: 1.65;
   --leading-cjk: 1.8;
 
-  /* ── Layout ── */
+  /* ── 布局 ── */
   --sidebar-width: 280px;
   --activity-panel-width: 340px;
   --chat-header-height: 86px;
 
-  /* ── Transitions ── */
+  /* ── 过渡 ── */
   --transition-fast: 0.15s ease;
   --transition-normal: 0.25s ease;
 }

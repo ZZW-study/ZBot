@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from ZBot.config.loader import load_config
-from ZBot.config.schema import Config
+from ZBot.services.config.loader import load_config
+from ZBot.services.config.schema import Config
 from ZBot.services.formatting.config_masking import is_masked_or_empty_key
 
 # 各 provider 的默认 API Base，方便前端预填

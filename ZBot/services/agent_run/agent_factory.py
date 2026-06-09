@@ -1,7 +1,7 @@
 """Agent 运行依赖工厂。
 
 这个模块只负责把全局配置装配成一次可运行的 Agent 环境，不负责打印、
-HTTP/WebSocket 通信或前端展示。
+HTTP/SSE 通信或前端展示。
 """
 
 from __future__ import annotations
@@ -9,9 +9,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from ZBot.agent.core_agent import CoreAgent
-from ZBot.config.agent_runtime import AgentRuntimeConfig
-from ZBot.config.paths import get_config_path, get_runtime_subdir
-from ZBot.config.schema import Config, ProviderConfig
+from ZBot.services.config.agent_runtime import AgentRuntimeConfig
+from ZBot.services.config.paths import get_config_path, get_runtime_subdir
+from ZBot.services.config.schema import Config, ProviderConfig
 from ZBot.cron.service import CronService
 from ZBot.providers.litellm_provider import LiteLLMProvider
 
@@ -21,7 +21,7 @@ class AgentSetupError(RuntimeError):
     """Agent 运行环境初始化失败。"""
 
     def __init__(self, message: str, code: str = "agent_setup_failed") -> None:
-        """保存可展示消息和稳定错误码，供 CLI/HTTP/WebSocket 统一消费。"""
+        """保存可展示消息和稳定错误码，供 CLI/HTTP/SSE 统一消费。"""
         super().__init__(message)
         self.message = message
         self.code = code
@@ -67,13 +67,6 @@ def create_provider(config: Config) -> LiteLLMProvider:
     """根据配置创建 LLM Provider。"""
     provider_config, provider_name, is_gateway, model = resolve_provider_config(config)
     provider_model = model.split("/", 1)[1] if is_gateway and model.startswith(f"{provider_name}/") else model
-    sock_opts = [(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)]
-    if hasattr(socket, "TCP_KEEPIDLE"):
-        sock_opts += [
-            (socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30),
-            (socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10),
-            (socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3),
-        ]
     return LiteLLMProvider(
         api_key=provider_config.api_key,
         api_base=provider_config.api_base,
