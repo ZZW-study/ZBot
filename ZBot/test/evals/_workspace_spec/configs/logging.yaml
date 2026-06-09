@@ -1,7 +1,0 @@
-﻿logging:
-  level: info
-  format: json
-  output: stdout
-  rotate: daily
-  max_files: 14
-  include_trace_id: true

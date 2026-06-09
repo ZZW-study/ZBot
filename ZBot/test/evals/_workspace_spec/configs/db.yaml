@@ -1,8 +1,0 @@
-﻿database:
-  driver: postgres
-  host: db.zb-eval.local
-  port: 5432
-  name: zb_eval
-  user: eval_user
-  pool_size: 10
-  ssl: true
