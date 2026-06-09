@@ -1,4 +1,4 @@
-"""技能运行时工具（改进版）。
+"""技能运行时工具。
 核心机制：
 - 模糊匹配：8 级匹配链，模型传参有偏差也能匹配
 - 原子写入：临时文件 + os.replace，写一半崩了不损坏文件
@@ -573,7 +573,7 @@ async def _normalize_manifest(skill_dir: Path) -> tuple[SkillManifest, str]:
 
 
 # =============================================================================
-# Tool 1: NewSkillsListLoader — 发现新技能
+# Tool 1: NewSkillsListLoader — 扫描技能
 # =============================================================================
 
 
@@ -660,7 +660,7 @@ class NewSkillsListLoader(Tool):
 
 
 class SkillReader(Tool):
-    """按技能名称加载 SKILL.md 正文。"""
+    """按技能名称加载 SKILL.md 正文,就是agent要使用技能会用到。"""
 
     def __init__(self, skills_dir: Path) -> None:
         self.skills_dir: Path = skills_dir
@@ -830,6 +830,7 @@ class SkillsManager(Tool):
     # -- create --
 
     async def _handle_create(self, name: str, kwargs: dict) -> str:
+        """创建技能，但是要进行多重校验：名称、frontmatter、大小、相似度、路径安全，最后原子写入，因为你的技能格式一定要保证。"""
         content: str = kwargs.get("content", "")
         force: bool = kwargs.get("force", False)
 
@@ -974,6 +975,7 @@ class SkillsManager(Tool):
     # -- patch --
 
     async def _handle_patch(self, name: str, kwargs: dict) -> str:
+        """"""
         old_string: str = kwargs.get("old_string", "")
         new_string: str = kwargs["new_string"] if "new_string" in kwargs else None  # type: ignore[assignment]
         replace_all: bool = kwargs.get("replace_all", False)
