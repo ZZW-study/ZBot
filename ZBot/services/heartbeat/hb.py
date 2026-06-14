@@ -1,121 +1,119 @@
-"""
-心跳模块，一个活动跟踪器，看看是否有活动。
-看看主 agent 是否有活动。
-一个看门狗，接受一个心跳，看看是否有活动，设置阈值，发出警告、杀死卡死的 agent。
-"""
 import asyncio
 import threading
 import time
-
+from threading import Thread
+from typing_extensions import Self
 from loguru import logger
 
 
 class ActivityTracker:
-    """心跳——是否活动跟踪器。"""
+    """记录 agent 最近一次心跳（活动时间 + 描述）"""
+    _instance = None
+
+    def __new__(cls) -> Self:
+        """单例，给agentservice用"""
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+    
 
     def __init__(self) -> None:
-        """初始化：记录最近一次活动的时间戳和描述。"""
-        # 以单调时钟记录最后一次活动的时间，避免系统时间调整导致的问题
-        self.last_activity_at: float = time.monotonic()
-        # 上次活动的描述
-        self.last_activity_desc: str = "初始化"
-        # 多线程安全，后续可能会用到，现在没有多线程
+        # 最近一次活动时间（单调时钟，避免系统时间变化影响）
+        self.last_activity_at = time.monotonic()
+        # 最近一次活动描述
+        self.last_activity_desc = "初始化"
+        # 线程安全锁（防止多线程同时写入）
         self._lock = threading.Lock()
 
     def touch(self, description: str) -> None:
-        """每次有意义的操作前调用，标记为活动点。"""
+        """更新心跳（表示 agent 有活动）"""
         with self._lock:
             self.last_activity_at = time.monotonic()
             self.last_activity_desc = description
 
-    def get_summary(self) -> dict[str, float | str]:
-        """返回当前空闲状态。"""
+    def get_idle(self) -> tuple[float, str]:
+        """获取当前空闲时间 + 最后一次活动描述"""
         with self._lock:
-            idle_seconds = time.monotonic() - self.last_activity_at
-            return {
-                "idle_seconds": idle_seconds,
-                "last_activity": self.last_activity_desc,
-            }
+            return (
+                time.monotonic() - self.last_activity_at,
+                self.last_activity_desc,
+            )
 
 
 class ActivityWatchdog:
-    """活动监控，检查是否有活动。
-
-    设计要点（学习自 hermes-agent）：
-    - 默认走 asyncio.sleep，吞吐、适配低频场景
-    - 调用 watchdog.bind_task(task) 后切换为 asyncio.wait(task, timeout)，
-      task 完成时 wait 立即返回，不用等满 heartbeat_interval
-    - 阈值逻辑保持原有行为（警告/记录），不做硬杀
-    """
+    """心跳狗：定期检查 agent 是否长时间无活动"""
 
     def __init__(
         self,
-        activity_tracker: ActivityTracker,
-        heartbeat_interval: float = 5.0,
-        agent_warning: float = 900.0,
-        agent_kill: float = 1800.0,
+        tracker: ActivityTracker,
+        loop: asyncio.AbstractEventLoop,
+        task: asyncio.Task,
     ) -> None:
-        """初始化看门狗。
+        self.tracker = tracker          # 心跳数据来源
+        self.loop = loop                # asyncio 事件循环（用于安全取消 task）
+        self.task = task                # 被监控的协程任务
 
-        Args:
-            activity_tracker: 活动跟踪器。
-            heartbeat_interval: 检查频率（秒）。默认 5 秒。
-            agent_warning: idle 超过该值输出 warning。默认 900 秒（15 分钟）。
-            agent_kill: idle 超过该值输出 error。默认 1800 秒（30 分钟）。
+        # 检查间隔（秒）
+        self.interval = 30
+
+        # 分级阈值
+        self.warn_t = 5 * 60           # 5分钟警告
+        self.severe_t = 15 * 60        # 15分钟严重警告
+        self.kill_t = 30 * 60          # 30分钟终止
+
+        # 停止控制,线程事件对象，内部有一个布尔状态标志，默认是 False（未触发）。
+        self._stop = threading.Event()
+
+    def start(self) -> None:
+        """启动心跳检测线程"""
+        Thread(target=self._run, daemon=True).start()
+
+    def stop(self) -> None:
+        """停止心跳检测，设置为True"""
+        self._stop.set()
+
+    def _cancel(self) -> None:
+        """线程安全地取消 asyncio task
+        会在那个协程正在 await 的地方
+        raise asyncio.CancelledError
         """
-        self.activity_tracker = activity_tracker
-        self.heartbeat_interval = heartbeat_interval
-        self.agent_warning = agent_warning
-        self.agent_kill = agent_kill
-        # 可选：绑定的 agent task 引用；绑定后 task 完成时 watchdog 立即退出
-        self._agent_task: asyncio.Task | None = None
 
-    def bind_task(self, task: asyncio.Task | None) -> None:
-        """绑定 agent 协程 task，使 watchdog 能在 task 完成时立即退出（学习自 hermes-agent）。
+        self.loop.call_soon_threadsafe(self.task.cancel)
 
-        不传 / 传 None 退化为原 asyncio.sleep 行为，向后兼容。
-        """
-        self._agent_task = task
+    def _run(self) -> None:
+        """心跳检测主循环（在独立线程中运行）"""
+        # 只要内部是False
+        while not self._stop.wait(self.interval):
+            idle, desc = self.tracker.get_idle()
 
-    async def _check_idle(self) -> None:
-        """检查空闲状态，输出 warning / kill 日志（沉用原阈值逻辑）。"""
-        summary = self.activity_tracker.get_summary()
-        if summary["idle_seconds"] > self.agent_warning:
-            # 不是给用户看的，是我根据这个日志来判断是否需要调整心跳监控的阈值，或者检查 agent 是否进入死循环了
-            logger.warning(
-                f"Agent 已经 {summary['idle_seconds']:.1f} 秒没有活动了，最后一次活动是：{summary['last_activity']}"
-            )
-            logger.warning(
-                f"如果超过 {self.agent_kill} 秒没有活动，系统将自动杀死 Agent 以释放资源。"
-            )
-            logger.warning(
-                f"请检查 Agent 是否进入死循环，或者是否需要调整心跳监控的阈值。"
-            )
-
-        if summary["idle_seconds"] > self.agent_kill:
-            # 记录告警，实际是否杀由上层 task 控制（学习 hermes：通过 inactivity 触发 interrupt）
-            logger.error(
-                f"Agent 已经 {summary['idle_seconds']:.1f} 秒没有活动了，系统将自动杀死 Agent 的这个活动以释放资源。"
-            )
-
-    async def run(self) -> None:
-        """主循环：每 heartbeat_interval 秒检查一次，绑定的 task 完成时立即退出。
-
-        - 未绑定 task：退化为 asyncio.sleep 行为（向后兼容）
-        - 绑定 task：用 asyncio.wait 替代 asyncio.sleep，
-          task 完成时 wait 立即返回，不用等满 heartbeat_interval
-        """
-        while True:
-            if self._agent_task is not None:
-                # task 完成时 wait 立即返回，不用等满 heartbeat_interval
-                done, _ = await asyncio.wait(
-                    {self._agent_task}, timeout=self.heartbeat_interval
+            # 终止级别
+            if idle > self.kill_t:
+                logger.error(
+                    "心跳狗触发【终止】\n"
+                    f"空闲时间：{idle:.1f} 秒\n"
+                    f"终止阈值：{self.kill_t:.1f} 秒\n"
+                    f"最后一次心跳：{desc}\n"
+                    f"动作：取消任务（task.cancel）"
                 )
-                if done:
-                    # task 完成了，watchdog 同步退出
-                    logger.debug("ActivityWatchdog: agent task 完成，退出监控")
-                    return
-            else:
-                # 没绑定 task，退化路径（向后兼容）
-                await asyncio.sleep(self.heartbeat_interval)
-            await self._check_idle()
+                self._cancel()
+                break
+
+            # 严重警告
+            if idle > self.severe_t:
+                logger.error(
+                    "心跳狗触发【严重警告】\n"
+                    f"空闲时间：{idle:.1f} 秒\n"
+                    f"严重阈值：{self.severe_t:.1f} 秒\n"
+                    f"最后一次心跳：{desc}\n"
+                    f"状态：长时间无响应"
+                )
+
+            # 普通警告
+            elif idle > self.warn_t:
+                logger.warning(
+                    "心跳狗触发【警告】\n"
+                    f"空闲时间：{idle:.1f} 秒\n"
+                    f"警告阈值：{self.warn_t:.1f} 秒\n"
+                    f"最后一次心跳：{desc}\n"
+                    f"状态：空闲过长"
+                )

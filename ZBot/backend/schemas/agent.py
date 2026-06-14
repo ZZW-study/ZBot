@@ -1,4 +1,4 @@
-"""Agent run / 文件上传 / Follow-up 队列的 API 结构。
+"""Agent run / 文件上传的 API 结构。
 
 事件流采用 OpenAI Responses API 兼容的事件分类:
   - session_meta: 会话元数据
@@ -65,8 +65,7 @@ class RunResponse(Base):
 class TokenUsage(Base):
     input_tokens: int = 0
     output_tokens: int = 0
-    cache_read: int = 0
-    cache_creation: int = 0
+    cached_tokens: int = 0
 
 
 class RunStatusResponse(Base):
@@ -83,21 +82,6 @@ class RunStatusResponse(Base):
 
 
 # ---------------------------------------------------------------------------
-# Follow-up 队列(steering)
-# ---------------------------------------------------------------------------
-
-class FollowUpCreate(Base):
-    message: str = Field(min_length=1, max_length=32000)
-
-
-class FollowUp(Base):
-    follow_up_id: str
-    session_name: str
-    message: str
-    queued_at: datetime
-
-
-# ---------------------------------------------------------------------------
 # SSE 事件 payload(OpenAI Responses API 兼容)
 # ---------------------------------------------------------------------------
 
@@ -107,8 +91,6 @@ class SessionMetaPayload(Base):
     id: str
     session_name: str
     cwd: str = ""
-    model_provider: str = ""
-    cli_version: str = ""
     source: str = "zbot-web"
 
 
@@ -127,7 +109,6 @@ class TaskStartedPayload(Base):
     turn_id: str
     started_at: float
     model_context_window: int
-    collaboration_mode_kind: str = "default"
 
 
 class TaskCompletePayload(Base):
@@ -141,7 +122,7 @@ class TaskCompletePayload(Base):
 
 
 class UserMessagePayload(Base):
-    """event_msg/user_message 事件(steered=true 表示 follow-up 注入)。"""
+    """event_msg/user_message 事件(steered=true 表示由外部注入而非来自 session 历史的用户消息)。"""
 
     type: Literal["user_message"] = "user_message"
     message: str

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request
 
-from ZBot.services.agent_run.follow_up_queue import FollowUpQueue
 from ZBot.services.agent_run.run_registry import RunRegistry
 from ZBot.services.config.config import config_cache
 from ZBot.services.config.schema import Config
@@ -15,7 +14,6 @@ __all__ = [
     "get_config_or_503",
     "get_session_manager",
     "get_run_registry",
-    "get_follow_up_queue",
 ]
 
 
@@ -41,10 +39,3 @@ def get_run_registry(request: Request) -> RunRegistry:
     if registry is None:
         raise HTTPException(status_code=503, detail="run_registry 未初始化")
     return registry
-
-
-def get_follow_up_queue(request: Request) -> FollowUpQueue:
-    queue: FollowUpQueue | None = getattr(request.app.state, "follow_up_queue", None)
-    if queue is None:
-        raise HTTPException(status_code=503, detail="follow_up_queue 未初始化")
-    return queue

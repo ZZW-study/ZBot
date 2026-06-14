@@ -9,7 +9,6 @@ from fastapi.responses import StreamingResponse
 
 from ZBot.backend.dependencies import (
     get_config_or_503,
-    get_follow_up_queue,
     get_run_registry,
     get_session_manager,
 )
@@ -19,10 +18,9 @@ from ZBot.backend.schemas.agent import (
     RunStartRequest,
     RunStatusResponse,
 )
-from ZBot.services.agent_run.follow_up_queue import FollowUpQueue
 from ZBot.services.agent_run.run_registry import RunRegistry, RunState
 from ZBot.session.manager import SessionManager
-
+from ZBot.services.heartbeat.hb import ActivityTracker, ActivityWatchdog
 
 router = APIRouter(prefix="/api/sessions", tags=["runs"])
 
@@ -36,7 +34,7 @@ async def _resolve_run(registry: RunRegistry, name: str, run_id: str) -> RunStat
 
 
 @router.post(
-    "/{name}/runs",
+    "/{name}/runs",  # 会话名字作为路径参数
     response_model=RunResponse,
     status_code=status.HTTP_201_CREATED,
     response_model_by_alias=True,
@@ -46,19 +44,35 @@ async def start_run(
     body: RunStartRequest,
     _config=Depends(get_config_or_503),  # 必须在 manager.exists 前求值 → 无 config 直接 503
     manager: SessionManager = Depends(get_session_manager),
-    registry: RunRegistry = Depends(get_run_registry),
-    queue: FollowUpQueue = Depends(get_follow_up_queue),
+    runs: RunRegistry = Depends(get_run_registry),
 ) -> RunResponse:
+    """一次请求，就是一个协程，各个协程独立，只要是在内部的（函数底下、类底下）变量、类等等，都是局部的，
+    不会共享，如果在外部，就是顶层的变量，就会共享，不安全
+    # 加入中途打断取消或者各自原因执行失败，再发一次信息（算另一个协程，之前的协程销毁，状态消失），会创建一个新的状态
+    启动任务后立刻返回，这个协程就结束了
+    """
     if not await manager.exists(name):
         raise HTTPException(status_code=404, detail=f"session 不存在: {name}")
 
-    state = await registry.create(name)
+    state = await runs.create(name)
+    
+    # 开启协程任务，这算是第二个协程,那么可以在这个协程await的时候，直接往下执行
+    # 执行完成或者发生异常，就执行结束，这个协程就销毁，那么这个协程的局部变量啥的，都没有了
+    # 但是后面会结束，会将消息保存进磁盘，第二次请求的时候，由于会话名字相同，从磁盘读取就相同
     task = asyncio.create_task(
-        run_worker(state, registry, body.message, queue, file_id=body.file_id)
+        run_worker(state, runs, body.message, file_id=body.file_id)
     )
-    await registry.attach_task(state.run_id, task)
+
+    # 获取当前事件循环,传入后可以用loop.call_soon_threadsafe，把其他线程想干的事情，放入这个事件循环中，比如安全的取消
+    loop = asyncio.get_running_loop()
+    activity_watchdog = ActivityWatchdog(tracker=ActivityTracker(),loop=loop,task=task)
+
+    # 开启心跳狗线程,这个主要是管理，任务在执行，怕一直卡着，错误不用他管，都用try，except管错误
+    activity_watchdog.start()
+    await runs.attach_task(state.run_id, task)
 
     base = f"/api/sessions/{name}/runs/{state.run_id}"
+    # 返回之后，交给下面的处理
     return RunResponse(
         run_id=state.run_id,
         session_name=name,
@@ -107,10 +121,17 @@ async def stream_run(
     name: str,
     run_id: str,
     registry: RunRegistry = Depends(get_run_registry),
-    queue: FollowUpQueue | None = Depends(get_follow_up_queue),
 ) -> StreamingResponse:
+    """
+    SSE入口：SSE = 浏览器（客户端）建立一个 HTTP 长连接，然后只接收服务器持续推送的数据流
+    前端连接这里 = 建立“事件流订阅”
+    """
+    # 1. 找到当前 run 的运行状态（RunState）
     state = await _resolve_run(registry, name, run_id)
+
+    # 2. 把“事件流生成器”交给 FastAPI StreamingResponse
+    #    => FastAPI 会持续从 stream_run_events() 取数据并推给前端
     return StreamingResponse(
-        stream_run_events(state, registry, queue),
+        stream_run_events(state),
         media_type="text/event-stream",
     )

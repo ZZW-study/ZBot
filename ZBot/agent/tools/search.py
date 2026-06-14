@@ -2,7 +2,7 @@ import json
 import subprocess
 from pathlib import Path
 from typing import Any
-
+import asyncio
 from ZBot.agent.tools.base import Tool, format_tool_error
 
 
@@ -231,7 +231,10 @@ class grep_search(Tool):
 
         # 执行 ripgrep 命令。rg 退出码 1 表示没有匹配，不算执行错误。
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace")
+            result = await asyncio.to_thread(
+                subprocess.run, cmd, capture_output=True, text=True,
+                encoding="utf-8", errors="replace",
+            )
         except FileNotFoundError:
             return format_tool_error(
                 "未找到 rg 命令，无法执行 grep_search",

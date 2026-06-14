@@ -73,8 +73,6 @@ export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
   cachedTokens: number;
-  cacheRead?: number;
-  cacheCreation?: number;
 }
 
 export type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';

@@ -228,7 +228,7 @@ class BaseAgent(ABC):
 
                 try:
                     await on_progress(
-                        "正在请求大模型",
+                        "正在请求大模型",  # 给心跳狗的描述
                         event_type="model.started",
                         agent_label=progress_label,
                     )
@@ -245,7 +245,7 @@ class BaseAgent(ABC):
                             agent_label=progress_label,
                             delta=visible_delta,
                         )
-
+                    # 这里的硬超时要删去，还有其他地方的很多硬超时都要删去，用心跳狗的软超时
                     response = await asyncio.wait_for(
                         self.provider.chat(
                             messages=messages,
@@ -433,6 +433,8 @@ class BaseAgent(ABC):
                 )
                 final_content = clean
                 break
+        except Exception:
+            raise
         finally:
             # H13: 清理 ContextVar。
             self._reset_current_messages(messages_token)

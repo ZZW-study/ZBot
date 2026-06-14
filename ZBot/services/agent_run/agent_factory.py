@@ -14,7 +14,7 @@ from ZBot.services.config.paths import get_config_path, get_runtime_subdir
 from ZBot.services.config.schema import Config, ProviderConfig
 from ZBot.cron.service import CronService
 from ZBot.providers.litellm_provider import LiteLLMProvider
-
+from ZBot.services.heartbeat.hb import ActivityTracker
 
 # 可以自己配置错误，可以自己决定如何展示,raise之后，里面的属性，你可以外部捕获
 class AgentSetupError(RuntimeError):
@@ -35,6 +35,7 @@ class AgentBundle:
     runtime_config: AgentRuntimeConfig
     cron: CronService
     agent: CoreAgent
+    activitytracker: ActivityTracker
 
 
 def create_agent_bundle(
@@ -42,7 +43,8 @@ def create_agent_bundle(
     *,
     on_cron_job=None,
 ) -> AgentBundle:
-    """根据全局配置创建 provider、runtime config、cron 和 CoreAgent。"""
+    """每个协程独有的 Agent 运行环境。
+    根据全局配置创建 provider、runtime config、cron 和 CoreAgent。"""
     provider = create_provider(config)
     runtime_config = AgentRuntimeConfig.from_app_config(
         config=config,
@@ -55,11 +57,14 @@ def create_agent_bundle(
         runtime_config=runtime_config,
         cron_service=cron,
     )
+    activitytracker: ActivityTracker = ActivityTracker()
+
     return AgentBundle(
         provider=provider,
         runtime_config=runtime_config,
         cron=cron,
         agent=agent,
+        activitytracker=activitytracker
     )
 
 

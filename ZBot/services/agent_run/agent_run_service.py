@@ -2,6 +2,24 @@
 
 CLI、SSE 后端等入口都通过这里驱动一次 Agent 运行；展示层只消费
 结构化事件，不直接耦合 Agent 内部进度回调。
+
+────────────────────────────────────────────────────────────────────────
+职责边界(本文件 vs run_registry.py)
+────────────────────────────────────────────────────────────────────────
+本文件管的是"执行和事件载荷":
+  · AgentEvent      — 一次 agent 内部动作的结构化描述(@dataclass 载荷)
+  · EventSink       — 任何能消费 AgentEvent 的回调签名
+  · AgentRunService — start / ask / close 三个生命周期方法,以及
+                      turn_id 注入、cron 回调、进度转事件等内部组装
+
+run_registry.py 管的是"容器和句柄":
+  · RunState        — 一次 run 的 task + event_queue + 状态
+  · RunRegistry     — run_id → RunState 的多路复用路由表
+
+
+所以"两个文件都跟事件沾边"不是重复:
+  · AgentEvent = 事件本身(数据)
+  · event_queue = 事件流过的通道(管道)
 """
 
 from __future__ import annotations
@@ -9,9 +27,7 @@ from __future__ import annotations
 import asyncio
 import uuid   # 生成一个唯一的id字符串，可以用来标识，每次使用都不一样
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
-from zoneinfo import ZoneInfo
 
 from loguru import logger
 
@@ -20,37 +36,35 @@ from ZBot.cron.types import CronJob
 if TYPE_CHECKING:
     from ZBot.services.agent_run.agent_factory import AgentBundle
 
-BEIJING_TZ = ZoneInfo("Asia/Shanghai")
-
 @dataclass(slots=True)
 class AgentEvent:
-    """发送给 CLI/前端的结构化 Agent 事件。"""
+    """发送给 CLI/前端的结构化 Agent 事件。
 
+    这是"事件本身"(载荷),不是"事件流过的通道"(那是 RunState.event_queue)。
+    任何 EventSink 都可以消费它,自己决定怎么渲染:
+      · HTTP/SSE 模式:run_worker 的 sink 把它灌进 state.event_queue
+        (to_dict() 后),stream_run_events 再 translate 成 OpenAI Responses
+        协议推给前端。
+      · CLI 模式:_cli_event_sink 直接按 type 分支渲染到终端。
+    """
     type: str
-    session_name: str
     message: str = ""
     agent_label: str | None = None
-    run_id: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=lambda: datetime.now(BEIJING_TZ).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
         """转换为可 JSON 序列化的字典。"""
         return {
             "type": self.type,
-            "session_name": self.session_name,
             "message": self.message,
             "agent_label": self.agent_label,
-            "run_id": self.run_id,
             "payload": self.payload,
-            "created_at": self.created_at,
         }
 
     @classmethod
     def control_event(
         cls,
         event_type: str,
-        session_name: str,
         message: str,
         *,
         payload: dict[str, Any] | None = None,
@@ -58,7 +72,6 @@ class AgentEvent:
         """构造控制事件 dict（不依赖 service 实例）。"""
         return cls(
             type=event_type,
-            session_name=session_name,
             message=message,
             payload=payload or {},
         ).to_dict()
@@ -78,11 +91,16 @@ def create_agent_run_service(config: Config) -> AgentRunService:
 # 类型别名声明, 可调用类型，它接收一个 AgentEvent，调用后返回一个可以被 await 的东西
 #   List[int]          → 一个装 int 的列表
 #   Dict[str, int]     → key 是 str、value 是 int 的字典
+# 这是本文件与"事件流过的通道"(RunState.event_queue)之间的桥:
+#   本文件只看见 EventSink,不知道下游是 queue 还是 CLI 终端还是别的。
 EventSink = Callable[[AgentEvent], Awaitable[None]]
 
 
 class AgentRunService:
-    """统一管理一次 Agent 会话的启动、单轮对话、取消和清理。"""
+    """
+    也是每个一个协程都有一个 AgentRunService 的实例，批次互相独立
+    统一管理一次 Agent 会话的启动、单轮对话、取消和清理。
+    """
 
     def __init__(
         self,
@@ -108,22 +126,23 @@ class AgentRunService:
         if self._started:
             self._event_sink = event_sink
             self._session_name = session_name
-            self.bundle.cron.on_job = self.cron_event_handler(event_sink, session_name)
+            self.bundle.cron.on_job = self.cron_event_handler(event_sink)
             return
 
         self._event_sink = event_sink
         self._session_name = session_name
-        self.bundle.cron.on_job = self.cron_event_handler(event_sink, session_name)
+        self.bundle.cron.on_job = self.cron_event_handler(event_sink)
         await self.bundle.cron.start()
         self._started = True
-        await event_sink(self._event("run.started", session_name, "会话已启动"))
+        await event_sink(self._event("run.started", "会话已启动"))
+
 
     async def ask(
         self,
         message: Any,
         session_name: str,
         *,
-        event_sink: EventSink,
+        event_sink: EventSink,  # 进度回调函数
     ) -> str:
         """执行一轮用户消息；资源清理由 close() 在会话结束时负责。"""
         if not self._started:
@@ -134,10 +153,10 @@ class AgentRunService:
         # H2: 给本轮分配一个稳定 turn_id,塞到 turn.started / turn.completed / run.completed
         # 的 payload 中。前端 useAgentStream 拿这个 turn_id 正确把 deltas 路由到对应 turn。
         turn_id = str(uuid.uuid4())
+        # 不断的把事件塞入队列,给前端消费的，把事件塞入队列的同时，给心跳狗更新东西。
         await event_sink(
             self._event(
                 "turn.started",
-                session_name,
                 "开始处理本轮消息",
                 payload={"turn_id": turn_id},
             )
@@ -146,12 +165,11 @@ class AgentRunService:
             final_content = await self.bundle.agent.process_message(
                 message,
                 session_name,
-                on_progress=self._progress_sink(session_name, event_sink, turn_id=turn_id),
+                on_progress=self._progress_sink(event_sink, turn_id=turn_id),
             )
             await event_sink(
                 self._event(
                     "turn.completed",
-                    session_name,
                     "本轮消息处理完成",
                     payload={"final_content": final_content, "turn_id": turn_id},
                 )
@@ -159,26 +177,25 @@ class AgentRunService:
             await event_sink(
                 self._event(
                     "run.completed",
-                    session_name,
                     "任务完成",
                     payload={"final_content": final_content, "turn_id": turn_id},
                 )
             )
             return final_content
         except asyncio.CancelledError:
-            await event_sink(self._event("run.cancelled", session_name, "任务已取消"))
+            # 捕获到 CancelledError 后，先做一点收尾动作，然后把同一个 CancelledError 继续往上抛。
+            await event_sink(self._event("run.cancelled", "任务已取消"))
             raise
         except Exception as exc:
             logger.exception("Agent run 执行失败")
             await event_sink(
                 self._event(
                     "run.failed",
-                    session_name,
                     f"任务失败：{exc}",
                     payload={"error": str(exc)},
                 )
             )
-            return f"任务失败：{exc}"
+            raise
 
     async def close(self, session_name: str) -> None:
         """关闭会话级资源并执行会话收尾；该方法可重复调用。"""
@@ -211,9 +228,9 @@ class AgentRunService:
         finally:
             self._started = False
             if self._event_sink is not None:
-                await self._event_sink(self._event("run.closed", session_name, "会话资源已清理"))
+                await self._event_sink(self._event("run.closed", "会话资源已清理"))
 
-    def cron_event_handler(self, event_sink: EventSink, session_name: str = "default"):
+    def cron_event_handler(self, event_sink: EventSink):
         """创建 cron 到期回调，把提醒转换为 AgentEvent。"""
 
         async def _on_cron_job(job: CronJob) -> None:
@@ -221,7 +238,6 @@ class AgentRunService:
             await event_sink(
                 self._event(
                     "cron.reminder",
-                    session_name,
                     job.message,
                     payload={"job_id": job.id, "job_name": job.name},
                 )
@@ -231,7 +247,6 @@ class AgentRunService:
 
     def _progress_sink(
         self,
-        session_name: str,
         event_sink: EventSink,
         *,
         turn_id: str = "",
@@ -239,7 +254,7 @@ class AgentRunService:
         """把 BaseAgent 的字符串进度回调转换为结构化事件。"""
 
         async def _on_progress(
-            content: str,
+            content: str,   # 就是进度回调的内容
             *,
             tool_hint: bool = False,
             agent_label: str | None = None,
@@ -254,7 +269,6 @@ class AgentRunService:
             await event_sink(
                 self._event(
                     event_type,
-                    session_name,
                     content,
                     agent_label=agent_label,
                     payload=payload,
@@ -266,20 +280,16 @@ class AgentRunService:
     def _event(
         self,
         event_type: str,
-        session_name: str,
         message: str = "",
         *,
         agent_label: str | None = None,
-        run_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> AgentEvent:
         """构造统一事件对象。"""
         return AgentEvent(
             type=event_type,
-            session_name=session_name,
             message=message,
             agent_label=agent_label,
-            run_id=run_id,
             payload=payload or {},
         )
 

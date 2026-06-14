@@ -95,7 +95,7 @@ memory/
 docs/
 test/
 
-# Excluded paths (added 2026-06-09) ¡ª never tracked, never pushed
+# Excluded paths (added 2026-06-09) ï¿½ï¿½ never tracked, never pushed
 /.github/
 /ZBot/test/
-
+.codegraph/

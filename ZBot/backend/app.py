@@ -17,7 +17,6 @@ from ZBot.backend.routers.files import router as files_router
 from ZBot.backend.routers.runs import router as runs_router
 from ZBot.backend.routers.sessions import router as sessions_router
 from ZBot.memory.daily_memory import daily_memory_store
-from ZBot.services.agent_run.follow_up_queue import FollowUpQueue
 from ZBot.services.agent_run.run_registry import RunRegistry
 from ZBot.services.agent_run.session_expiry import (
     session_registry,
@@ -39,17 +38,12 @@ def _log_warmup_failure(task: asyncio.Task[None]) -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """启动时初始化 session/run/follow-up 单例,并后台预热日常记忆 embedding。
-
-    H9 修复:启动 session_expiry watcher 后台任务(每 60s 扫一次空闲超 30 分钟的 session)。
-    H11 修复:在 shutdown 阶段 cancel + await warmup task,避免事件循环关闭时打印
-            "Task was destroyed but it is pending" warning。
+    """启动时初始化 session/run 单例,并后台预热日常记忆 embedding。
     """
     # 把核心单例挂到 app.state,供 FastAPI Depends 取用(get_session_manager 等)。
     workspace = Path.home() / ".ZBot" / "workspace"
     _app.state.session_manager = SessionManager(workspace)
     _app.state.run_registry = RunRegistry()
-    _app.state.follow_up_queue = FollowUpQueue()
     # SessionRegistry + Watcher:之前是定义但没人启动的死代码,现在显式启动。
     _app.state.session_registry = session_registry
     _app.state.session_watcher_task = await start_session_expiry_watcher(session_watcher)
@@ -76,6 +70,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             pass
 
 
+# 开启lifespan，Fastapi退出时，自动执行finally后面的代码
 app = FastAPI(title="ZBot Harness API", lifespan=lifespan)
 
 # ── CORS 中间件 ─────────────────────────────────────────
