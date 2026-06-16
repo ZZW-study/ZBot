@@ -41,6 +41,7 @@
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
+import asyncio
 import json
 import secrets  # 安全随机，random伪随机
 import string
@@ -84,8 +85,21 @@ class LiteLLMProvider(LLMProvider):
         self.api_key = api_key
         self.api_base = api_base
         self.default_model = default_model
+        self._provider_name = provider_name
         self._gateway = find_gateway(provider_name)
         self._std_provider = find_by_model(default_model)
+        # H33 fix: provider_name forced but model name lacks keyword -> find_by_model
+        # returns None -> _resolve_model raises ValueError -> chat() returns error text ->
+        # SSE translation layer prefers event.message over final_content, hiding the error.
+        # Fallback: if user picked a standard provider_name, use its spec as _std_provider.
+        if self._std_provider is None and provider_name and not self._gateway:
+            from ZBot.providers.registry import PROVIDERS
+            fallback = next(
+                (s for s in PROVIDERS if s.name == provider_name and not s.is_gateway),
+                None,
+            )
+            if fallback is not None:
+                self._std_provider = fallback
         litellm.suppress_debug_info = True
         litellm.drop_params = True
 
@@ -103,15 +117,15 @@ class LiteLLMProvider(LLMProvider):
         if model is None:
             model = self.default_model
 
-        # _resolve_model 之前调用,如果模型名/网关没注册会抛 ValueError
-        # 这种情况下不应该让 agent loop 直接崩掉,而是返回 LLMResponse 错误
+
+        # H33 fix: ValueError here used to be swallowed into a LLMResponse(error),
+        # which agent layer treated as success -> run.completed with the error text in
+        # final_content -> SSE translation layer hid it behind event.message="task complete".
+        # Now: re-raise so the agent loop surfaces run.failed -> frontend event_msg error.
         try:
             model = self._resolve_model(model)
-        except ValueError as exc:
-            return LLMResponse(
-                content=f"无法解析模型名称：{exc}",
-                finish_reason="error",
-            )
+        except ValueError:
+            raise
 
         # 确保 max_tokens 至少为1，避免传入0导致SDK报错
         max_tokens = max(1, max_tokens)
@@ -149,12 +163,12 @@ class LiteLLMProvider(LLMProvider):
                 return await self._stream_response(kwargs, on_delta)
             response = await acompletion(**kwargs)
             return self._parse_response(response)
-        except Exception as e:
-            # 捕获调用中的任意异常并以 LLMResponse 错误形式返回，避免上层抛出
-            return LLMResponse(
-                content=f"调用大模型失败：{str(e)}",
-                finish_reason="error",
-            )
+        except Exception:
+            # H33 fix: same swallow-as-LLMResponse bug as in _resolve_model path.
+            # Re-raise so the agent layer sees a real failure -> run.failed ->
+            # frontend event_msg type=error, instead of fake "task complete".
+            logger.exception("LLM call failed")
+            raise
 
     def get_context_window(self, model: str | None = None) -> int:
         """优先读取 LiteLLM 的模型元数据，失败时回退到 128K。"""
@@ -357,6 +371,8 @@ class LiteLLMProvider(LLMProvider):
             usage=usage,
             reasoning_content="".join(reasoning_parts) or None,
         )
+
+
 
     @staticmethod
     def _first_choice(response: Any) -> Any | None:

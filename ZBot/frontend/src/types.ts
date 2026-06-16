@@ -118,6 +118,13 @@ export interface MessageTurnItem {
   content: string;
 }
 
+// ZBot 改: 用户消息作为 turn 的第一项, 让 user + assistant 的完整一轮对话
+// 都在同一个 Turn 里, 切换会话 / 跨消息发送时不会丢失用户的问题。
+export interface UserMessageTurnItem {
+  kind: 'user_message';
+  content: string;
+}
+
 export interface ReasoningTurnItem {
   kind: 'reasoning';
   summary: string;
@@ -140,7 +147,7 @@ export interface ErrorTurnItem {
   code?: string;
 }
 
-export type TurnItem = MessageTurnItem | ReasoningTurnItem | ToolCallTurnItem | ErrorTurnItem;
+export type TurnItem = MessageTurnItem | UserMessageTurnItem | ReasoningTurnItem | ToolCallTurnItem | ErrorTurnItem;
 
 export interface Turn {
   turnId: string;

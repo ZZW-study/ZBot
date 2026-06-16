@@ -188,17 +188,12 @@ class CoreAgent(BaseAgent):
 
         for _ in range(10):  # 最多 10 轮工具调用
             try:
-                response = await asyncio.wait_for(
-                    self.provider.chat(
-                        messages=chat_messages,
-                        tools=skill_tools,
-                        model=self.model,
-                    ),
-                    timeout=120,
+                # 单次 LLM 不再 wait_for 硬截断;若整条 run 卡住由 ActivityWatchdog 30min 兜底。
+                response = await self.provider.chat(
+                    messages=chat_messages,
+                    tools=skill_tools,
+                    model=self.model,
                 )
-            except asyncio.TimeoutError:
-                logger.warning("技能进化审查 LLM 调用超时（120秒）")
-                return
             except Exception:
                 logger.exception("技能进化审查 LLM 调用失败")
                 return

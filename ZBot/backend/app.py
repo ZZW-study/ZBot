@@ -14,6 +14,7 @@ from loguru import logger
 
 from ZBot.backend.routers.config import router as config_router
 from ZBot.backend.routers.files import router as files_router
+from ZBot.backend.routers.mcp import router as mcp_router
 from ZBot.backend.routers.runs import router as runs_router
 from ZBot.backend.routers.sessions import router as sessions_router
 from ZBot.memory.daily_memory import daily_memory_store
@@ -55,6 +56,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # ZBot 改: 关闭共享 AgentRunService (cron.stop / close_mcp / 记忆刷盘)
+        from ZBot.backend.agent_service_pool import shutdown_agent_service
+        await shutdown_agent_service()
         # shutdown:取消并等待所有后台 task,避免资源泄漏。
         session_watcher.stop()
         if _app.state.session_watcher_task is not None:
@@ -102,5 +106,10 @@ app.add_middleware(
 
 app.include_router(config_router)
 app.include_router(files_router)
+app.include_router(mcp_router)
 app.include_router(runs_router)
 app.include_router(sessions_router)
+
+
+# ZBot 改: agent_service_pool 提供跨 run 共享 AgentRunService (避免每次 sendMessage 重建 + 重连 MCP)
+# 实现见 ZBot.backend.agent_service_pool

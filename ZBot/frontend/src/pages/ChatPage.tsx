@@ -8,34 +8,26 @@ import { createApiClient } from '../lib/api';
 import Sidebar from '../components/Sidebar';
 import MessageList from '../components/MessageList';
 import Composer from '../components/Composer';
-import type { AttachedFile, ChatMessage, TaskCompleteEvent } from '../types';
+import type { AttachedFile, ChatMessage, TaskCompleteEvent, Turn } from '../types';
 
 export default function ChatPage() {
   const navigate = useNavigate();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [streamingContent, setStreamingContent] = useState('');
   const [input, setInput] = useState('');
   const [sessionName, setSessionName] = useState('default');
   const [messagesLoading, setMessagesLoading] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
-  // MEDIUM 修复:inline 弹层输入框,替代 window.prompt(后者阻塞主线程)。
-  const [newSessionDialog, setNewSessionDialog] = useState<{ open: boolean; name: string; error: string }>({
-    open: false, name: '', error: '',
-  });
-  const activeSessionRef = useRef(sessionName);
-  // C2 修复:同步守卫,防止连点/双击/键盘事件竞态导致同 render 内多次 sendMessage。
-  // setIsRunning 是异步的,React 18 自动批处理下,同 render 内多次 sendMessage
-  // 都会通过 isRunning 守卫,所以必须用 ref 同步翻转。
   const sendingRef = useRef(false);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const activeSessionRef = useRef(sessionName);
 
-  // H31 修复:从 ConfigContext 读,不再自己调 useConfig。
-  const { configured, reason, apiBase } = useConfigContext();
+  const { configured, reason, apiBase, model } = useConfigContext();
   const {
     sessions,
     loading: sessionsLoading,
-    refresh,
+    refreshSilent,
     getSession,
-    createSession,
+    createSessionByName,
     renameSession,
     deleteSession,
   } = useSessions(apiBase);
@@ -47,21 +39,56 @@ export default function ChatPage() {
     activeSessionRef.current = sessionName;
   }, [sessionName]);
 
+  // ZBot 改: 把后端加载的 ChatMessage[] 转成 Turn[] (历史回放统一走 turns 渲染)。
+  // 转换规则:
+  //   - 相邻 [user, assistant, user, ...] 配对成 turns (user_message + message 配对)
+  //   - 孤立的 user 消息 -> 单独一个 completed turn
+  //   - 孤立的 assistant 消息 -> 单独一个 turn
+  useEffect(() => {
+    if (messages.length === 0) return;
+    const converted: Turn[] = [];
+    let current: Turn | null = null;
+    let counter = 0;
+    for (const m of messages) {
+      if (m.role === 'user') {
+        if (current) converted.push(current);
+        current = {
+          turnId: `history-${sessionName}-${counter++}`,
+          status: 'completed',
+          items: [{ kind: 'user_message', content: m.content }],
+          startedAt: m.timestamp ? new Date(m.timestamp).getTime() : undefined,
+        };
+      } else if (m.role === 'assistant' && current) {
+        current.items.push({ kind: 'message', content: m.content });
+        current.endedAt = m.timestamp ? new Date(m.timestamp).getTime() : undefined;
+        current.status = 'completed';
+        converted.push(current);
+        current = null;
+      } else if (m.role === 'assistant') {
+        converted.push({
+          turnId: `history-${sessionName}-${counter++}`,
+          status: 'completed',
+          items: [{ kind: 'message', content: m.content }],
+          startedAt: m.timestamp ? new Date(m.timestamp).getTime() : undefined,
+          endedAt: m.timestamp ? new Date(m.timestamp).getTime() : undefined,
+        });
+      }
+    }
+    if (current) converted.push(current);
+    setHistoryTurns(converted);
+  }, [messages, sessionName]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     let ignore = false;
-
     async function loadSessionMessages() {
       setMessagesLoading(true);
-      setStreamingContent('');
       const detail = await getSession(sessionName);
       if (!ignore) {
         setMessages(detail?.messages || []);
         setMessagesLoading(false);
       }
     }
-
     loadSessionMessages();
-
     return () => {
       ignore = true;
     };
@@ -69,51 +96,42 @@ export default function ChatPage() {
 
   const {
     socketState, isRunning, activeRunId,
-    sendMessage, stopRun, resetStream,
+    livePhase, liveToolName,
+    turns,
+    sendMessage, stopRun, resetStream, clearTurns, setHistoryTurns,
   } = useAgentStream({ sessions: api.sessions }, {
-    onCompleted: (event: TaskCompleteEvent) => {
+    onCompleted: (_event: TaskCompleteEvent) => {
       sendingRef.current = false;
-      if (event.session_name && event.session_name !== activeSessionRef.current) {
-        refresh();
+      // 用静默 refresh, 不翻转 loading -> 不让会话列表显示"加载中..."
+      if (_event.session_name && _event.session_name !== activeSessionRef.current) {
+        void refreshSilent();
         return;
       }
-      // task_complete 一次性给出 final_content,与 WS 路径的双事件(turn.completed + run.completed)不同,
-      // 不需要去重。直接追加一条 assistant 消息。
-      const finalContent = event.final_content || '';
-      if (!finalContent) return;
-      setStreamingContent('');
-      setMessages((prev) => {
-        const msgId = `assistant-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        return [
-          ...prev,
-          { id: msgId, role: 'assistant', content: finalContent },
-        ];
-      });
-      refresh();
+      void refreshSilent();
     },
-    onDelta: (content: string) => {
-      setStreamingContent((prev) => `${prev}${content}`);
+    onDelta: (_content: string) => {
+      // turn.message 已经累积了 delta
     },
     onFailed: (info: { message?: string; code?: string }) => {
       sendingRef.current = false;
-      // 不再把错误塞进 messages — 改用 toast,让消息列表只展示真实对话。
       pushToast('error', info.message || '任务失败', { sticky: true });
-      setStreamingContent('');
     },
     onStarted: () => {
       sendingRef.current = false;
-      setStreamingContent('');
     },
   });
 
-  // 切换 session 时主动清状态,防止旧 session 的 turns 残留
+  // ZBot 改: 切会话时清空 turns (新一轮会话的历史), 重新拉 messages。
+  // 之前 resetStream() 也会清 turns, 导致用户在同会话发第二条消息时
+  // 第一条消息的回答一起被清掉, 表现为「第二条消息发出去之后, 第一条的回答
+  // 不见了」。现在 turns 是"当前会话历史", 跨消息保留; 仅切会话时清空。
   useEffect(() => {
+    clearTurns();
     resetStream();
-  }, [sessionName, resetStream]);
+    setMessages([]);
+  }, [sessionName, clearTurns, resetStream]);
 
   const handleAddFile = useCallback(async (file: File) => {
-    // H32 修复:客户端先校验大小,避免大文件空跑网络往返被后端 413。
-    // 后端 MAX_FILE_BYTES = 10 MB,这里和 Composer 保持一致。
     const FILE_MAX_BYTES = 10 * 1024 * 1024;
     if (file.size > FILE_MAX_BYTES) {
       pushToast('error', `文件 ${file.name} 超过 ${FILE_MAX_BYTES / 1024 / 1024} MB 上限`, { sticky: true });
@@ -122,7 +140,7 @@ export default function ChatPage() {
     const placeholder: AttachedFile = { file, uploading: true, error: null };
     setAttachedFiles((prev) => [...prev, placeholder]);
     try {
-      const res = await api.files.upload([file]);
+      const res = await api.files.upload([file], model);
       setAttachedFiles((prev) =>
         prev.map((f) => (f === placeholder ? { ...f, uploading: false, fileId: res.file_id } : f))
       );
@@ -133,14 +151,13 @@ export default function ChatPage() {
       );
       pushToast('error', `文件上传失败: ${msg}`, { sticky: true });
     }
-  }, [api, pushToast]);
+  }, [api, pushToast, model]);
 
   const handleRemoveFile = useCallback((index: number) => {
     setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const canSend =
-    socketState === 'connected' &&
     !isRunning &&
     input.trim().length > 0 &&
     !attachedFiles.some((f) => f.uploading);
@@ -148,18 +165,22 @@ export default function ChatPage() {
   const handleSend = useCallback(() => {
     const content = input.trim();
     if (!content) return;
-    // C2 修复:同步守卫防双发。startingRef 守卫由 useAgentStream 内部也有,
-    // 但 setIsRunning 是异步的,React 18 自动批处理下同 render 内多次 sendMessage
-    // 都会通过 isRunning 检查,所以必须这里再用 ref 同步翻转。
     if (sendingRef.current) return;
     sendingRef.current = true;
-    setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: 'user', content }]);
+    // ZBot 改: 不再把用户消息塞到 messages 数组 — 现在用户消息由 useAgentStream
+    // 通过 user_message turn item 写进 turns, 与助手回答同一个 turn 渲染。
+    // 之前双写到 messages 会出现「用户消息在 messages, 助手回答在 turns, 中间
+    // 样式脱节」以及「切会话清 messages 之后用户消息丢失」两个 bug。
     setInput('');
-    // 取第一个已上传完成的文件 id 透传 — 多个文件场景等 Composer UX PR 一起做。
     const fileId = attachedFiles.find((f) => f.fileId)?.fileId;
     sendMessage(content, sessionName.trim() || 'default', fileId);
     setAttachedFiles([]);
   }, [input, sessionName, sendMessage, attachedFiles]);
+
+  const handleStop = useCallback(() => {
+    void stopRun();
+    pushToast('info', '已停止当前任务');
+  }, [stopRun, pushToast]);
 
   const handleSelectSession = useCallback((name: string) => {
     setSessionName(name);
@@ -172,34 +193,16 @@ export default function ChatPage() {
     }
   }, [deleteSession, sessionName]);
 
-  const handleNewSession = useCallback(() => {
-    // MEDIUM 修复:打开 inline 弹层(替代阻塞主线程的 window.prompt)。
-    setNewSessionDialog({ open: true, name: '', error: '' });
-  }, []);
-
-  const handleConfirmNewSession = useCallback(async () => {
-    const trimmed = newSessionDialog.name.trim();
-    if (!trimmed) {
-      setNewSessionDialog((prev) => ({ ...prev, error: '会话名不能为空' }));
-      return;
+  // ZBot 改: SessionList "+" 唤起行内输入框, 这里接收用户输入的名字 (或 undefined = 回车空 -> 后端自动生成)
+  // ZBot: 不再因 sendingRef / isRunning 早返回 - 旧逻辑会导致用户在运行中创建新会话时什么都看不到。
+  //       新会话创建与正在进行的 run 完全独立, useEffect 切 sessionName 时会 resetStream 关闭旧 stream。
+  // ZBot 改: setMessages([]) 由 useEffect[sessionName] 负责, 不在这里重复清。
+  const handleNewSession = useCallback(async (requestedName?: string) => {
+    const name = await createSessionByName(requestedName);
+    if (name) {
+      setSessionName(name);
     }
-    if (!/^[\w\-.]{1,200}$/.test(trimmed)) {
-      setNewSessionDialog((prev) => ({
-        ...prev,
-        error: '只能包含字母、数字、下划线、连字符、点,长度 1-200',
-      }));
-      return;
-    }
-    const ok = await createSession(trimmed);
-    if (ok) {
-      setSessionName(trimmed);
-      setMessages([]);
-      setStreamingContent('');
-      setNewSessionDialog({ open: false, name: '', error: '' });
-    } else {
-      setNewSessionDialog((prev) => ({ ...prev, error: '创建会话失败' }));
-    }
-  }, [newSessionDialog.name, createSession]);
+  }, [createSessionByName]);
 
   const handleRenameSession = useCallback(async (oldName: string, newName: string) => {
     const ok = await renameSession(oldName, newName);
@@ -208,6 +211,10 @@ export default function ChatPage() {
     }
     return ok;
   }, [renameSession, sessionName]);
+
+  const handlePickExample = useCallback((picked: string) => {
+    setInput(picked);
+  }, []);
 
   return (
     <main className="shell">
@@ -228,62 +235,40 @@ export default function ChatPage() {
 
       <section className="chat">
         <header className="chat-header">
-          <div>
-            <h2>对话</h2>
+          <div className="chat-header-left">
+            <h2 className="chat-header-title">{sessionName || '新会话'}</h2>
+            {model && <p className="chat-header-model">{model}</p>}
             {configured === false && reason && (
               <p className="config-warning">{reason}</p>
             )}
           </div>
-          <button className="stop-button" type="button" onClick={stopRun} disabled={!isRunning}>
-            停止
-          </button>
+          {/* ZBot 改: 移除右上角重复停止按钮 (Composer 内部已有功能性停止按钮) */}
+          <div className="chat-header-right" />
         </header>
 
         <MessageList
-          messages={messages}
+          messages={[]}
+          turns={turns}
           isRunning={isRunning}
-          streamingContent={streamingContent}
           loading={messagesLoading}
+          livePhase={livePhase}
+          liveToolName={liveToolName}
+          onPickExample={handlePickExample}
+          composerRef={composerRef}
         />
         <Composer
+          ref={composerRef}
           input={input}
           setInput={setInput}
           onSend={handleSend}
-          disabled={!canSend}
+          onStop={handleStop}
+          isRunning={isRunning}
+          canSend={canSend}
           attachedFiles={attachedFiles}
           onAddFile={handleAddFile}
           onRemoveFile={handleRemoveFile}
         />
       </section>
-
-      {newSessionDialog.open && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <div className="modal-card">
-            <h3>新建会话</h3>
-            <input
-              autoFocus
-              type="text"
-              value={newSessionDialog.name}
-              onChange={(e) => setNewSessionDialog((prev) => ({ ...prev, name: e.target.value, error: '' }))}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleConfirmNewSession();
-                else if (e.key === 'Escape') setNewSessionDialog({ open: false, name: '', error: '' });
-              }}
-              placeholder="例如:weekly-report"
-              maxLength={200}
-            />
-            {newSessionDialog.error && <p className="modal-error">{newSessionDialog.error}</p>}
-            <div className="modal-actions">
-              <button type="button" onClick={() => setNewSessionDialog({ open: false, name: '', error: '' })}>
-                取消
-              </button>
-              <button type="button" onClick={() => void handleConfirmNewSession()}>
-                创建
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </main>
   );
 }

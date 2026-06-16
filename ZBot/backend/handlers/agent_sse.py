@@ -57,8 +57,12 @@ class EventMapping:
 
 
 def _to_task_started(_: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
+    # ZBot 改: 优先使用 agent_run_service 分配的稳定 turn_id, 否则回退到本地 uuid。
+    # 之前每次都生成新 uuid, 导致 task_started 的 turnId 与 task_complete 的 turnId
+    # 不一致, 前端 setTurns 的 t.turnId !== turnId 永远为 true, 消息项写不进去,
+    # 最终结果不显示。
     return {
-        "turn_id": str(uuid.uuid4()),
+        "turn_id": str(p.get("turn_id") or uuid.uuid4()),
         "started_at": time.time(),
         "model_context_window": int(p.get("model_context_window", 0)),
     }
@@ -70,22 +74,33 @@ def _to_task_complete(status: str) -> Callable[[AgentEvent, dict[str, Any]], dic
             "turn_id": p.get("turn_id", ""),
             "status": status,
             "ended_at": time.time(),
-            "final_content": event.message or str(p.get("final_content", "")),
+            # H33 fix: prefer the real final_content from the agent over the
+            # business label "task complete" / "task cancelled". When the agent
+            # returns a real LLM response, it is in payload.final_content;
+            # event.message is just a short status string used for run.completed
+            # UX logs.
+            "final_content": p.get("final_content") or event.message,
         }
 
     return _t
 
 
 def _to_run_failed(event: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
+    # ZBot 改: 透传 turn_id, 前端用它在 setTurns 里找到对应的 turn 来 mark failed。
+    # 之前 turn_id 字段缺失, run.failed 事件流到前端时, 任务列表更新不到对应 turn。
     return {
+        "turn_id": p.get("turn_id", ""),
         "message": event.message or "智能体运行失败",
         "code": str(p.get("code", "run_failed")),
     }
 
 
 def _to_message_delta(delta: bool) -> Callable[[AgentEvent, dict[str, Any]], dict[str, Any]]:
-    def _t(event: AgentEvent, _: dict[str, Any]) -> dict[str, Any]:
+    def _t(event: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
+        # ZBot 改: 透传 turn_id, 前端按它路由 deltas 到正确的 turn, 避免依赖
+        # turnsRef.current[len-1]?.turnId 兜底导致的跨 turn 错位。
         return {
+            "turn_id": p.get("turn_id", ""),
             "role": "assistant",
             "content": event.message or "",
             "delta": delta,
@@ -95,23 +110,44 @@ def _to_message_delta(delta: bool) -> Callable[[AgentEvent, dict[str, Any]], dic
 
 
 def _to_function_call(event: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
+    # ZBot 改: 工具名优先取 p["tool_name"] / p["name"] (真实工具名), 不要再 fallback
+    # 到 event.agent_label —— agent_label 是 agent 自己的名字 (主agent / 子agent<id>),
+    # 把它当工具名会导致前端 4 个工具都显示成 "主agent" / "子agent<id>"。
+    tool_name = (
+        p.get("tool_name")
+        or p.get("name")
+        or (event.agent_label if event.agent_label and not str(event.agent_label).startswith(("主", "子")) else None)
+        or "工具"
+    )
     return {
-        "call_id": str(p.get("call_id", uuid.uuid4())),
-        "name": event.agent_label or p.get("tool_name", "工具"),
-        "arguments": json.dumps(p.get("input", {}), ensure_ascii=False),
+        "turn_id": p.get("turn_id", ""),
+        "call_id": str(p.get("call_id") or p.get("tool_call_id") or uuid.uuid4()),
+        "name": tool_name,
+        "arguments": p.get("arguments") or json.dumps(p.get("input", {}), ensure_ascii=False),
     }
 
 
 def _to_function_call_output(event: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
+    # ZBot 改: call_id 兼容两种 key: 后端 base_agent 写的是 tool_call_id (来自 LLM
+    # provider 的 tool_call.id), 而 _to_function_call 写入的也是同一个 tool_call_id。
+    # 之前 _to_function_call_output 只读 p["call_id"], 永远拿到空字符串, 匹配不上
+    # 前端 open tool_call 的 callId, 导致 4 个工具永远卡在 "运行中"。
     return {
-        "call_id": str(p.get("call_id", "")),
+        "turn_id": p.get("turn_id", ""),
+        "call_id": str(p.get("call_id") or p.get("tool_call_id") or ""),
+        "status": "done",  # ZBot 改: 与 _to_function_call_output_error 对齐, 方便前端判断
         "output": event.message or str(p.get("output", "")),
     }
 
 
-def _to_function_call_output_error(event: AgentEvent, _: dict[str, Any]) -> dict[str, Any]:
+def _to_function_call_output_error(event: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
+    # ZBot 改: 之前 call_id 永远是空字符串, 前端 upsertItem 匹配不到, 失败的
+    # 工具永远卡在 "运行中"。现在透传 call_id / tool_call_id, 并加 status='failed'
+    # 让前端能区分 done vs failed。
     return {
-        "call_id": "",  # 失败时无 call_id 上下文
+        "turn_id": p.get("turn_id", ""),
+        "call_id": str(p.get("call_id") or p.get("tool_call_id") or ""),
+        "status": "failed",
         "output": f"[错误] {event.message or '工具调用失败'}",
     }
 
@@ -132,6 +168,24 @@ def _to_token_count(event: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _to_status(event: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
+    """ZBot 改:LiveStatus 用的"思考/整理结果"状态事件。"""
+    return {
+        "text": event.message or "",
+        "phase": str(p.get("phase", "thinking")),
+    }
+
+
+def _to_tool_hint(event: AgentEvent, p: dict[str, Any]) -> dict[str, Any]:
+    """ZBot 改:LiveStatus 用的"调用工具"状态事件。"""
+    return {
+        "text": event.message or "",
+        "tool_name": str(p.get("tool_name") or event.agent_label or ""),
+    }
+
+
+
+
 # 业务事件名 → SSE envelope 映射。envelope_type=None 表示"显式忽略"。
 _MAPPINGS: dict[str, EventMapping] = {
     # ── 显式忽略:这些事件 SSE 流不需要推 ─────────────────────────
@@ -139,6 +193,11 @@ _MAPPINGS: dict[str, EventMapping] = {
     "run.closed":         EventMapping(None, None, lambda e, p: {}),
     "turn.completed":     EventMapping(None, None, lambda e, p: {}),
     "model.completed":    EventMapping(None, None, lambda e, p: {}),
+    # ZBot 改:LiveStatus 状态事件 — agent_run_service._on_progress 会同时推 status /
+    # tool_hint 与原本的 model.started / tool.progress,这里给前者加映射。
+    "status":             EventMapping("event_msg", "status",    _to_status),
+    "tool_hint":          EventMapping("event_msg", "tool_hint", _to_tool_hint),
+
     "tool.progress":      EventMapping(None, None, lambda e, p: {}),
     # ── 合并的 turn/model 开始 ────────────────────────────────────
     "turn.started":       EventMapping("event_msg", "task_started", _to_task_started),
@@ -260,19 +319,15 @@ async def stream_run_events(
     # =========================
     try:
         while True:
-            try:
-                # 从队列取事件（阻塞点）
-                # RunWorker.put(event) → 这里 get()
-                raw = await asyncio.wait_for(
-                    state.event_queue.get(),
-                    timeout=10.0
-                )
-
-            except asyncio.TimeoutError:
-                # 没事件 → 说明“暂时无产出”
-                # SSE keep-alive（防止连接断）
-                yield ": heartbeat\n\n"
-                continue
+            # 从队列取事件（阻塞点）
+            # RunWorker.put(event) → 这里 get()
+            # 软超时:取消与硬截断解耦。
+            # 这里改成纯 await,不再用 wait_for 做 10s 硬截断。
+            # - 慢思考(LLM 思考 30s+)不再被错误地当成"心跳帧";
+            # - 真卡死时由 ActivityWatchdog(默认 30 min)取消 run_worker,
+            #   worker 在 _ask_once 捕获 CancelledError 后会 mark_ended + sink("run.cancelled")
+            #   并由外层 put_nowait(None) 让这里自然拿到 None 后 break。
+            raw = await state.event_queue.get()
 
             # =========================
             # 4. 结束信号
@@ -379,7 +434,9 @@ async def run_worker(
     message: str | list[dict[str, Any]],
     *,
     file_id: str | None = None,
+    service: AgentRunService | None = None,
 ) -> None:
+    # ZBot 改: 接受外部传入的 service (从 app.state 共享), 否则走兼容路径 (新建)
     """
     后台任务：驱动agent的ask()循环，并将事件推送至服务器发送事件队列。
     """
@@ -395,19 +452,20 @@ async def run_worker(
         )
         return
 
-    try:
-        # 每个协程有自己的 AgentRunService,此时各自配置已经好了，然后心跳狗也开启了，之后的每个动作，都要上报给心跳狗
-        service: AgentRunService = create_agent_run_service(config)
-    except AgentSetupError as exc:
-        await runs.mark_ended(state.run_id, RunStatus.FAILED, exc.message)
-        await state.event_queue.put(
-            AgentEvent.control_event(
-                "run.failed",
-                exc.message,
-                payload={"code": exc.code},
+    if service is None:
+        # ZBot 改: 兼容路径 - 不传 service 时仍按 per-run 创建 (主要用于测试)
+        try:
+            service = create_agent_run_service(config)
+        except AgentSetupError as exc:
+            await runs.mark_ended(state.run_id, RunStatus.FAILED, exc.message)
+            await state.event_queue.put(
+                AgentEvent.control_event(
+                    "run.failed",
+                    exc.message,
+                    payload={"code": exc.code},
+                )
             )
-        )
-        return
+            return
 
     await runs.mark_started(state.run_id)
 

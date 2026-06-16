@@ -1,19 +1,21 @@
-/**
+﻿/**
  * index.css — 全局重置 + 基础样式
  */
 
 @import './styles/tokens.css';
 
-/* Box-sizing: border-box — 在宽度/高度计算中包含 padding 和 border */
+/* Box-sizing: border-box — 宽度/高度计算中包含 padding 和 border */
 * {
   box-sizing: border-box;
 }
 
-/* 确保布局占满整个高度 */
+/* ZBot 改:把 html/body/#root 强制限到 viewport 高度,后面 .shell 用 height:100vh
+   才能拿到精确的视口,不被 <body> 的内容高度反过来撑大。
+   之前用 min-height:100% 会让 body 被聊天内容撑高,导致整页无限滚动。 */
 html,
 body,
 #root {
-  min-height: 100%;
+  height: 100%;
 }
 
 body {

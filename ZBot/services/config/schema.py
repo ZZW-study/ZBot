@@ -109,7 +109,7 @@ class WebToolsConfig(Base):
 class ExecToolConfig(Base):
     """Shell 命令执行工具配置,用于配置 AI 执行系统命令时的参数。"""
 
-    timeout: int = 60  # 命令执行超时时间（秒）
+    timeout: int = 180  # 命令执行超时时间（秒）
 
 
 class MCPServerConfig(Base):

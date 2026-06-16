@@ -1,4 +1,4 @@
-/**
+﻿/**
  * useAgentStream
  *
  * Owns:
@@ -11,9 +11,13 @@
  * `event_msg/task_started` and finalized on `event_msg/task_complete`
  * (status from payload). Tool call / output events are paired by `call_id`
  * and folded into the turn they belong to.
+ *
+ * ZBot 改: LiveStatus 状态机集成, 引入 'streaming' 阶段避免
+ * "助手开始吐字就 close()" 误锁工具事件, 详见 liveStatusMachine.ts。
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { LiveStatusMachine } from './liveStatusMachine';
 import type {
   RunStatus,
   SocketState,
@@ -45,6 +49,10 @@ interface EventMsgPayloadShape {
   output_tokens?: number;
   cached_tokens?: number;
   model_context_window?: number;
+  // ZBot 改: LiveStatus 状态事件字段 (后端 _to_status / _to_tool_hint 注入)
+  phase?: 'thinking' | 'tool' | 'finalizing' | 'streaming' | string;
+  tool_name?: string;
+  text?: string;
 }
 
 interface SessionsApi {
@@ -64,37 +72,33 @@ export function useAgentStream(
   const [activeRunId, setActiveRunId] = useState('');
   const [activeSession, setActiveSession] = useState('');
   const [runStatus, setRunStatus] = useState<RunStatus | null>(null);
-  // 之前声明过 `error` 死状态,现在完全移除:错误统一走 callbacksRef.current.onFailed,
-  // 单一通知路径,不会有"error state 实际从来没被 set"的混乱。
   const [tokenUsage, setTokenUsage] = useState<TokenUsage>(EMPTY_TOKEN_USAGE);
   const [modelContextWindow, setModelContextWindow] = useState(0);
+  // ZBot 改: LiveStatus 状态机抽到独立 class, 用 useSyncExternalStore 同步 phase + toolName
+  const liveStatusMachineRef = useRef<LiveStatusMachine | null>(null);
+  if (liveStatusMachineRef.current === null) liveStatusMachineRef.current = new LiveStatusMachine();
+  const liveStatus = useSyncExternalStore(
+    liveStatusMachineRef.current.subscribe.bind(liveStatusMachineRef.current),
+    () => liveStatusMachineRef.current!.snapshot(),
+  );
 
   const sourceRef = useRef<EventSource | null>(null);
   const runIdRef = useRef<string>('');
   const sessionRef = useRef<string>('');
-  // 同步 in-flight 守卫:在 sendMessage 入口立刻置 true,直到 setIsRunning(false)
-  // 之前的窗口内拒绝并发 sendMessage(避免双击/连点导致的后端开多个 run)。
-  // setIsRunning 是异步更新,React 18 批处理下同一 render 内多次 sendMessage
-  // 都会通过 isRunning 守卫,所以必须用 ref 同步翻转。
+  // 同步 in-flight 守卫: 在 sendMessage 入口立刻置 true, 直到 setIsRunning(false)
   const startingRef = useRef(false);
-  // Tracks whether the current SSE stream has emitted a terminal event
-  // (task_complete or error payload). EventSource also fires 'error' on a
-  // clean close, so we use this ref to ignore post-completion transport
-  // errors in the 'error' listener below.
   const completedRef = useRef(false);
-  // Mirror `turns` into a ref so the response_item handler (registered inside
-  // sendMessage) can read the latest value without re-registering the handler.
+  // Mirror `turns` into a ref so the response_item handler can read the latest
+  // value without re-registering the handler.
   const turnsRef = useRef<Turn[]>([]);
   useEffect(() => {
     turnsRef.current = turns;
   }, [turns]);
-  // C5 修复:每次 sendMessage 自增,闭包 es 内对比。保证旧 es 的延迟事件不会归到新 run。
+  // C5 修复: 每次 sendMessage 自增, 闭包 es 内对比。保证旧 es 的延迟事件不会归到新 run。
   const generationRef = useRef(0);
-  // C4 修复:累积 assistant 文本流。onCompleted 时若 final_content 为空,fallback 到此处累积,
-  // 避免"流式看着有内容,完成时清空"的丢消息 bug。
+  // C4 修复: 累积 assistant 文本流。onCompleted 时若 final_content 为空, fallback 到此处累积。
   const streamingAccumulatorRef = useRef('');
-  // H26 修复:把 callbacks 包成 ref,listener 内读 ref,避免 useCallback dep 过期。
-  // 每次渲染都同步一次,listener 始终能拿到最新的 callbacks。
+  // H26 修复: 把 callbacks 包成 ref, listener 内读 ref, 避免 useCallback dep 过期。
   const callbacksRef = useRef<UseAgentStreamCallbacks>(callbacks);
   useEffect(() => {
     callbacksRef.current = callbacks;
@@ -107,15 +111,17 @@ export function useAgentStream(
     }
   }, []);
 
+  // ZBot 改: resetStream 只重置"正在进行的 run"的 in-flight 状态 (SSE / status),
+  // 不再清空 turns —— turns 是当前会话的"对话历史", 包括已完成的所有 turn,
+  // 必须保留, 否则:
+  //   (1) 用户在同会话发第二条消息 -> 第一条消息的回答从 turns 里消失
+  //   (2) 切换会话后切回来 -> 历史里也看不到之前的回答
+  // turns 的清空专门由 clearTurns 负责, 外部 (切会话时) 调用。
   const resetStream = useCallback(() => {
-    // Mark the stream as completed BEFORE closing so the EventSource's
-    // 'error' listener (which fires on close) does not show a misleading
-    // 'Connection lost' toast when the caller is just resetting state
-    // (e.g. session switch, new run). sendMessage clears the ref again
-    // immediately after to start the new run with a fresh ref.
+    liveStatusMachineRef.current?.reset();
     completedRef.current = true;
     closeStream();
-    setTurns([]);
+    // 注意: 不再 setTurns([]) —— 历史 turn 保留
     setRunStatus(null);
     setIsRunning(false);
     setActiveRunId('');
@@ -126,13 +132,21 @@ export function useAgentStream(
     sessionRef.current = '';
   }, [closeStream]);
 
-  // Cleanup on unmount
+  // ZBot 改: 显式清空 turns, 仅在切换会话时调用。resetStream 不再做这件事。
+  const clearTurns = useCallback(() => {
+    setTurns([]);
+  }, []);
+
+  // ZBot 改: 用历史 turns 替换当前 turns (历史会话加载时由 ChatPage 调用)。
+  // 与 clearTurns 不同, 这个保留所有 turn, 只是替换数据。
+  const setHistoryTurns = useCallback((historyTurns: Turn[]) => {
+    setTurns(historyTurns);
+  }, []);
+
   useEffect(() => {
     return () => closeStream();
   }, [closeStream]);
 
-  // isRunning 翻 false 时清同步守卫;sendMessage 入口先翻 true,所有终态分支
-  // 都会 setIsRunning(false) → 本 effect 清 startingRef,允许下次再发。
   useEffect(() => {
     if (!isRunning) {
       startingRef.current = false;
@@ -165,25 +179,33 @@ export function useAgentStream(
     async (message: string, sessionName: string, fileId?: string) => {
       const session = sessionName?.trim() || 'default';
       if (!message.trim()) return;
-      // 同步守卫:防止连点/双击/键盘事件竞态导致同 render 内多次 sendMessage 都通过 isRunning 检查。
+      // 同步守卫: 防止连点/双击/键盘事件竞态
       if (startingRef.current) return;
       startingRef.current = true;
-      // C5 修复:每次 sendMessage 自增 generation。闭包 es 内对比,
-      // 旧 es 的延迟事件不会归到新 run。
       const myGeneration = ++generationRef.current;
-      // C4 修复:重置流式累积器,准备接收新一轮的 deltas。
       streamingAccumulatorRef.current = '';
-      // H26 修复:listener 内通过 callbacksRef.current 读最新 callbacks,
-      // 这里不需要局部变量。
-      // Reset hook state (closes previous stream + clears turns/error), then
-      // prime for the new run. resetStream marks the previous stream as
-      // completed to suppress the spurious 'Connection lost' toast from
-      // the EventSource close; we clear the ref here so the upcoming
-      // SSE connection can surface real errors again.
+
       resetStream();
       completedRef.current = false;
       setRunStatus('queued');
       setIsRunning(true);
+      // ZBot 改: LiveStatus 状态机打开, 立即进入 thinking, 不等后端 status 事件
+      liveStatusMachineRef.current?.open();
+
+      // ZBot 改: 在发起 POST 之前先为"本轮 turn"占位 + 把用户消息写进 turn.items,
+      // 这样用户消息和助手回答都在同一个 turn 里, MessageList 只渲染 turns 也能
+      // 完整看到一轮对话 (用户问 + 助手答)。同时 turn.turnId 用本地占位 id,
+      // task_started 来了之后 setTurns 会按 turnId 合并 / 替换 (见 line 215-219)。
+      const placeholderTurnId = `local-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      setTurns((prev) => [
+        ...prev,
+        {
+          turnId: placeholderTurnId,
+          status: 'running',
+          items: [{ kind: 'user_message', content: message } as TurnItem],
+          startedAt: Date.now(),
+        },
+      ]);
 
       try {
         const res = await api.sessions.runs.start(session, message, fileId);
@@ -215,34 +237,86 @@ export function useAgentStream(
             const payload = (data.payload ?? {}) as EventMsgPayloadShape;
 
             if (payload.type === 'task_started') {
+              // ZBot 改: 幂等 open - 如果锁已开(例如上一轮 streaming 还没结束),
+              // 不要强行重置回 thinking, 否则工具事件会被状态机拒掉。
+              liveStatusMachineRef.current?.openIfClosed();
               const turnId = payload.turn_id || `t-${Date.now()}`;
               const ctxWindow = Number(payload.model_context_window || 0);
               setModelContextWindow(ctxWindow);
-              setTurns((prev) =>
-                prev.some((t) => t.turnId === turnId)
-                  ? prev.map((t) => (t.turnId === turnId ? { ...t, status: 'running', modelContextWindow: ctxWindow || t.modelContextWindow } : t))
-                  : [...prev, { turnId, status: 'running', items: [], startedAt: Date.now(), modelContextWindow: ctxWindow }],
-              );
+              setTurns((prev) => {
+                // 1) 真实 turnId 已存在 (重连 / 重复 event): 标记 running
+                const realTurnIdx = prev.findIndex((t) => t.turnId === turnId);
+                if (realTurnIdx >= 0) {
+                  return prev.map((t) => (t.turnId === turnId
+                    ? { ...t, status: 'running', modelContextWindow: ctxWindow || t.modelContextWindow }
+                    : t));
+                }
+                // 2) 找到本地占位 turn (我们 sendMessage 时提前插入的, turnId 是
+                //    "local-...", 里面有 user_message 项): 把占位的 turnId 替换成
+                //    真实 turnId, 保留 user_message。
+                const placeholderIdx = prev.findIndex(
+                  (t) => t.turnId.startsWith('local-') && t.status === 'running'
+                );
+                if (placeholderIdx >= 0) {
+                  return prev.map((t, i) => i === placeholderIdx
+                    ? { ...t, turnId, modelContextWindow: ctxWindow || t.modelContextWindow }
+                    : t);
+                }
+                // 3) 没有占位 (异常路径 / race): 全新建一个空 turn
+                return [
+                  ...prev,
+                  { turnId, status: 'running', items: [], startedAt: Date.now(), modelContextWindow: ctxWindow },
+                ];
+              });
               setIsRunning(true);
               callbacksRef.current.onStarted?.();
             } else if (payload.type === 'task_complete') {
+              // 终态: 关 LiveStatus 锁
+              liveStatusMachineRef.current?.close();
               const turnId = payload.turn_id || '';
               const nextStatus: Turn['status'] =
                 payload.status === 'failed' ? 'failed'
                 : payload.status === 'cancelled' ? 'cancelled'
                 : 'completed';
+              const finalFromPayload = typeof payload.final_content === 'string' ? payload.final_content : '';
+              const finalContent = finalFromPayload || streamingAccumulatorRef.current;
+              streamingAccumulatorRef.current = '';
               if (turnId) {
+                // ZBot 改: task_complete 时把 finalContent 作为 message item 写入 turn
+                //   - 如果 turn 已有 message item (旧逻辑遗留), 覆盖内容
+                //   - 否则在 items 末尾追加一个 message item
+                //   - cancelled / failed 时 finalContent 通常为空, 不追加
+                // ZBot 改: 顺手把任何仍处于 "running" 状态的 tool_call 收尾 —
+                //   function_call_output 没到 / call_id 不匹配 / 工具超时 等场景
+                //   会让 tool_call 永远卡在 running, 既然任务已结束, 这些孤儿
+                //   必须标 cancelled, 否则用户看到 "7 个工具 1 个永远运行中"。
                 setTurns((prev) =>
-                  prev.map((t) => (t.turnId === turnId ? { ...t, status: nextStatus, endedAt: Date.now() } : t)),
+                  prev.map((t) => {
+                    if (t.turnId !== turnId) return t;
+                    const now = Date.now();
+                    const reconciledItems = t.items.map((it) =>
+                      it.kind === 'tool_call' && it.status === 'running'
+                        ? { ...it, status: 'failed' as const, output: it.output || '[未返回结果 — 任务已结束]', endedAt: now }
+                        : it,
+                    );
+                    const baseTurn = { ...t, status: nextStatus, endedAt: now, items: reconciledItems };
+                    if (!finalContent) {
+                      return baseTurn;
+                    }
+                    const messageIdx = baseTurn.items.findIndex((it) => it.kind === 'message');
+                    const messageItem = { kind: 'message' as const, content: finalContent };
+                    if (messageIdx >= 0) {
+                      const items = baseTurn.items.slice();
+                      items[messageIdx] = messageItem;
+                      return { ...baseTurn, items };
+                    }
+                    return { ...baseTurn, items: [...baseTurn.items, messageItem] };
+                  }),
                 );
               }
               setIsRunning(false);
               setRunStatus(payload.status || 'completed');
               completedRef.current = true;
-              // C4 修复:final_content 为空时,fallback 到流式累积器,避免"流式看到文字、完成时清空"。
-              const finalFromPayload = typeof payload.final_content === 'string' ? payload.final_content : '';
-              const finalContent = finalFromPayload || streamingAccumulatorRef.current;
-              streamingAccumulatorRef.current = '';
               callbacksRef.current.onCompleted?.({
                 type: 'task_complete',
                 turn_id: payload.turn_id || '',
@@ -262,14 +336,21 @@ export function useAgentStream(
               setIsRunning(false);
               setRunStatus('failed');
               completedRef.current = true;
+              // 终态: 关 LiveStatus 锁
+              liveStatusMachineRef.current?.close();
               streamingAccumulatorRef.current = '';
               callbacksRef.current.onFailed?.({ message: payload.message, code: payload.code });
             } else if (payload.type === 'cron_reminder') {
-              // Cron reminders are system-level, not part of any turn's content.
-              // Surface as a sticky info toast so the user can see them
-              // without polluting the message list.
               const name = payload.message || 'Cron job';
               callbacksRef.current.onCronReminder?.(name);
+            } else if (payload.type === 'status') {
+              // ZBot 改: 走状态机, 含 'streaming' 阶段
+              const phase = String(payload.phase || 'thinking');
+              if (phase === 'thinking' || phase === 'finalizing' || phase === 'tool' || phase === 'streaming') {
+                liveStatusMachineRef.current?.apply(phase as 'thinking' | 'tool' | 'finalizing' | 'streaming');
+              }
+            } else if (payload.type === 'tool_hint') {
+              liveStatusMachineRef.current?.apply('tool', String(payload.tool_name || payload.text || ''));
             } else if (payload.type === 'token_count') {
               setTokenUsage({
                 inputTokens: Number(payload.input_tokens || 0),
@@ -277,7 +358,6 @@ export function useAgentStream(
                 cachedTokens: Number(payload.cached_tokens || 0),
               });
             }
-            // user_message echoes are informational; no-op.
           } catch { /* ignore */ }
         });
 
@@ -296,46 +376,29 @@ export function useAgentStream(
               output?: string;
               summary?: string;
             };
-            // H29 修复:优先用 payload.turn_id(后端已注入)定位 turn,fallback 到最后一个。
-            // 之前只用最后一个 turn 会导致跨 turn race 时 deltas 粘到上一个 turn。
             const payloadTurnId = (payload as { turn_id?: string }).turn_id;
             const currentTurn = turnsRef.current[turnsRef.current.length - 1];
             const turnId = payloadTurnId || currentTurn?.turnId;
 
             if (payload.type === 'message' && payload.role === 'assistant') {
               const content = payload.content || '';
-              const isFinal = payload.delta === false;
-              if (content && !isFinal) {
-                // C4 修复:累积 streaming,供 task_complete 时 fallback。
+              if (content) {
+                // ZBot 改: 中间文字(工具间吐出的 token) 不再写入 turn.items
+                // 原因: spec 要求 "过程 vs 结果 严格分离", 中间 token 只作为
+                //       状态卡片文案切换的触发器, 不会单独渲染为白文字.
+                //       真正的 final answer 在 task_complete 时由 final_content
+                //       (或 streamingAccumulatorRef fallback) 一次性写入 turn.
                 streamingAccumulatorRef.current += content;
                 callbacksRef.current.onDelta?.(content);
-              }
-              if (turnId && content) {
-                // Coalesce consecutive assistant message items into one.
-                // For streaming chunks (delta !== false) we append to the
-                // existing message. For the final frame (delta === false),
-                // we REPLACE — the deltas already accumulated the full
-                // content, so re-appending would double it.
-                setTurns((prev) =>
-                  prev.map((t) => {
-                    if (t.turnId !== turnId) return t;
-                    const existing = t.items.find((it) => it.kind === 'message');
-                    if (existing && existing.kind === 'message') {
-                      // C4 修复:空 final 帧不覆盖累积的流式内容。
-                      if (isFinal && content === '') return t;
-                      const next = isFinal
-                        ? content
-                        : existing.content + content;
-                      return {
-                        ...t,
-                        items: t.items.map((it) => (it === existing ? { ...it, content: next } : it)),
-                      };
-                    }
-                    return { ...t, items: [...t.items, { kind: 'message', content }] };
-                  }),
-                );
+                // ZBot 改: 守卫 — 仅在当前 phase==='thinking' 时才切到 'streaming'。
+                // 工具在飞时 (phase==='tool') 不切, 避免「正在调用 XX 工具」闪烁成
+                // 「正在分析结果」。 finalizing/tool 阶段也保持锁定状态。
+                if (liveStatusMachineRef.current?.snapshot().phase === 'thinking') {
+                  liveStatusMachineRef.current?.apply('streaming');
+                }
               }
             } else if (payload.type === 'function_call') {
+              liveStatusMachineRef.current?.apply('tool', String(payload.name || ''));
               if (turnId && payload.call_id && payload.name) {
                 let parsedArgs: Record<string, unknown> = {};
                 try {
@@ -351,13 +414,24 @@ export function useAgentStream(
                 });
               }
             } else if (payload.type === 'function_call_output') {
+              // ZBot 改: 不在这里 apply('finalizing')。
+              // 之前每个工具返回都强切 finalizing, 导致多工具场景下「正在整理结果」闪烁多次。
+              // 统一由后端 status 事件在「最后一次 model.completed (无 tool_calls)」时驱动。
               if (turnId && payload.call_id) {
+                // ZBot 改: 区分 done vs failed — 后端 _to_function_call_output_error
+                // 会发 status='failed', 这里读出来更新到 tool_call item。
+                const isFailed = (payload as { status?: string }).status === 'failed';
                 upsertItem(
                   turnId,
                   (it) => it.kind === 'tool_call' && it.callId === payload.call_id,
                   (it) =>
                     it.kind === 'tool_call'
-                      ? { ...it, status: 'done', output: payload.output ?? '', endedAt: Date.now() }
+                      ? {
+                          ...it,
+                          status: isFailed ? 'failed' : 'done',
+                          output: payload.output ?? '',
+                          endedAt: Date.now(),
+                        }
                       : it,
                 );
               }
@@ -370,24 +444,18 @@ export function useAgentStream(
         });
 
         es.addEventListener('error', () => {
-          // C5 修复:用 generation 替代 sourceRef !== es,语义更清晰。
           if (myGeneration !== generationRef.current) return;
-          // EventSource fires 'error' on any disconnect, including the
-          // normal close that follows a received 'done' event. Only treat
-          // it as a failure if we never saw a terminal event for this run.
           if (!completedRef.current) {
             setSocketState('error');
             setIsRunning(false);
             streamingAccumulatorRef.current = '';
-            // Surface to the caller so a sticky error toast appears.
-            // Use a distinct message from agent-emitted errors so the user
-            // can tell the stream died vs. the agent returned an error.
+            // 终态: 关 LiveStatus 锁
+            liveStatusMachineRef.current?.close();
             callbacksRef.current.onFailed?.({ message: 'Connection lost', code: 'stream_disconnected' });
           }
         });
 
         es.addEventListener('done', () => {
-          // Same generation-based stale guard as the 'error' listener.
           if (myGeneration !== generationRef.current) return;
           es.close();
           setSocketState('disconnected');
@@ -396,12 +464,12 @@ export function useAgentStream(
         const msg = err instanceof Error ? err.message : 'failed to start run';
         setIsRunning(false);
         setRunStatus('failed');
+        // 终态: 关 LiveStatus 锁
+        liveStatusMachineRef.current?.close();
         streamingAccumulatorRef.current = '';
-        // Surface to caller exactly once.
         callbacksRef.current.onFailed?.({ message: msg });
       }
     },
-    // H26 修复:不再依赖 callbacks 本身(改用 callbacksRef),sendMessage 不再每次重建。
     [api, appendItem, resetStream, upsertItem],
   );
 
@@ -412,9 +480,8 @@ export function useAgentStream(
       setRunStatus('cancelled');
     } catch { /* ignore: best effort */ }
     setIsRunning(false);
-    // Mark the stream as completed BEFORE closing so the EventSource's
-    // 'error' listener (which fires on close) treats this as a clean
-    // shutdown rather than a real network failure.
+    // 终态: 关 LiveStatus 锁
+    liveStatusMachineRef.current?.close();
     completedRef.current = true;
     closeStream();
   }, [api, closeStream]);
@@ -428,8 +495,14 @@ export function useAgentStream(
     runStatus,
     tokenUsage,
     modelContextWindow,
+    livePhase: liveStatus.phase,
+    liveToolName: liveStatus.toolName,
     sendMessage,
     stopRun,
     resetStream,
+    // ZBot 改: 切会话时显式清空 turns, 取代之前 resetStream 隐式清空。
+    clearTurns,
+    // ZBot 改: 把 ChatMessage[] 历史加载成 Turn[], 替换当前 turns。
+    setHistoryTurns,
   };
 }

@@ -13,7 +13,14 @@ const PROVIDER_OPTIONS = [
   { value: 'openrouter', label: 'OpenRouter' },
   { value: 'dashscope', label: 'DashScope（阿里通义）' },
   { value: 'siliconflow', label: 'SiliconFlow' },
+  { value: 'minimax', label: 'MiniMax (default)' },
 ];
+
+// 后端 /api/config/defaults 没列出的 provider 时，前端兌底。
+// 关键：minimax 实际上是一个 provider 名，后端会原样写进 config.json。
+const FALLBACK_DEFAULTS: Record<string, { api_base: string; model_placeholder: string }> = {
+  minimax: { api_base: 'https://api.MiniMax.chat/v1', model_placeholder: 'MiniMax-M3' },
+};
 
 interface OnboardPageProps {
   apiBase: string;
@@ -64,6 +71,29 @@ export default function OnboardPage({ apiBase, isSettings = false, onConfigured 
         setModel(current?.model || defaultsData[currentProvider]?.model_placeholder || '');
         setApiBaseInput(providerData.apiBase || defaultsData[currentProvider]?.api_base || '');
         setHasExistingKey(Boolean(providerData.apiKey));
+
+        // 智能修复：后端 status 说 provider 不可识别时,
+        // 优先选 dashscope(用户最常用且 base 真实),其他有非空 key 的也可用.
+        const reason = current?.reason || '';
+        if (reason.includes('provider') && current?.providers) {
+          // 优先级: dashscope > 其他有非空 key 的
+          const candidate = ['dashscope', ...Object.keys(defaultsData)].find(
+            (k) => k !== 'dashscope' || (current.providers?.[k]?.apiKey || '').length > 0,
+          ) || Object.keys(defaultsData).find((k) => (current.providers?.[k]?.apiKey || '').length >= 8);
+          const knownWithKey = candidate && (current.providers?.[candidate]?.apiKey || '').length >= 8 ? candidate : null;
+          if (knownWithKey && knownWithKey !== currentProvider) {
+            setProvider(knownWithKey);
+            const fb2 = FALLBACK_DEFAULTS[knownWithKey];
+            setApiBaseInput(
+              (current.providers[knownWithKey]?.apiBase) || defaultsData[knownWithKey]?.api_base || fb2?.api_base || '',
+            );
+            setModel(
+              current?.model || defaultsData[knownWithKey]?.model_placeholder || fb2?.model_placeholder || '',
+            );
+            setHasExistingKey(true);
+            setError(`检测到当前 provider (${currentProvider || 'unknown'}) 无法识别，已自动切换到 ${knownWithKey}（已有 API Key）。请检查 base URL / model 后保存。`);
+          }
+        }
       } catch (err) {
         if (ignore) return;
         setError(err instanceof Error ? err.message : '加载配置失败');
@@ -79,13 +109,10 @@ export default function OnboardPage({ apiBase, isSettings = false, onConfigured 
 
   const handleProviderChange = (value: string) => {
     setProvider(value);
-    if (defaults && defaults[value]) {
-      setApiBaseInput(defaults[value].api_base || '');
-      setModel(defaults[value].model_placeholder || '');
-    }
-    // MEDIUM 修复:不立即清空已输入的 apiKey,留给 save 时按"留空则保留"语义处理。
-    // 之前切 provider 会无条件清空,如果用户已经输入 key 然后误改 dropdown,
-    // 必须重新输入。改为只更新 hasExistingKey 标记。
+    const fromBackend = defaults && defaults[value];
+    const fallback = FALLBACK_DEFAULTS[value];
+    setApiBaseInput(fromBackend?.api_base || fallback?.api_base || '');
+    setModel(fromBackend?.model_placeholder || fallback?.model_placeholder || '');
     setHasExistingKey(false);
   };
 
@@ -176,7 +203,7 @@ export default function OnboardPage({ apiBase, isSettings = false, onConfigured 
               type="text"
               value={model}
               onChange={(e) => setModel(e.target.value)}
-              placeholder={defaults?.[provider]?.model_placeholder || 'deepseek-chat'}
+              placeholder={FALLBACK_DEFAULTS[provider]?.model_placeholder || 'deepseek-chat'}
             />
           </label>
 

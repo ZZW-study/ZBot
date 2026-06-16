@@ -48,14 +48,27 @@ class SessionNotFound(Exception):
 # ---------------------------------------------------------------------------
 
 def session_message_detail(session: Session) -> list[dict[str, Any]]:
-    """把 Session.messages 转成前端展示用的消息列表(每条带 id/role/content/timestamp/tools_used)。"""
+    """把 Session.messages 转成前端展示用的消息列表(每条带 id/role/content/timestamp/tools_used)。
+
+    ZBot 改: agent loop 中间轮的 assistant 消息(有 content + tool_calls 同时存在)被
+    折叠掉, 不在历史视图展开成多个 bubble。原因: 这些中间轮是模型"我决定调工具"时的
+    过程性输出(例如"我先用 web_search 查天气"), 不是给用户看的最终答案, 在历史
+    视图里展示会让用户困惑(用户原话: "重新点进去怎么变成这样")。tool_calls 本身
+    已经在 SSE 流式阶段被收进折叠的工具调用摘要卡片, 不需要历史视图再渲染。
+    只保留: user 消息 + 最终 assistant 消息(没有 tool_calls 的那一轮)。
+    """
     messages: list[dict[str, Any]] = []
     for index, message in enumerate(session.messages):
         role = message.get("role")
         if role not in {"user", "assistant"}:
             continue
         content = _display_content(message.get("content"))
+        # 跳过: assistant 只有 tool_calls 但没有正文
         if role == "assistant" and not content and message.get("tool_calls"):
+            continue
+        # ZBot 改: 跳过 agent loop 中间轮 — assistant 有正文但同时也带着 tool_calls
+        # 这是中间过程(模型"我先查一下"), 不是给用户看的最终回复。
+        if role == "assistant" and message.get("tool_calls"):
             continue
         if not content:
             continue

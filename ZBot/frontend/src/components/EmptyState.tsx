@@ -1,5 +1,6 @@
-/**
- * EmptyState — generic empty state with optional example prompts.
+﻿/**
+ * EmptyState — 居中欢迎页 + 可点击示例 prompt
+ * 用于 MessageList 没有消息也没有 turn 时
  */
 
 import type { ReactNode } from 'react';
@@ -28,7 +29,8 @@ export default function EmptyState({ title, description, icon, cta, examples }: 
                 className="empty-state-example"
                 onClick={() => ex.onPick(ex.label)}
               >
-                {ex.label}
+                <span className="empty-state-example-arrow" aria-hidden="true">→</span>
+                <span>{ex.label}</span>
               </button>
             </li>
           ))}

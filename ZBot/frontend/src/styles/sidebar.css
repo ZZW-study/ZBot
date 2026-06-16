@@ -1,14 +1,16 @@
-/**
- * sidebar.css — 左侧边栏:品牌、会话列表、状态面板、按钮
+﻿/**
+ * sidebar.css — 左侧边栏: 品牌 / 会话列表 / 状态面板 / 操作按钮
+ * ZBot 改: 整体 Codex 风格化 (圆角 / 间距 / 阴影)
  */
 
 .sidebar {
-  border-right: 1px solid var(--color-border-light);
+  border-right: 1px solid var(--color-border-lighter);
   background: var(--color-surface);
-  padding: var(--space-6);
+  padding: var(--space-5) var(--space-4);
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: var(--space-5);
+  min-height: 0;
 }
 
 /* 品牌 */
@@ -16,50 +18,51 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  padding: var(--space-2) var(--space-2);
 }
 
 .brand-mark {
-  width: 42px;
-  height: 42px;
+  width: 36px;
+  height: 36px;
   display: grid;
   place-items: center;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius);
   background: var(--color-brand-dark);
   color: var(--color-surface);
   font-weight: 800;
-}
-
-.brand h1,
-.chat-header h2,
-.notes h2 {
-  margin: 0;
-  letter-spacing: 0;
+  font-size: 17px;
+  box-shadow: var(--shadow-xs);
 }
 
 .brand h1 {
-  font-size: var(--text-xl);
+  margin: 0;
+  letter-spacing: 0;
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--color-text-primary);
 }
 
-.brand p,
-.chat-header p,
-.notes p {
-  margin: var(--space-1) 0 0;
+.brand p {
+  margin: 0;
   color: var(--color-text-tertiary);
-  line-height: var(--leading-normal);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .field-label {
   color: var(--color-text-secondary);
-  font-size: 13px;
+  font-size: var(--text-sm);
   font-weight: 700;
 }
 
 /* 状态面板 */
 .status-panel,
 .notes {
-  border: 1px solid var(--color-border-light);
+  border: 1px solid var(--color-border-lighter);
   border-radius: var(--radius-md);
-  padding: 14px;
+  padding: var(--space-3) var(--space-4);
   background: var(--color-panel-bg);
 }
 
@@ -68,8 +71,8 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-3);
-  padding: var(--space-2) 0;
-  font-size: var(--text-sm);
+  padding: 6px 0;
+  font-size: 12.5px;
 }
 
 .status-row + .status-row {
@@ -78,12 +81,17 @@
 
 .status-row span {
   color: var(--color-text-tertiary);
+  font-weight: 500;
 }
 
 .status-row strong {
   min-width: 0;
   overflow-wrap: anywhere;
   text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--color-text-primary);
+  font-weight: 600;
 }
 
 /* 状态色调 */
@@ -106,24 +114,48 @@
   color: #334155;
 }
 
-/* 侧边栏按钮 */
+/* 底部按钮组 (pill 风格) */
+.sidebar-actions {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2);
+}
+
 .connect-button,
 .settings-button {
-  border: 0;
-  border-radius: var(--radius-md);
-  font-weight: 700;
+  border: 1px solid var(--color-border-lighter);
+  border-radius: var(--radius-full);
+  font-weight: 600;
+  font-size: 12.5px;
   cursor: pointer;
-  height: 38px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all var(--transition-fast);
 }
 
 .connect-button {
-  background: #edf3ff;
-  color: var(--color-brand-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+  border-color: transparent;
+}
+
+.connect-button:hover:not(:disabled) {
+  background: #d9e6ff;
 }
 
 .settings-button {
-  background: #f1f4f9;
-  color: #334155;
+  background: var(--color-surface);
+  color: var(--color-text-secondary);
+}
+
+.settings-button:hover:not(:disabled) {
+  background: var(--color-muted);
+  color: var(--color-text-primary);
 }
 
 .connect-button:disabled,
@@ -136,6 +168,6 @@
 @media (max-width: 760px) {
   .sidebar {
     border-right: 0;
-    border-bottom: 1px solid var(--color-border-light);
+    border-bottom: 1px solid var(--color-border-lighter);
   }
 }

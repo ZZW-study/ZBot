@@ -1,16 +1,14 @@
 /**
- * ToolCallCard — collapsible card for a single `function_call` + its `output`.
- * Header shows: tool icon + name + status (running spinner / done with elapsed
- * time / failed). Body shows args (JSON) and output (monospace, default
- * collapsed if > 500 chars, truncated if > 5000 chars).
+ * ToolCallCard - 工具调用卡片 (可折叠)
+ * 头部: 工具图标 + 名称 + 状态 (运行中 / 完成 + 耗时 / 失败)
+ * 主体: 命令 / 参数 / 输出 (深色代码块, 默认折叠)
  *
- * `exec` gets a dedicated "Command" line at the top of the body.
+ * 'exec' 工具在主体顶部单独显示 "Command" 行。
  */
 
-import { useEffect, useId, useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 import type { ToolCallTurnItem } from '../types';
 
-const TOOL_OUTPUT_COLLAPSE_THRESHOLD = 500;
 const TOOL_OUTPUT_TRUNCATE_LIMIT = 5000;
 
 interface ToolCallCardProps {
@@ -19,19 +17,8 @@ interface ToolCallCardProps {
 
 export default function ToolCallCard({ item }: ToolCallCardProps) {
   const bodyId = useId();
-  const hasLongOutput = !!item.output && item.output.length > TOOL_OUTPUT_COLLAPSE_THRESHOLD;
-  // Default: expanded while running, collapsed once a long output arrives.
-  const [userOverride, setUserOverride] = useState<boolean | null>(null);
-  const open = userOverride ?? !(item.status === 'done' && hasLongOutput);
-
-  // If output grows past the threshold after mount and the user hasn't
-  // manually expanded the card, snap it closed. This matches the "500+ chars
-  // collapses" rule for the initial render.
-  useEffect(() => {
-    if (item.status === 'done' && hasLongOutput && userOverride === null) {
-      setUserOverride(false);
-    }
-  }, [item.status, hasLongOutput, userOverride]);
+  // ZBot: collapsed by default. User clicks to expand. Avoids the "huge card" feel.
+  const [open, setOpen] = useState(false);
 
   const { icon, label } = useMemo(() => toolPresentation(item.name), [item.name]);
 
@@ -49,7 +36,7 @@ export default function ToolCallCard({ item }: ToolCallCardProps) {
         className="tool-card-header"
         aria-expanded={open}
         aria-controls={bodyId}
-        onClick={() => setUserOverride((v) => (v === null ? !open : !v))}
+        onClick={() => setOpen((v) => !v)}
       >
         <span className="tool-icon" aria-hidden="true">{icon}</span>
         <span className="tool-name">{label}</span>
@@ -57,19 +44,19 @@ export default function ToolCallCard({ item }: ToolCallCardProps) {
           {item.status === 'running' && (
             <>
               <span className="spinner" aria-hidden="true" />
-              <span>running</span>
+              <span>运行中</span>
             </>
           )}
           {item.status === 'done' && (
             <>
               <span className="status-dot ok" aria-hidden="true" />
-              <span>{elapsed != null ? `${elapsed}ms` : 'done'}</span>
+              <span>{elapsed != null ? `${elapsed}ms` : '完成'}</span>
             </>
           )}
           {item.status === 'failed' && (
             <>
               <span className="status-dot err" aria-hidden="true" />
-              <span>failed</span>
+              <span>失败</span>
             </>
           )}
         </span>
@@ -88,21 +75,21 @@ export default function ToolCallCard({ item }: ToolCallCardProps) {
           )}
           {argsText && (
             <div className="tool-section">
-              <div className="tool-section-label">Arguments</div>
+              <div className="tool-section-label">参数</div>
               <pre className="tool-mono">{argsText}</pre>
             </div>
           )}
           {outputDisplay !== undefined && (
             <div className="tool-section">
-              <div className="tool-section-label">Output</div>
+              <div className="tool-section-label">输出</div>
               <pre className={`tool-mono ${item.status === 'failed' ? 'is-failed' : ''}`}>{outputDisplay}</pre>
               {outputTruncated && (
-                <div className="tool-section-hint">Output truncated to {TOOL_OUTPUT_TRUNCATE_LIMIT} characters.</div>
+                <div className="tool-section-hint">输出已截断到 {TOOL_OUTPUT_TRUNCATE_LIMIT} 字符。</div>
               )}
             </div>
           )}
           {item.status === 'running' && (
-            <div className="tool-section-hint">Waiting for tool result...</div>
+            <div className="tool-section-hint">正在等待工具结果...</div>
           )}
         </div>
       )}

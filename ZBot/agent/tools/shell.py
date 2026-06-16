@@ -47,7 +47,7 @@ class ExecTool(Tool):
 
     def __init__(
         self,
-        timeout: int = 60,
+        timeout: int = 180,
         working_dir: str | None = None,
         deny_patterns: list[str] | None = None,
         restrict_to_workspace: bool = False,
@@ -55,7 +55,7 @@ class ExecTool(Tool):
         """
         初始化 ExecTool 工具实例。
         Args:
-            timeout: 默认命令执行超时时间（秒），默认 60 秒
+            timeout: 默认命令执行超时时间（秒），默认 180 秒
             working_dir: 默认工作目录，None 表示使用当前进程目录
             deny_patterns: 危险命令黑名单正则表达式列表，None 使用默认黑名单
             restrict_to_workspace: 是否限制只能访问工作区内的路径
@@ -111,7 +111,7 @@ class ExecTool(Tool):
                 },
                 "timeout": {
                     "type": "integer",  # timeout 参数可选，整数类型
-                    "description": "超时时间，单位秒。默认 60 秒，最大 600 秒。",
+                    "description": "超时时间，单位秒。默认 180 秒，最大 600 秒。",
                     "minimum": 1,  # 最小值 1 秒
                     "maximum": 600,  # 最大值 600 秒（10 分钟）
                 },

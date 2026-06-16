@@ -107,7 +107,7 @@ export function createApiClient(apiBase: string) {
       list: () => request<SessionSummary[]>('/api/sessions'),
       get: (name: string) => request<SessionDetailResponse>(`/api/sessions/${encodeURIComponent(name)}`),
       delete: (name: string) => requestVoid(`/api/sessions/${encodeURIComponent(name)}`, { method: 'DELETE' }),
-      create: (name: string) => request<OkResponse>('/api/sessions', {
+      create: (name: string) => request<SessionDetailResponse>('/api/sessions', {
         method: 'POST',
         body: JSON.stringify({ name }),
       }),
@@ -130,9 +130,11 @@ export function createApiClient(apiBase: string) {
       },
     },
     files: {
-      upload: (files: File[]) => {
+      // ZBot 改:model 可选,后端在多模态能力不足时返回 400,前端 toast 提示。
+      upload: (files: File[], model?: string) => {
         const form = new FormData();
         files.forEach((f) => form.append('files', f));
+        if (model) form.append('model', model);
         return request<{ file_id: string }>('/api/agent/files', { method: 'POST', body: form });
       },
     },

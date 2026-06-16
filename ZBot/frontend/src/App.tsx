@@ -1,20 +1,23 @@
 /**
- * App.jsx — 带路由的根组件
- * 路由:/ (ChatPage), /onboard (OnboardPage)
+ * App —— 带路由的根组件
+ * 路由:/  -> ChatPage（已配置时）,/onboard -> OnboardPage
+ *
+ * 关键设计：useConfig 用模块级单例 + useSyncExternalStore 共享 config status。
+ * 整个应用只拉一次 /api/config/status。OnboardPage 保存配置后调 refetch(),
+ * App 重新评估路由,自动从 /onboard 跳到 /。
  */
-
 import './App.css';
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { useConfig } from './hooks/useConfig';
+import { useMcpConnection } from './hooks/useMcpConnection';
 import { ConfigContextProvider } from './hooks/useConfigContext';
 import OnboardPage from './pages/OnboardPage';
 import ChatPage from './pages/ChatPage';
 import ToastViewport from './components/Toast';
 
 function App() {
-  // H31 修复:useConfig 只在 App 调一次,值通过 ConfigContext 共享给 ChatPage。
-  // 之前 ChatPage 也调一次,导致重复请求 + 闪屏(两个 useEffect 竞态)。
-  const { exists, setExists, setConfigured, apiBase, reason } = useConfig();
+  const { exists, configured, reason, apiBase, model, refetch } = useConfig();
+  useMcpConnection(apiBase);
 
   if (exists === null) {
     return (
@@ -26,31 +29,21 @@ function App() {
 
   return (
     <ConfigContextProvider
-      value={{
-        exists,
-        configured: exists,
-        reason,
-        apiBase,
-        setExists,
-        setConfigured,
-      }}
+      value={{ exists, configured, reason, apiBase, model, refetch }}
     >
       <BrowserRouter>
         <Routes>
           <Route
             path="/"
-            element={exists ? <ChatPage /> : <Navigate to="/onboard" replace />}
+            element={configured ? <ChatPage /> : <Navigate to="/onboard" replace />}
           />
           <Route
             path="/onboard"
             element={
               <OnboardPage
                 apiBase={apiBase}
-                isSettings={exists}
-                onConfigured={() => {
-                  setExists(true);
-                  setConfigured(true);
-                }}
+                isSettings={configured}
+                onConfigured={() => { void refetch(); }}
               />
             }
           />

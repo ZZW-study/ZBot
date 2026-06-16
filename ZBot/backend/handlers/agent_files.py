@@ -68,7 +68,7 @@ class _TtlLruStore:
 file_store: _TtlLruStore = _TtlLruStore(maxsize=MAX_FILE_STORE_ENTRIES, ttl_seconds=ENTRY_TTL_SECONDS)
 
 
-async def handle_uploaded_files(files: list[UploadFile]) -> dict[str, str]:
+async def handle_uploaded_files(files: list[UploadFile], *, model: str | None = None) -> dict[str, str]:
     """接收前端上传的文件,并转换为模型可接收的内容块。
 
     C3 修复:在 read 阶段就检查字节数,超过 MAX_FILE_BYTES 直接 413,
@@ -120,15 +120,31 @@ async def handle_uploaded_files(files: list[UploadFile]) -> dict[str, str]:
             )
 
         elif mime in UNSUPPORTED_FILE_MIME_TYPES:
-            file_encoded_content = base64.b64encode(raw_bytes).decode("utf-8")
-            content_blocks.append(
-                {
-                    "type": "file",
-                    "file": {
-                        "file_data": f"data:{mime};base64,{file_encoded_content}",
-                    },
-                }
-            )
+            # ZBot 改:litellm Chat Completions 不接受 Responses API 的 file_data 块
+            # 改为本地文本提取后作为 text 块发送,扫描件/加密等不可解析的以"提取失败"告知模型。
+            from ZBot.services.files.extractors import EXTRACTORS
+            extract_fn = EXTRACTORS.get(mime)
+            if extract_fn is None:
+                raise HTTPException(
+                    status_code=415,
+                    detail=f"暂不支持该文件类型:{mime}",
+                )
+            fname = file.filename or "unknown"
+            extracted, err = extract_fn(raw_bytes)
+            if err:
+                content_blocks.append(
+                    {
+                        "type": "text",
+                        "text": f"[文件 {fname} 解析失败: {err}]",
+                    }
+                )
+            else:
+                content_blocks.append(
+                    {
+                        "type": "text",
+                        "text": f"[文件 {fname} 的内容]\n{extracted}",
+                    }
+                )
 
         else:
             raise HTTPException(

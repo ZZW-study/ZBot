@@ -1,15 +1,16 @@
 /**
  * sessions.css — 侧边栏中的会话列表
+ * ZBot 改: 每条 session item 是带圆角的"小卡片", 活跃项有左侧 3px 蓝色竖条
  */
 
 .session-input {
   width: 100%;
   border: 1px solid var(--color-border-input);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius);
   background: var(--color-surface);
   color: var(--color-text-primary);
   outline: none;
-  height: 40px;
+  height: 36px;
   padding: 0 var(--space-3);
 }
 
@@ -22,30 +23,34 @@
 .session-list {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  min-height: 0;
 }
 
 .session-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 2px;
+  padding: 0 var(--space-2);
+  margin-bottom: var(--space-1);
 }
 
 .session-title {
-  color: var(--color-text-secondary);
-  font-size: 13px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
   font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
 }
 
 .session-new-btn {
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   border: 1px solid var(--color-border-input);
-  border-radius: var(--radius);
+  border-radius: var(--radius-xs);
   background: var(--color-surface);
   color: var(--color-text-secondary);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   cursor: pointer;
   display: grid;
@@ -56,9 +61,9 @@
 }
 
 .session-new-btn:hover {
-  background: #edf3ff;
-  border-color: var(--color-brand-accent);
-  color: var(--color-brand-accent);
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-accent);
 }
 
 /* 会话项列表 */
@@ -69,30 +74,47 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  max-height: 240px;
+  max-height: 320px;
   overflow-y: auto;
 }
 
 .session-item {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-2) 10px;
+  padding: 8px 10px 8px 12px;
   border-radius: var(--radius);
   cursor: pointer;
-  font-size: var(--text-sm);
+  font-size: 13px;
   color: var(--color-text-primary);
   transition: background var(--transition-fast);
 }
 
+.session-item::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background var(--transition-fast);
+}
+
 .session-item:hover {
-  background: #f1f4f9;
+  background: var(--color-muted);
 }
 
 .session-item.active {
-  background: #edf3ff;
-  color: var(--color-brand-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
   font-weight: 600;
+}
+
+.session-item.active::before {
+  background: var(--color-accent);
 }
 
 .session-name {
@@ -101,6 +123,7 @@
   white-space: nowrap;
   min-width: 0;
   cursor: text;
+  flex: 1;
 }
 
 .session-rename-input {
@@ -108,9 +131,9 @@
   min-width: 0;
   height: 22px;
   padding: 0 6px;
-  border: 1px solid var(--color-brand-accent);
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  border: 1px solid var(--color-accent);
+  border-radius: var(--radius-xs);
+  font-size: 13px;
   font-weight: 600;
   color: var(--color-text-primary);
   background: var(--color-surface);
@@ -122,10 +145,10 @@
   width: 20px;
   height: 20px;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--color-text-tertiary);
-  font-size: 16px;
+  font-size: 14px;
   cursor: pointer;
   display: grid;
   place-items: center;
@@ -140,13 +163,13 @@
 }
 
 .session-delete-btn:hover {
-  background: #fff2f1;
+  background: var(--color-destructive-soft);
   color: var(--color-destructive);
 }
 
 .session-empty {
   color: var(--color-text-tertiary);
-  font-size: 13px;
+  font-size: 12.5px;
   text-align: center;
   padding: var(--space-3) 0;
   margin: 0;
@@ -154,6 +177,43 @@
 
 @media (max-width: 760px) {
   .session-items {
-    max-height: 180px;
+    max-height: 200px;
   }
+}
+
+/* ===== 行内新建输入框 (点 "+" 后出现) ===== */
+.session-create-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 2px;
+}
+
+.session-create-row .session-rename-input {
+  flex: 1;
+  height: 28px;
+  font-size: 13px;
+}
+
+.session-create-confirm {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  color: #ffffff;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.session-create-confirm:hover {
+  background: var(--color-accent-hover);
+}
+
+.session-create-confirm:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-accent-sm);
 }

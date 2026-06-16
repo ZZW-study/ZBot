@@ -1,54 +1,145 @@
-/**
+﻿/**
  * composer.css — 消息输入区
+ * ZBot 改: pill 风格容器, 左侧圆形 send/stop 一体按钮
  */
 
 .composer {
-  border-top: 1px solid var(--color-border-light);
-  background: var(--color-surface);
-  padding: 18px var(--space-7);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px;
-  gap: var(--space-3);
+  border-top: 1px solid var(--color-border-lighter);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 14px var(--space-6) 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-.composer textarea {
-  width: 100%;
-  border: 1px solid var(--color-border-input);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  color: var(--color-text-primary);
-  outline: none;
-  resize: vertical;
-  min-height: 74px;
-  max-height: 180px;
-  padding: var(--space-3) 14px;
-  line-height: var(--leading-normal);
+.composer-attachments {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 2px;
 }
 
-.composer textarea:focus {
-  border-color: var(--color-brand-accent);
+.composer-pill {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: 6px 6px 6px 6px;
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  min-height: 44px;
+}
+
+.composer-pill:focus-within {
+  border-color: var(--color-accent);
   box-shadow: var(--shadow-accent-sm);
 }
 
-/* 发送按钮 */
-.composer button {
+.composer-attach {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
   border: 0;
-  border-radius: var(--radius-md);
-  font-weight: 700;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  display: grid;
+  place-items: center;
   cursor: pointer;
-  background: var(--color-brand-accent);
-  color: var(--color-surface);
+  align-self: center;
+  transition: background var(--transition-fast), color var(--transition-fast);
 }
 
-.composer button:disabled {
+.composer-attach:hover:not(:disabled) {
+  background: var(--color-muted);
+  color: var(--color-text-primary);
+}
+
+.composer-attach:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+
+.composer-textarea {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  outline: none;
+  resize: none;
+  min-height: 26px;
+  max-height: 200px;
+  padding: 8px 4px;
+  line-height: var(--leading-normal);
+  font-size: 14px;
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+.composer-textarea::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* ===== 主按钮 (send / stop 一体) ===== */
+.composer-primary {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  align-self: end;
+  transition: background var(--transition-fast), transform var(--transition-fast);
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+}
+
+.composer-primary.is-send.is-disabled {
+  background: var(--color-muted);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+}
+
+.composer-primary.is-stop {
+  background: var(--color-destructive);
+  color: var(--color-text-on-accent);
+  animation: composer-stop-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes composer-stop-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(229, 72, 77, 0.45); }
+  50%      { box-shadow: 0 0 0 6px rgba(229, 72, 77, 0.0); }
+}
+
+.composer-primary:hover:not(:disabled) {
+  transform: scale(1.05);
+}
+
+.composer-primary:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.composer-primary:disabled {
   cursor: not-allowed;
   opacity: 0.45;
 }
 
-/* 响应式 */
+.composer-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin: 0;
+  padding: 0 var(--space-3);
+  letter-spacing: 0.01em;
+}
+
 @media (max-width: 760px) {
   .composer {
-    grid-template-columns: 1fr;
-    padding: 14px;
+    padding: 12px var(--space-3) 14px;
   }
 }

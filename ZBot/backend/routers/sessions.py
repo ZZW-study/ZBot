@@ -61,6 +61,23 @@ async def create_endpoint(
     return detail
 
 
+# ZBot 改:Sidebar 顶部 "+" 用 — 一键创建空会话,后端按时间戳生成唯一名字。
+@router.post("/quick-create", status_code=status.HTTP_201_CREATED)
+async def quick_create_endpoint(
+    manager: SessionManager = Depends(get_session_manager),
+) -> dict:
+    import time as _t
+    name = f"chat-{int(_t.time() * 1000)}"
+    while True:
+        try:
+            await create_session(manager, name)
+            break
+        except SessionAlreadyExists:
+            # 同毫秒内连点,时间戳撞了就加 1 ms
+            name = f"chat-{int(_t.time() * 1000) + 1}"
+    return {"session_name": name}
+
+
 # ---------------------------------------------------------------------------
 # Single session(单个会话)
 # ---------------------------------------------------------------------------

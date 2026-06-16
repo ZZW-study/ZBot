@@ -1,12 +1,16 @@
-/**
- * layout.css — 外壳布局(两列网格)
+﻿/**
+ * layout.css — 外层壳布局
+ * ZBot 改: 整页加渐变背景, 让主区与 sidebar 视觉上分层。
  */
 
 .shell {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
+  overflow: hidden;
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  background: var(--color-brand-bg);
+  background:
+    linear-gradient(180deg, var(--color-canvas) 0%, var(--color-brand-bg) 100%);
   color: var(--color-text-primary);
 }
 
@@ -19,5 +23,7 @@
 @media (max-width: 760px) {
   .shell {
     grid-template-columns: 1fr;
+    height: 100dvh;
+    max-height: 100dvh;
   }
 }

@@ -208,8 +208,6 @@ class BaseAgent(ABC):
         turn_index: int = 0
         consecutive_no_progress_failures: int = 0
         mixed_subagent_call_count: int = 0
-        # H14: 跟踪本 turn 是否已补过 assistant.tool_calls,避免重复追加。
-        timeout_assistant_added: bool = False
         # H13: 改用 ContextVar 而非实例属性,保证并行 SubAgent 任务互不污染。
         messages_token = self._set_current_messages(None)
         progress_token = self._set_active_progress(on_progress)
@@ -226,49 +224,42 @@ class BaseAgent(ABC):
                 messages = await self._compact_messages_if_needed(messages, on_progress)
                 logger.debug("Agent循环迭代: {}, 消息长度: {}", turn_index, len(messages))
 
-                try:
-                    await on_progress(
-                        "正在请求大模型",  # 给心跳狗的描述
-                        event_type="model.started",
-                        agent_label=progress_label,
-                    )
-                    streamed_content_parts: list[str] = []
+                await on_progress(
+                    "正在请求大模型",  # 给心跳狗的描述
+                    event_type="model.started",
+                    agent_label=progress_label,
+                )
+                streamed_content_parts: list[str] = []
 
-                    async def _on_model_delta(delta: str) -> None:
-                        streamed_content_parts.append(delta)
-                        visible_delta = self._visible_delta_from_stream(streamed_content_parts)
-                        if not visible_delta:
-                            return
-                        await on_progress(
-                            visible_delta,
-                            event_type="assistant.delta",
-                            agent_label=progress_label,
-                            delta=visible_delta,
-                        )
-                    # 这里的硬超时要删去，还有其他地方的很多硬超时都要删去，用心跳狗的软超时
-                    response = await asyncio.wait_for(
-                        self.provider.chat(
-                            messages=messages,
-                            tools=self.tools.get_definitions(),
-                            model=self.model,
-                            temperature=self.temperature,
-                            max_tokens=self.max_tokens,
-                            reasoning_effort=self.reasoning_effort,  # 推理努力程度（仅部分模型支持）
-                            on_delta=_on_model_delta,
-                        ),
-                        timeout=self._remaining_agent_seconds(loop_started_at),
-                    )
+                async def _on_model_delta(delta: str) -> None:
+                    streamed_content_parts.append(delta)
+                    visible_delta = self._visible_delta_from_stream(streamed_content_parts)
+                    if not visible_delta:
+                        return
                     await on_progress(
-                        "大模型响应完成",
-                        event_type="model.completed",
+                        visible_delta,
+                        event_type="assistant.delta",
                         agent_label=progress_label,
-                        finish_reason=response.finish_reason,
+                        delta=visible_delta,
                     )
-                except asyncio.TimeoutError:
-                    final_content = self._timeout_message()
-                    self._add_assistant_message(messages, final_content)
-                    break
-
+                # 单次 LLM 调用不再做 wait_for 硬截断;长响应/长推理由循环顶部的
+                # _is_agent_timeout(总预算) + 后台 ActivityWatchdog(30min 空闲) 统一守护。
+                response = await self.provider.chat(
+                    messages=messages,
+                    tools=self.tools.get_definitions(),
+                    model=self.model,
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens,
+                    reasoning_effort=self.reasoning_effort,  # 推理努力程度（仅部分模型支持）
+                    on_delta=_on_model_delta,
+                )
+                await on_progress(
+                    "大模型响应完成",
+                    event_type="model.completed",
+                    agent_label=progress_label,
+                    finish_reason=response.finish_reason,
+                    has_tool_calls=bool(response.has_tool_calls),
+                )
                 # 记录调试日志：模型响应详情
                 logger.debug(
                     "模型回复: 是否包含工具调用={}, 结束原因={}, 回复内容的前100字符={}",
@@ -333,55 +324,21 @@ class BaseAgent(ABC):
                             agent_label=progress_label,
                             tool_name=tool_call.name,
                             tool_call_id=tool_call.id,
+                            arguments=args_str,
                         )
 
-                        try:
-                            # Codex 风格的工具前置审批点：模型可以请求工具，但真正执行前先过运行时策略。
-                            approval_error = await self.approve_tool_call(tool_call)
-                            if approval_error is not None:
-                                result = approval_error
-                            else:
-                                if tool_call.name == "create_sub_agent":
-                                    # 工具执行前的上下文可以安全交给子 agent；它不包含尚未配对的 tool_call。
-                                    # H13: 写入 ContextVar,不在实例上共享。
-                                    self._set_current_messages(copy.deepcopy(messages))
-                                # 执行工具。用户中断会向上传播，确保上层 finally 清理资源。
-                                result = await asyncio.wait_for(
-                                    self.tools.execute(tool_call.name, tool_call.arguments),
-                                    timeout=self._remaining_agent_seconds(loop_started_at),
-                                )
-                        except asyncio.TimeoutError:
-                            # H14: 工具超时时,后续还要走 _add_tool_result 写入 tool 消息;
-                            # OpenAI 协议要求 tool 消息必须配对一个 assistant.tool_calls,
-                            # 否则下次对话模型会报 "messages with role 'tool' must be a response
-                            # to a preceeding tool_call_id"。
-                            # 简化:本轮第一次出现超时时,把整个本轮的 assistant 消息补全;
-                            # 后续 tool_call 也共用同一个 assistant.tool_calls 列表。
-                            if not timeout_assistant_added:
-                                timeout_assistant_added = True
-                                # 找出当前 assistant 消息(已写在 _add_assistant_message 里),
-                                # 如果还没有,就补一个占位的
-                                if not any(
-                                    m.get("role") == "assistant"
-                                    and m.get("tool_calls")
-                                    for m in messages
-                                ):
-                                    self._add_assistant_message(
-                                        messages,
-                                        None,
-                                        [
-                                            {
-                                                "id": tc.id,
-                                                "type": "function",
-                                                "function": {
-                                                    "name": tc.name,
-                                                    "arguments": json.dumps(tc.arguments, ensure_ascii=False),
-                                                },
-                                            }
-                                            for tc in response.tool_calls
-                                        ],
-                                    )
-                            result = self._tool_timeout_result(tool_call.name)
+                        # Codex 风格的工具前置审批点：模型可以请求工具，但真正执行前先过运行时策略。
+                        approval_error = await self.approve_tool_call(tool_call)
+                        if approval_error is not None:
+                            result = approval_error
+                        else:
+                            if tool_call.name == "create_sub_agent":
+                                # 工具执行前的上下文可以安全交给子 agent；它不包含尚未配对的 tool_call。
+                                # H13: 写入 ContextVar,不在实例上共享。
+                                self._set_current_messages(copy.deepcopy(messages))
+                            # 执行工具。用户中断会向上传播，确保上层 finally 清理资源。
+                            # 单次工具调用不再做 wait_for 硬截断;由 ActivityWatchdog 守护。
+                            result = await self.tools.execute(tool_call.name, tool_call.arguments)
 
                         await on_progress(
                             self._tool_hint([tool_call]),
@@ -390,6 +347,9 @@ class BaseAgent(ABC):
                             agent_label=progress_label,
                             tool_name=tool_call.name,
                             tool_call_id=tool_call.id,
+                            arguments=args_str,
+                            output=result if not self._is_tool_error_result(result) else None,
+                            error=result if self._is_tool_error_result(result) else None,
                         )
 
                         consecutive_no_progress_failures = self._count_no_progress_failures(
@@ -407,8 +367,8 @@ class BaseAgent(ABC):
                         # 将工具执行结果追加到消息链
                         self._add_tool_result(messages, tool_call.id, tool_call.name, result)
 
-                    # 继续下一轮迭代
-                    continue
+                        # 继续下一轮迭代
+                        continue
 
                 # ========== 处理最终回复 ==========
                 # _strip_think 会移除模型可能包含的<think>...</think> 思考块，只保留对外输出的文本
@@ -580,16 +540,6 @@ class BaseAgent(ABC):
         return (
             f"本轮任务已运行超过 {self.agent_timeout_seconds} 秒，为避免继续占用资源，我先停止执行。"
             "你可以根据当前结果继续追问，或者把任务拆成更小的步骤。"
-        )
-
-    def _tool_timeout_result(self, tool_name: str) -> str:
-        """在总超时已发生但需要补齐 tool result 时使用，保证消息链合法。"""
-        return format_tool_error(
-            "Agent 总运行时间已超过限制，停止继续执行工具",
-            attempted=f"调用工具 {tool_name}",
-            observed=f"当前任务运行时间已达到 {self.agent_timeout_seconds} 秒",
-            do_not_repeat="不要继续调用新的工具",
-            next_action="总结当前已知信息并给出最终回复",
         )
 
     @staticmethod

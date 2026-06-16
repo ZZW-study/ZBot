@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from ZBot.backend.dependencies import (
@@ -12,6 +12,7 @@ from ZBot.backend.dependencies import (
     get_run_registry,
     get_session_manager,
 )
+from ZBot.backend.agent_service_pool import get_or_create_agent_service
 from ZBot.backend.handlers.agent_sse import run_worker, stream_run_events
 from ZBot.backend.schemas.agent import (
     RunResponse,
@@ -42,6 +43,7 @@ async def _resolve_run(registry: RunRegistry, name: str, run_id: str) -> RunStat
 async def start_run(
     name: str,
     body: RunStartRequest,
+    request: Request,
     _config=Depends(get_config_or_503),  # 必须在 manager.exists 前求值 → 无 config 直接 503
     manager: SessionManager = Depends(get_session_manager),
     runs: RunRegistry = Depends(get_run_registry),
@@ -59,8 +61,10 @@ async def start_run(
     # 开启协程任务，这算是第二个协程,那么可以在这个协程await的时候，直接往下执行
     # 执行完成或者发生异常，就执行结束，这个协程就销毁，那么这个协程的局部变量啥的，都没有了
     # 但是后面会结束，会将消息保存进磁盘，第二次请求的时候，由于会话名字相同，从磁盘读取就相同
+    # ZBot 改: 跨 run 复用一个共享的 AgentRunService (避免每次 sendMessage 重建 + 重连 MCP)
+    shared_service = await get_or_create_agent_service(request.app)
     task = asyncio.create_task(
-        run_worker(state, runs, body.message, file_id=body.file_id)
+        run_worker(state, runs, body.message, file_id=body.file_id, service=shared_service)
     )
 
     # 获取当前事件循环,传入后可以用loop.call_soon_threadsafe，把其他线程想干的事情，放入这个事件循环中，比如安全的取消

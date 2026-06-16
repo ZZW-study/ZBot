@@ -109,7 +109,6 @@ class AgentRunService:
         """初始化 run service。"""
         self.bundle = bundle
         self._started = False
-        self._closed = False
         self._event_sink: EventSink | None = None
         self._session_name = "default"
 
@@ -121,8 +120,6 @@ class AgentRunService:
     ) -> None:
         """启动会话级资源；交互会话/SSE 连接期间只调用一次，并没有调用大模型接口，而且没有真正启动 Agent，
         只是准备好了环境，真正的 Agent 启动是在 ask() 里调用的，并不要求强制调用 start()，如果直接调用 ask()，它会在内部调用 start() 来确保环境准备就绪。"""
-        if self._closed:
-            raise RuntimeError("AgentRunService 已关闭，不能再次启动")
         if self._started:
             self._event_sink = event_sink
             self._session_name = session_name
@@ -184,25 +181,29 @@ class AgentRunService:
             return final_content
         except asyncio.CancelledError:
             # 捕获到 CancelledError 后，先做一点收尾动作，然后把同一个 CancelledError 继续往上抛。
-            await event_sink(self._event("run.cancelled", "任务已取消"))
+            # ZBot 改: 透传 turn_id, 前端用它在 setTurns 里把对应 turn 标 cancelled。
+            await event_sink(
+                self._event(
+                    "run.cancelled",
+                    "任务已取消",
+                    payload={"turn_id": turn_id},
+                )
+            )
             raise
         except Exception as exc:
             logger.exception("Agent run 执行失败")
+            # ZBot 改: 透传 turn_id, 前端用它在 setTurns 里把对应 turn 标 failed。
             await event_sink(
                 self._event(
                     "run.failed",
                     f"任务失败：{exc}",
-                    payload={"error": str(exc)},
+                    payload={"error": str(exc), "turn_id": turn_id},
                 )
             )
             raise
 
     async def close(self, session_name: str) -> None:
         """关闭会话级资源并执行会话收尾；该方法可重复调用。"""
-        if self._closed:
-            return
-
-        self._closed = True
         # cron/service.py:CronService.stop 是 sync 函数(只 cancel _timer_task),
         # 不是 coroutine,所以不需要 await。这里显式调用,见 cron/service.py:122-127。
         self.bundle.cron.stop()
@@ -266,6 +267,27 @@ class AgentRunService:
             payload = dict(kwargs)
             if turn_id:
                 payload.setdefault("turn_id", turn_id)
+            # ZBot 改:给状态类事件加 phase + tool_name 字段,前端 LiveStatus 组件按它显示
+            # "ZBot 正在思考 / 正在调用工具 / 正在整理结果"。
+            extra_events: list = []
+            if event_type == "model.started":
+                payload["phase"] = "thinking"
+                # 同时推一条 status 事件,给前端 LiveStatus 显示"正在思考"
+                extra_events.append("status")
+            elif event_type in ("tool.started", "tool.progress"):
+                payload["phase"] = "tool"
+                # ZBot 改: 不再 fallback 到 agent_label —— agent_label 是 agent
+                # 自己的名字 ("主agent" / "子agent<id>"), 不是工具名。如果 payload
+                # 里没有 tool_name 字段, 就保持缺失, 让 SSE translator 走默认 "工具"。
+                extra_events.append("tool_hint")
+            elif event_type == "model.completed":
+                # ZBot 改: 仅当模型响应**不包含 tool_calls** (即最终答案) 时才进入
+                # finalizing 阶段。中间迭代 (model 决定继续调用工具) 不发 finalizing,
+                # 避免多工具场景下「正在整理结果」闪烁多次。
+                has_tool_calls = bool(kwargs.pop("has_tool_calls", False))
+                if not has_tool_calls:
+                    payload["phase"] = "finalizing"
+                    extra_events.append("status")
             await event_sink(
                 self._event(
                     event_type,
@@ -274,6 +296,15 @@ class AgentRunService:
                     payload=payload,
                 )
             )
+            for extra_type in extra_events:
+                await event_sink(
+                    self._event(
+                        extra_type,
+                        content,
+                        agent_label=agent_label,
+                        payload=payload,
+                    )
+                )
 
         return _on_progress
 
